@@ -9,15 +9,16 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 ### Platform Support
 
 | Platform | Architecture | Status |
-|----------|-------------|--------|
-| Linux    | x86_64      | Required |
-| Linux    | aarch64     | Required |
-| macOS    | x86_64      | Required |
-| macOS    | aarch64     | Required |
-| Windows  | x86_64      | Required |
-| Windows  | aarch64     | Required |
+| -------- | ------------ | ------ |
+| Linux | x86_64 | Required |
+| Linux | aarch64 | Required |
+| macOS | x86_64 | Required |
+| macOS | aarch64 | Required |
+| Windows | x86_64 | Required |
+| Windows | aarch64 | Required |
 
 **Constraints:**
+
 - No platform-specific code without abstraction
 - No explicit constraints against supporting additional platforms
 - All code must compile for all target platforms
@@ -25,7 +26,7 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 ### Technology Choices
 
 | Component | Choice | Rationale |
-|-----------|--------|-----------|
+| --------- | ------ | --------- |
 | MCP SDK | `rmcp` (official Rust SDK) | Official implementation, maintained, tokio-based |
 | Async Runtime | Tokio | Required by rmcp, best ecosystem support |
 | Configuration | `figment` | Layered config with excellent error provenance, first-class serde/clap integration |
@@ -36,10 +37,11 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 ### Toolchain
 
 | File | Purpose |
-|------|---------|
+| ---- | ------- |
 | `rust-toolchain.toml` | Pin toolchain version and components |
 
 **Configuration:**
+
 - **Channel:** MSRV (`1.75`)
 - **Components:** `rustfmt`, `clippy`, `llvm-tools-preview`
 
@@ -49,7 +51,7 @@ Pinning to MSRV ensures developers default to the minimum supported version.
 
 The project will follow **full sans-IO design principles** to maximize testability:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Application Layer                         │
 │  ┌─────────────────────────────────────────────────────────────┐│
@@ -119,6 +121,7 @@ async fn run_effects(effects: Vec<Effect>, transport: &mut Transport) {
 #### Core Crates (sans-IO)
 
 **Allowed:**
+
 - `serde` (serialization)
 - `schemars` (JSON schema generation)
 - `thiserror` (error types)
@@ -126,6 +129,7 @@ async fn run_effects(effects: Vec<Effect>, transport: &mut Transport) {
 - Pure computation crates
 
 **Forbidden:**
+
 - `tokio` or any async runtime
 - `reqwest`, `hyper` or HTTP clients
 - File system access
@@ -134,6 +138,7 @@ async fn run_effects(effects: Vec<Effect>, transport: &mut Transport) {
 #### I/O Crates
 
 **Allowed:**
+
 - `tokio`
 - `rmcp`
 - `reqwest`
@@ -143,7 +148,7 @@ async fn run_effects(effects: Vec<Effect>, transport: &mut Transport) {
 
 ### Workspace Layout
 
-```
+```text
 onshape-mcp/
 ├── Cargo.toml                    # Workspace root
 ├── crates/
@@ -196,6 +201,7 @@ onshape-mcp/
 ### Architecture & Patterns
 
 Configuration uses `figment` for layered configuration with `clap` for CLI argument parsing. This provides:
+
 - Excellent error provenance (know exactly where a value came from)
 - First-class serde integration
 - Multiple source support with clear precedence
@@ -212,7 +218,7 @@ From lowest to highest priority:
 ### Config File
 
 | Platform | Location |
-|----------|----------|
+| -------- | -------- |
 | Unix | `~/.config/onshape-mcp/config.toml` |
 | Windows | `%APPDATA%\onshape-mcp\config.toml` |
 
@@ -237,7 +243,7 @@ All environment variables use the `ONSHAPE_MCP_` prefix.
 ### All Settings Reference
 
 | Setting | Type | Default | Env Var | Config Key | Description |
-|---------|------|---------|---------|------------|-------------|
+| ------- | ---- | ------- | ------- | ---------- | ----------- |
 | Access Key | `string` | — | `ONSHAPE_MCP_ACCESS_KEY` | `auth.access_key` | Onshape API access key |
 | Secret Key | `string` | — | `ONSHAPE_MCP_SECRET_KEY` | `auth.secret_key` | Onshape API secret key |
 | Max Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_MAX_MODE` | `mode.max` | Upper limit for permission mode |
@@ -262,7 +268,7 @@ Individuals first, with architecture that doesn't preclude teams.
 All MCP tools use the `onshape_` prefix to avoid collisions with other MCP servers.
 
 | Prefix | Purpose | Example |
-|--------|---------|---------|
+| ------ | ------- | ------- |
 | `onshape_` | Onshape API operations | `onshape_list_documents` |
 | `onshape_mcp_` | Server administration | `onshape_mcp_get_mode` |
 
@@ -271,7 +277,7 @@ All MCP tools use the `onshape_` prefix to avoid collisions with other MCP serve
 ### Transport Support
 
 | Transport | Priority | Notes |
-|-----------|----------|-------|
+| --------- | -------- | ----- |
 | stdio | P0 | Primary MCP transport |
 | HTTP/SSE | P1 | Server-Sent Events |
 | WebSocket | P2 | Bidirectional |
@@ -283,7 +289,7 @@ The server supports three permission modes controlling which tools are visible a
 #### Modes
 
 | Mode | Tools Available | Description |
-|------|-----------------|-------------|
+| ---- | --------------- | ----------- |
 | `read` | Read-only tools | Query, list, export |
 | `modify` | Read + non-destructive writes | Add, update, set |
 | `destroy` | All tools | Delete, remove |
@@ -293,6 +299,7 @@ The server supports three permission modes controlling which tools are visible a
 Mode settings are configured via the standard configuration system. See [Configuration > All Settings Reference](#all-settings-reference) for details on `max_mode`, `initial_mode`, and `allow_mode_escalation`.
 
 **Why explicit `allow_mode_escalation`?** Without it, we cannot distinguish between:
+
 - User wants AI to escalate when needed (interactive)
 - User set max_mode as ceiling but controls mode manually per session
 
@@ -301,7 +308,7 @@ Mode settings are configured via the standard configuration system. See [Configu
 Tools are hidden (not advertised) when the current mode doesn't permit them. This is cleaner than advertising tools that will be rejected.
 
 | Tool | Required Mode | `readOnlyHint` | `destructiveHint` |
-|------|---------------|----------------|-------------------|
+| ---- | ------------- | -------------- | ----------------- |
 | `onshape_list_documents` | `read` | `true` | — |
 | `onshape_get_assembly` | `read` | `true` | — |
 | `onshape_export_stl` | `read` | `true` | — |
@@ -313,6 +320,7 @@ Tools are hidden (not advertised) when the current mode doesn't permit them. Thi
 #### MCP Tool Annotations
 
 Tools declare their characteristics using MCP's `ToolAnnotations`:
+
 - `readOnlyHint` — true if tool doesn't modify Onshape data
 - `destructiveHint` — true if tool performs destructive operations
 
@@ -323,7 +331,7 @@ These are advisory hints for MCP clients, not security enforcement.
 Always visible (read-only operations on the server itself).
 
 | Tool | Description |
-|------|-------------|
+| ---- | ----------- |
 | `onshape_mcp_get_mode` | Returns current mode, max mode, escalation allowed |
 | `onshape_mcp_request_mode` | Request mode change (escalate or de-escalate, within max) |
 | `onshape_mcp_auth_status` | Returns auth status (valid/invalid/expired), last check time, connectivity |
@@ -333,7 +341,7 @@ Always visible (read-only operations on the server itself).
 #### Phase A: Read-Only Foundation (MVP)
 
 | Tool | Mode | Description |
-|------|------|-------------|
+| ---- | ---- | ----------- |
 | **Documents** | | |
 | `onshape_list_documents` | `read` | List user's documents (with search/filter) |
 | `onshape_get_document` | `read` | Get document metadata, workspaces, versions |
@@ -358,7 +366,7 @@ Always visible (read-only operations on the server itself).
 Export tools pass through to Onshape's export API. Tool names mirror Onshape's format names. All formats supported by Onshape are supported — examples include:
 
 | Tool | Mode | Description |
-|------|------|-------------|
+| ---- | ---- | ----------- |
 | `onshape_export_stl` | `read` | Export part/assembly as STL |
 | `onshape_export_step` | `read` | Export as STEP |
 | `onshape_export_gltf` | `read` | Export as glTF |
@@ -374,11 +382,12 @@ Exports support two modes: returning a download URL (default) or saving to a loc
 **Parameters:**
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --------- | ---- | ------- | ----------- |
 | `save_to` | `string?` | `null` | Local file path. If omitted, returns URL only. |
 | `overwrite` | `bool` | `false` | If `false`, fail when file exists. |
 
 **Return Value (URL mode):**
+
 ```json
 {
   "url": "https://...",
@@ -388,6 +397,7 @@ Exports support two modes: returning a download URL (default) or saving to a loc
 ```
 
 **Return Value (local file mode):**
+
 ```json
 {
   "path": "/path/to/file.stl",
@@ -398,7 +408,7 @@ Exports support two modes: returning a download URL (default) or saving to a loc
 **Error Types (local file mode):**
 
 | Error | Description |
-|-------|-------------|
+| ----- | ----------- |
 | `file_exists` | File exists and `overwrite=false` |
 | `permission_denied` | Cannot write to path |
 | `out_of_space` | Insufficient disk space |
@@ -410,7 +420,7 @@ Exports support two modes: returning a download URL (default) or saving to a loc
 #### Phase C: Modify Operations
 
 | Tool | Mode | Description |
-|------|------|-------------|
+| ---- | ---- | ----------- |
 | `onshape_set_variable` | `modify` | Update a variable value |
 | `onshape_set_configuration` | `modify` | Set configuration values |
 | `onshape_add_feature` | `modify` | Add a feature to a part studio |
@@ -419,13 +429,13 @@ Exports support two modes: returning a download URL (default) or saving to a loc
 #### Phase D: Destroy Operations
 
 | Tool | Mode | Description |
-|------|------|-------------|
+| ---- | ---- | ----------- |
 | `onshape_delete_feature` | `destroy` | Remove a feature |
 
 #### Phase E: FeatureScript (Future)
 
 | Tool | Mode | Description |
-|------|------|-------------|
+| ---- | ---- | ----------- |
 | `onshape_eval_featurescript` | `destroy` | Execute FeatureScript expressions |
 | `onshape_get_featurescript_spec` | `read` | Get FeatureScript function specs |
 | `onshape_list_custom_features` | `read` | List available custom features |
@@ -435,12 +445,14 @@ Exports support two modes: returning a download URL (default) or saving to a loc
 #### Pagination
 
 Tools that return lists expose pagination parameters:
+
 - `limit` — Maximum items to return
 - `offset` — Starting offset
 
 #### Identifiers
 
 Onshape uses compound identifiers. Tools accept these as separate parameters:
+
 - `document_id`
 - `workspace_id` or `version_id`
 - `element_id`
@@ -450,7 +462,7 @@ Onshape uses compound identifiers. Tools accept these as separate parameters:
 ### Supported Methods
 
 | Method | Status | Notes |
-|--------|--------|-------|
+| ------ | ------ | ----- |
 | API Keys | Initial implementation | Personal use, single user |
 | OAuth 2.0 | Future | Multi-user apps, team access |
 
@@ -469,16 +481,18 @@ secret_key = "..."
 **Environment variables:**
 
 | Variable | Description |
-|----------|-------------|
+| -------- | ----------- |
 | `ONSHAPE_MCP_ACCESS_KEY` | Onshape API access key |
 | `ONSHAPE_MCP_SECRET_KEY` | Onshape API secret key |
 
 **Future credential sources** (to be implemented):
+
 - System keychain integration
 
 ### Config File Security
 
 The config file contains secrets and must have restricted permissions:
+
 - **Unix:** `0600` (owner read/write only)
 - **Windows:** Equivalent ACL restrictions
 
@@ -487,7 +501,7 @@ If permissions are too open, the server **blocks access** and informs the user o
 ### Credential Validation
 
 | Event | Behavior |
-|-------|----------|
+| ----- | -------- |
 | Startup | Validate credentials, fail if invalid |
 | Periodic | Re-validate at configured interval (see `auth.check_interval` in [Configuration](#all-settings-reference)) |
 | API call | Updates auth status, resets periodic check timer |
@@ -498,6 +512,7 @@ If permissions are too open, the server **blocks access** and informs the user o
 ### MCP Notifications
 
 The server emits MCP notifications for auth status changes:
+
 - `onshape/auth/invalid` — Credentials became invalid
 - `onshape/auth/restored` — Credentials are valid again
 
@@ -514,25 +529,25 @@ Use `thiserror` for public API errors (typed, matchable) with `anyhow` for inter
 pub enum OnshapeApiError {
     #[error("Authentication failed")]
     AuthenticationFailed,
-    
+
     #[error("Permission denied: {message}")]
     PermissionDenied { message: String },
-    
+
     #[error("Not found: {resource}")]
     NotFound { resource: String },
-    
+
     #[error("Rate limited, retry after {retry_after:?}")]
     RateLimited { retry_after: Option<Duration> },
-    
+
     #[error("Request timeout")]
     Timeout,
-    
+
     #[error("Server error: {status}")]
     ServerError { status: u16, message: Option<String> },
-    
+
     #[error("CAD operation failed: {code}")]
     CadOperationFailed { code: String, message: String },
-    
+
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -541,7 +556,7 @@ pub enum OnshapeApiError {
 ### HTTP Status Code Mapping
 
 | HTTP Code | Error Type |
-|-----------|------------|
+| --------- | ---------- |
 | 401 | `AuthenticationFailed` |
 | 403 | `PermissionDenied` |
 | 404 | `NotFound` |
@@ -554,7 +569,7 @@ pub enum OnshapeApiError {
 All errors include context for debugging:
 
 | Field | Description |
-|-------|-------------|
+| ----- | ----------- |
 | `request_id` | Onshape request ID from response headers |
 | `endpoint` | API endpoint called |
 | `timestamp` | When the error occurred |
@@ -564,7 +579,7 @@ All errors include context for debugging:
 Hybrid approach: standard JSON-RPC codes where they fit, custom codes for actionable distinctions.
 
 | Error Type | MCP Code | Rationale |
-|------------|----------|-----------|
+| ---------- | -------- | --------- |
 | `AuthenticationFailed` | `-32603` | Internal error |
 | `PermissionDenied` | `-32603` | Internal error |
 | `NotFound` | `-32602` | Invalid params (bad ID) |
@@ -594,12 +609,13 @@ All MCP errors include structured `data` field:
 The standard `tracing` library relies on global/thread-local subscriber state, which conflicts with sans-IO principles. After researching the ecosystem:
 
 | Crate | Purpose | Sans-IO Compatible |
-|-------|---------|-------------------|
+| ----- | ------- | ------------------ |
 | `tracing` | Core instrumentation macros | No (global state) |
 | `tracing-tunnel` | Serializable event capture | Yes |
 | `tracing-capture` | Testing/inspection | Partial |
 
 `tracing-tunnel` provides the foundation:
+
 - `TracingEventSender` - subscriber that serializes events to a callback
 - `TracingEvent` - full span hierarchy (enter/exit/close, parent-child relationships)
 - `TracingEventReceiver` - replays events to real subscribers
@@ -609,6 +625,7 @@ A helper crate `tracing-sansio` wraps this with minimal boilerplate.
 ### API Design
 
 **Closure-based (like `Span::in_scope`):**
+
 ```rust
 use tracing_sansio::{capture_tracing, Captured};
 
@@ -621,6 +638,7 @@ let Captured { result, events } = capture_tracing(|| {
 ```
 
 **Attribute macro (like `#[tracing::instrument]`):**
+
 ```rust
 #[capture_tracing]
 fn process_data(data: &[u8]) -> usize {
@@ -632,7 +650,7 @@ fn process_data(data: &[u8]) -> usize {
 
 ### Crate Structure
 
-```
+```text
 crates/
 ├── tracing-sansio/           # Core library
 │   ├── Cargo.toml
@@ -643,31 +661,33 @@ crates/
 ```
 
 | Crate | Purpose |
-|-------|---------|
+| ----- | ------- |
 | `tracing-sansio` | `Captured<T>` type, `capture_tracing()` function, re-exports `TracingEvent` |
 | `tracing-sansio-macros` | `#[capture_tracing]` attribute macro |
 
 ### Key Types
 
 | Type | Description |
-|------|-------------|
+| ---- | ----------- |
 | `Captured<T>` | Wrapper containing `result: T` and `events: Vec<TracingEvent>` |
 | `TracingEvent` | Re-exported from `tracing-tunnel`; represents spans and events |
 
 ### Dependencies
 
 **`tracing-sansio`:**
+
 - `tracing` ^0.1
 - `tracing-tunnel` ^0.1 (with `sender` feature)
 - `tracing-sansio-macros` (optional, default enabled)
 
 **`tracing-sansio-macros`:**
+
 - `syn` ^2, `quote` ^1, `proc-macro2` ^1
 
 ### Limitations
 
 | Limitation | Workaround |
-|------------|------------|
+| ---------- | ---------- |
 | Sync functions only (macro) | Use `capture_tracing()` closure for async |
 | Thread-local capture | Events from spawned threads not captured |
 | Bounded channel (default 256) | Use `capture_tracing_with_capacity()` for high-volume |
@@ -706,7 +726,7 @@ This section documents the manual configuration required in GitHub repository se
 #### Branch Protection (main)
 
 | Setting | Value |
-|---------|-------|
+| ------- | ----- |
 | Require PR before merge | Yes |
 | Required approvals | 0 (increase when contributors join) |
 | Require status checks | Yes — `alls-green` job only |
@@ -723,7 +743,7 @@ Merge queue enabled to guarantee main stays green. PRs merge only after passing 
 #### Merge Strategy
 
 | Option | Enabled |
-|--------|---------|
+| ------ | ------- |
 | Merge commits | Yes (only) |
 | Squash merge | No |
 | Rebase merge | No |
@@ -731,7 +751,7 @@ Merge queue enabled to guarantee main stays green. PRs merge only after passing 
 #### Other Settings
 
 | Setting | Value |
-|---------|-------|
+| ------- | ----- |
 | Description | "A Rust-based MCP (Model Context Protocol) server for Onshape integration." |
 | Default branch | `main` |
 | Auto-delete head branches | Yes |
@@ -746,26 +766,27 @@ Merge queue enabled to guarantee main stays green. PRs merge only after passing 
 Create a GitHub App for CI to run on auto-generated PRs (e.g., OpenAPI spec updates):
 
 | Setting | Value |
-|---------|-------|
+| ------- | ----- |
 | Permissions | `contents: write`, `pull-requests: write` |
 | Installation | Repository only |
 | Webhook | Disabled (not needed) |
 
 Store credentials in repository secrets:
+
 - `APP_ID` — from app settings page
 - `APP_PRIVATE_KEY` — contents of generated `.pem` file
 
 ### Workflow Structure
 
 | File | Purpose |
-|------|---------|
+| ---- | ------- |
 | `.github/workflows/ci.yml` | Entry point, Rust version matrix, alls-green aggregation |
 | `.github/workflows/rust.yml` | Reusable workflow, platform matrix, all checks |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR |
 
 ### CI Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    ci.yml (entry point)                      │
 ├─────────────────────────────────────────────────────────────┤
@@ -810,7 +831,7 @@ Store credentials in repository secrets:
 #### Rust Version Matrix
 
 | Toolchain | Required | Notes |
-|-----------|----------|-------|
+| --------- | -------- | ----- |
 | MSRV (1.75) | Yes | From `rust-toolchain.toml` |
 | Latest stable | Yes | Primary development target |
 | Beta | No | Allowed to fail |
@@ -818,12 +839,13 @@ Store credentials in repository secrets:
 #### Platform Matrix
 
 | OS | Architecture |
-|----|--------------|
+| -- | ------------ |
 | Linux (ubuntu) | x86_64, aarch64 |
 | macOS | x86_64, aarch64 |
 | Windows | x86_64, aarch64 |
 
 **Total jobs:**
+
 - Checks: 3 rust × 6 platforms = 18 jobs
 - Coverage: 1 rust (stable) × 6 platforms = 6 jobs
 - **Total: 24 jobs** (plus alls-green)
@@ -831,7 +853,7 @@ Store credentials in repository secrets:
 ### CI Tooling
 
 | Tool | Purpose |
-|------|---------|
+| ---- | ------- |
 | [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust installation, reads `rust-toolchain.toml`, caching |
 | [re-actors/alls-green](https://github.com/re-actors/alls-green) | Aggregate job status, allow beta failures |
 
@@ -840,7 +862,7 @@ Store credentials in repository secrets:
 ### Checks
 
 | Check | Tool | Run On |
-|-------|------|--------|
+| ----- | ---- | ------ |
 | Formatting | `cargo fmt --check` | All matrix combinations |
 | Linting | `cargo clippy` | All matrix combinations |
 | Tests | `cargo test` | All matrix combinations |
@@ -867,6 +889,7 @@ panic = "deny"
 ```
 
 **Clippy Lints to Enable:**
+
 - `clippy::pedantic` - additional strictness
 - `clippy::nursery` - experimental but useful
 - `clippy::unwrap_used` - deny in library code
@@ -881,7 +904,7 @@ panic = "deny"
 ### Testing Strategy
 
 | Test Type | Location | Coverage Target |
-|-----------|----------|-----------------|
+| --------- | -------- | --------------- |
 | Unit tests | `crates/*/src/**/*.rs` | 100% with exclusions |
 | Integration tests | `tests/` | Key workflows |
 | Doc tests | Inline | All public APIs |
@@ -898,11 +921,12 @@ panic = "deny"
 #### Enforcement Strategy
 
 | Check | Behavior |
-|-------|----------|
+| ----- | -------- |
 | Project coverage | Ratchet — fail if drops more than 2% from main (catches accidental loss of code/tests) |
 | Patch coverage | 100% enforced — new code must be fully covered or explicitly excluded |
 
 Codecov configuration:
+
 ```yaml
 coverage:
   status:
@@ -937,7 +961,7 @@ Err(e) => {
 The Onshape OpenAPI specification is stored locally for reference and code generation.
 
 | Setting | Value |
-|---------|-------|
+| ------- | ----- |
 | Location | `specs/onshape-openapi.json` |
 | Source | `https://cad.onshape.com/api/v6/openapi` |
 | License | Apache 2.0 (see `specs/ONSHAPE-API-LICENSE`) |
@@ -946,15 +970,17 @@ The Onshape OpenAPI specification is stored locally for reference and code gener
 #### Update Workflow
 
 | Trigger | Schedule |
-|---------|----------|
+| ------- | -------- |
 | Nightly | 09:00 UTC |
 | Manual | workflow_dispatch |
 
 **Tooling:**
+
 - [peter-evans/create-pull-request](https://github.com/peter-evans/create-pull-request) — Creates/updates PR when spec changes
 - GitHub App token — Enables CI to run on auto-generated PRs
 
 **Behavior:**
+
 - Downloads latest spec from Onshape API
 - Pretty-prints JSON for readable diffs
 - Creates PR if changes detected (no PR on empty diff)
@@ -988,7 +1014,7 @@ cargo llvm-cov --all-features --workspace
 #### Hook Configuration
 
 | Hook | Source | Stage | Purpose |
-|------|--------|-------|---------|
+| ---- | ------ | ----- | ------- |
 | `trailing-whitespace` | pre-commit-hooks | pre-commit | Clean whitespace |
 | `end-of-file-fixer` | pre-commit-hooks | pre-commit | Consistent EOF |
 | `check-toml` | pre-commit-hooks | pre-commit | TOML syntax |
@@ -1001,13 +1027,14 @@ cargo llvm-cov --all-features --workspace
 | `cargo deny` | local | manual | Dependency audit |
 
 **Stages:**
+
 - `pre-commit` — runs automatically on `git commit`
 - `manual` — runs only via `pre-commit run --hook-stage manual` or in CI
 
 #### Configuration Files
 
 | File | Purpose |
-|------|---------|
+| ---- | ------- |
 | `.pre-commit-config.yaml` | Hook definitions |
 | `typos.toml` | Spell check word allowlist |
 
@@ -1016,13 +1043,13 @@ cargo llvm-cov --all-features --workspace
 ### Tooling
 
 | Tool | Purpose |
-|------|---------|
+| ---- | ------- |
 | rustdoc | API documentation from source |
 | mdBook | Prose documentation (design docs, guides) |
 
 ### Structure
 
-```
+```text
 docs/
 ├── book.toml
 └── src/
@@ -1037,6 +1064,7 @@ docs/
 ### Standards
 
 *Still to discuss — see [Pending](#pending):*
+
 - Rustdoc coverage expectations
 - README content and structure
 - Usage examples
@@ -1046,7 +1074,7 @@ docs/
 Users can install the server via:
 
 | Method | Description |
-|--------|-------------|
+| ------ | ----------- |
 | `cargo install` | From crates.io |
 | Pre-built binaries | GitHub releases for all supported platforms |
 
@@ -1057,6 +1085,7 @@ Users can install the server via:
 *To be discussed — see [Pending](#pending).*
 
 Areas to address:
+
 - Versioning strategy (semver)
 - Changelog management
 - Release workflow (tags, GitHub releases)
@@ -1067,6 +1096,7 @@ Areas to address:
 *To be discussed — see [Pending](#pending).*
 
 Areas to address:
+
 - CONTRIBUTING.md content
 - PR expectations
 - Code review process
@@ -1110,25 +1140,33 @@ Areas to address:
 Items to address later in the project:
 
 #### CI/Infrastructure
+
 - [ ] PR title enforcement — CI validation of PR title format (Conventional Commits or custom)
 - [ ] Labels configuration — Standard labels for issues/PRs (bug, enhancement, etc.)
 
-#### Authentication
+#### Authentication Enhancements
+
 - [ ] OAuth 2.0 authentication — Multi-user apps, team access (see Authentication section)
 - [ ] System keychain credential source — Platform-native secure storage
 
 #### Features
+
 - [ ] FeatureScript support — Phase E tools (`onshape_eval_featurescript`, etc.)
 
 #### tracing-sansio Enhancements
+
 - [ ] Independent publication — Extract to separate repository and publish to crates.io
 - [ ] Async support — Add `capture_tracing_async()` if needed
 - [ ] Event filtering — Add predicates to filter captured events
 
+#### Markdown Tooling
+
+- [ ] Semantic newlines enforcement — Add `markdownlint-sentences-per-line` rule to enforce one sentence per line (requires Node.js/npm infrastructure)
+
 ## Version History
 
 | Version | Date | Changes |
-|---------|------|---------|
+| ------- | ---- | ------- |
 | 0.1.0 | TBD | Initial requirements |
 
 ---
@@ -1136,6 +1174,7 @@ Items to address later in the project:
 ## Checklist for Implementation
 
 ### Phase 1: Project Setup
+
 - [ ] Initialize Cargo workspace
 - [ ] Set up crate structure
 - [ ] Create rust-toolchain.toml
@@ -1149,6 +1188,7 @@ Items to address later in the project:
 - [ ] Create initial README
 
 ### Phase 1.5: Tracing Infrastructure
+
 - [ ] Create `crates/tracing-sansio/Cargo.toml`
 - [ ] Implement `Captured<T>` type and `capture_tracing()` function
 - [ ] Create `crates/tracing-sansio-macros/Cargo.toml`
@@ -1158,6 +1198,7 @@ Items to address later in the project:
 - [ ] Add documentation with examples
 
 ### Phase 2: Core Implementation
+
 - [ ] Define effect types in `onshape-mcp-core`
 - [ ] Implement MCP handler state machine
 - [ ] Implement permission model (modes, escalation)
@@ -1169,6 +1210,7 @@ Items to address later in the project:
 - [ ] Write comprehensive unit tests for core crates
 
 ### Phase 3: I/O Integration
+
 - [ ] Implement transport layer in `onshape-mcp-io`
 - [ ] Implement HTTP client in `onshape-client-io`
 - [ ] Wire up in main binary
@@ -1176,10 +1218,12 @@ Items to address later in the project:
 - [ ] Implement MCP Tools — Phase D (destroy)
 
 ### Phase 4: Polish
+
 - [ ] Add documentation
 - [ ] Set up coverage reporting
 - [ ] Add integration tests
 - [ ] Performance testing
 
 ### Phase 5: FeatureScript (Future)
+
 - [ ] Implement MCP Tools — Phase E (FeatureScript)
