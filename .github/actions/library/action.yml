@@ -10,5 +10,9 @@ runs:
     - id: parse
       shell: bash
       run: |
+        if ! command -v yq >/dev/null 2>&1; then
+          echo "yq is required but not installed. Install it in the caller or add an install step here." >&2
+          exit 1
+        fi
         MATRIX=$(yq -o=json -I=0 '{"axes": .}' "${{ github.action_path }}/library.yml")
         echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
