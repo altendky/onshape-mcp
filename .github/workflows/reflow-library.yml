@@ -1,0 +1,22 @@
+name: Library
+
+on:
+  workflow_call:
+    outputs:
+      matrix:
+        description: Matrix configuration as JSON
+        value: ${{ jobs.generate.outputs.matrix }}
+
+jobs:
+  generate:
+    name: Generate library
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.library.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load library
+        id: library
+        uses: ./.github/actions/library
