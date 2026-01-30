@@ -1,0 +1,14 @@
+name: Library
+description: Outputs the CI matrix configuration
+outputs:
+  matrix:
+    description: Matrix configuration as JSON
+    value: ${{ steps.parse.outputs.matrix }}
+runs:
+  using: composite
+  steps:
+    - id: parse
+      shell: bash
+      run: |
+        MATRIX=$(yq -o=json -I=0 '{"axes": .}' "${{ github.action_path }}/library.yml")
+        echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"

@@ -8,57 +8,15 @@ on:
         value: ${{ jobs.generate.outputs.matrix }}
 
 jobs:
-  # This job never runs - it exists so the matrix is defined as proper YAML
-  # that actionlint and other tools can validate
-  schema:
-    name: ${{ matrix.os.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.emoji }} ${{ matrix.arch.name }}
-    if: false
-    runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
-    strategy:
-      matrix:
-        os:
-          - name: Linux
-            matrix: linux
-            emoji: 🐧
-            runs-on:
-              arm: ubuntu-24.04-arm
-              intel: ubuntu-latest
-          - name: macOS
-            matrix: macos
-            emoji: 🍎
-            runs-on:
-              arm: macos-latest
-              intel: macos-13
-          - name: Windows
-            matrix: windows
-            emoji: 🪟
-            runs-on:
-              arm: windows-11-arm
-              intel: windows-latest
-        arch:
-          - name: ARM
-            matrix: arm
-            emoji: 💪
-          - name: Intel
-            matrix: intel
-            emoji: 🌀
-    steps:
-      - run: |
-          echo "This job never runs"
-          false
-
   generate:
     name: Generate library
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.parse.outputs.matrix }}
+      matrix: ${{ steps.library.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Parse matrix from workflow
-        id: parse
-        run: |
-          WORKFLOW_PATH=$(echo "${{ github.workflow_ref }}" | sed 's|[^/]*/[^/]*/||; s|@.*||')
-          MATRIX=$(yq -o=json -I=0 '{"axes": .jobs.schema.strategy.matrix}' "$WORKFLOW_PATH")
-          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+      - name: Load library
+        id: library
+        uses: ./.github/actions/library
