@@ -1,0 +1,26 @@
+os:
+  - name: Linux
+    matrix: linux
+    emoji: 🐧
+    runs-on:
+      arm: ubuntu-24.04-arm
+      intel: ubuntu-latest
+  - name: macOS
+    matrix: macos
+    emoji: 🍎
+    runs-on:
+      arm: macos-latest
+      intel: macos-15-intel
+  - name: Windows
+    matrix: windows
+    emoji: 🪟
+    runs-on:
+      arm: windows-11-arm
+      intel: windows-latest
+arch:
+  - name: ARM
+    matrix: arm
+    emoji: 💪
+  - name: Intel
+    matrix: intel
+    emoji: 🌀
