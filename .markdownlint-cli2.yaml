@@ -12,6 +12,6 @@ gitignore: true
 config:
   # Disable line length checking - we use semantic newlines
   MD013: false
-  # Enforce vertically aligned table columns
+  # Use compact table style (single space around content, no alignment padding)
   MD060:
-    style: "aligned"
+    style: "compact"

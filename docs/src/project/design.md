@@ -8,14 +8,14 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 
 ### Platform Support
 
-| Platform | Architecture | Status   |
-|----------|--------------|----------|
-| Linux    | x86_64       | Required |
-| Linux    | aarch64      | Required |
-| macOS    | x86_64       | Required |
-| macOS    | aarch64      | Required |
-| Windows  | x86_64       | Required |
-| Windows  | aarch64      | Required |
+| Platform | Architecture | Status |
+| --- | --- | --- |
+| Linux | x86_64 | Required |
+| Linux | aarch64 | Required |
+| macOS | x86_64 | Required |
+| macOS | aarch64 | Required |
+| Windows | x86_64 | Required |
+| Windows | aarch64 | Required |
 
 **Constraints:**
 
@@ -25,19 +25,19 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 
 ### Technology Choices
 
-| Component            | Choice                     | Rationale                                                                          |
-|----------------------|----------------------------|------------------------------------------------------------------------------------|
-| MCP SDK              | `rmcp` (official Rust SDK) | Official implementation, maintained, tokio-based                                   |
-| Async Runtime        | Tokio                      | Required by rmcp, best ecosystem support                                           |
-| Configuration        | `figment`                  | Layered config with excellent error provenance, first-class serde/clap integration |
-| CLI                  | `clap`                     | Derive macros, env var support, shell completions, integrates with figment         |
-| Minimum Rust Version | 1.75+                      | Stable async traits, impl Trait in traits                                          |
-| License              | MIT OR Apache-2.0          | Standard dual license for Rust projects                                            |
+| Component | Choice | Rationale |
+| --- | --- | --- |
+| MCP SDK | `rmcp` (official Rust SDK) | Official implementation, maintained, tokio-based |
+| Async Runtime | Tokio | Required by rmcp, best ecosystem support |
+| Configuration | `figment` | Layered config with excellent error provenance, first-class serde/clap integration |
+| CLI | `clap` | Derive macros, env var support, shell completions, integrates with figment |
+| Minimum Rust Version | 1.75+ | Stable async traits, impl Trait in traits |
+| License | MIT OR Apache-2.0 | Standard dual license for Rust projects |
 
 ### Toolchain
 
-| File                  | Purpose                              |
-|-----------------------|--------------------------------------|
+| File | Purpose |
+| --- | --- |
 | `rust-toolchain.toml` | Pin toolchain version and components |
 
 **Configuration:**
@@ -217,10 +217,10 @@ From lowest to highest priority:
 
 ### Config File
 
-| Platform | Location                              |
-|----------|---------------------------------------|
-| Unix     | `~/.config/onshape-mcp/config.toml`   |
-| Windows  | `%APPDATA%\onshape-mcp\config.toml`   |
+| Platform | Location |
+| --- | --- |
+| Unix | `~/.config/onshape-mcp/config.toml` |
+| Windows | `%APPDATA%\onshape-mcp\config.toml` |
 
 Example config file:
 
@@ -242,14 +242,14 @@ All environment variables use the `ONSHAPE_MCP_` prefix.
 
 ### All Settings Reference
 
-| Setting               | Type                      | Default | Env Var                           | Config Key              | Description                                   |
-|-----------------------|---------------------------|---------|-----------------------------------|-------------------------|-----------------------------------------------|
-| Access Key            | `string`                  | —       | `ONSHAPE_MCP_ACCESS_KEY`          | `auth.access_key`       | Onshape API access key                        |
-| Secret Key            | `string`                  | —       | `ONSHAPE_MCP_SECRET_KEY`          | `auth.secret_key`       | Onshape API secret key                        |
-| Max Mode              | `read`/`modify`/`destroy` | `read`  | `ONSHAPE_MCP_MAX_MODE`            | `mode.max`              | Upper limit for permission mode               |
-| Initial Mode          | `read`/`modify`/`destroy` | `read`  | `ONSHAPE_MCP_INITIAL_MODE`        | `mode.initial`          | Starting permission mode (must be ≤ max_mode) |
-| Allow Mode Escalation | `bool`                    | `false` | `ONSHAPE_MCP_ALLOW_ESCALATION`    | `mode.allow_escalation` | Can AI change mode at runtime?                |
-| Auth Check Interval   | `duration`                | `5m`    | `ONSHAPE_MCP_AUTH_CHECK_INTERVAL` | `auth.check_interval`   | Periodic credential validation interval       |
+| Setting | Type | Default | Env Var | Config Key | Description |
+| --- | --- | --- | --- | --- | --- |
+| Access Key | `string` | — | `ONSHAPE_MCP_ACCESS_KEY` | `auth.access_key` | Onshape API access key |
+| Secret Key | `string` | — | `ONSHAPE_MCP_SECRET_KEY` | `auth.secret_key` | Onshape API secret key |
+| Max Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_MAX_MODE` | `mode.max` | Upper limit for permission mode |
+| Initial Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_INITIAL_MODE` | `mode.initial` | Starting permission mode (must be ≤ max_mode) |
+| Allow Mode Escalation | `bool` | `false` | `ONSHAPE_MCP_ALLOW_ESCALATION` | `mode.allow_escalation` | Can AI change mode at runtime? |
+| Auth Check Interval | `duration` | `5m` | `ONSHAPE_MCP_AUTH_CHECK_INTERVAL` | `auth.check_interval` | Periodic credential validation interval |
 
 ## MCP Server Functionality
 
@@ -267,20 +267,20 @@ Individuals first, with architecture that doesn't preclude teams.
 
 All MCP tools use the `onshape_` prefix to avoid collisions with other MCP servers.
 
-| Prefix         | Purpose                  | Example                    |
-|----------------|--------------------------|----------------------------|
-| `onshape_`     | Onshape API operations   | `onshape_list_documents`   |
-| `onshape_mcp_` | Server administration    | `onshape_mcp_get_mode`     |
+| Prefix | Purpose | Example |
+| --- | --- | --- |
+| `onshape_` | Onshape API operations | `onshape_list_documents` |
+| `onshape_mcp_` | Server administration | `onshape_mcp_get_mode` |
 
 **Build-time check:** A build-time test must verify that `onshape_mcp_` does not collide with any Onshape API endpoint names.
 
 ### Transport Support
 
-| Transport | Priority | Notes                 |
-|-----------|----------|-----------------------|
-| stdio     | P0       | Primary MCP transport |
-| HTTP/SSE  | P1       | Server-Sent Events    |
-| WebSocket | P2       | Bidirectional         |
+| Transport | Priority | Notes |
+| --- | --- | --- |
+| stdio | P0 | Primary MCP transport |
+| HTTP/SSE | P1 | Server-Sent Events |
+| WebSocket | P2 | Bidirectional |
 
 ### Permission Model
 
@@ -288,11 +288,11 @@ The server supports three permission modes controlling which tools are visible a
 
 #### Modes
 
-| Mode      | Tools Available               | Description         |
-|-----------|-------------------------------|---------------------|
-| `read`    | Read-only tools               | Query, list, export |
-| `modify`  | Read + non-destructive writes | Add, update, set    |
-| `destroy` | All tools                     | Delete, remove      |
+| Mode | Tools Available | Description |
+| --- | --- | --- |
+| `read` | Read-only tools | Query, list, export |
+| `modify` | Read + non-destructive writes | Add, update, set |
+| `destroy` | All tools | Delete, remove |
 
 #### Mode Configuration
 
@@ -307,15 +307,15 @@ Mode settings are configured via the standard configuration system. See [Configu
 
 Tools are hidden (not advertised) when the current mode doesn't permit them. This is cleaner than advertising tools that will be rejected.
 
-| Tool                     | Required Mode | `readOnlyHint` | `destructiveHint` |
-|--------------------------|---------------|----------------|-------------------|
-| `onshape_list_documents` | `read`        | `true`         | —                 |
-| `onshape_get_assembly`   | `read`        | `true`         | —                 |
-| `onshape_export_stl`     | `read`        | `true`         | —                 |
-| `onshape_set_variable`   | `modify`      | `false`        | `false`           |
-| `onshape_add_feature`    | `modify`      | `false`        | `false`           |
-| `onshape_update_feature` | `modify`      | `false`        | `false`           |
-| `onshape_delete_feature` | `destroy`     | `false`        | `true`            |
+| Tool | Required Mode | `readOnlyHint` | `destructiveHint` |
+| --- | --- | --- | --- |
+| `onshape_list_documents` | `read` | `true` | — |
+| `onshape_get_assembly` | `read` | `true` | — |
+| `onshape_export_stl` | `read` | `true` | — |
+| `onshape_set_variable` | `modify` | `false` | `false` |
+| `onshape_add_feature` | `modify` | `false` | `false` |
+| `onshape_update_feature` | `modify` | `false` | `false` |
+| `onshape_delete_feature` | `destroy` | `false` | `true` |
 
 #### MCP Tool Annotations
 
@@ -330,50 +330,50 @@ These are advisory hints for MCP clients, not security enforcement.
 
 Always visible (read-only operations on the server itself).
 
-| Tool                       | Description                                                                 |
-|----------------------------|-----------------------------------------------------------------------------|
-| `onshape_mcp_get_mode`     | Returns current mode, max mode, escalation allowed                          |
-| `onshape_mcp_request_mode` | Request mode change (escalate or de-escalate, within max)                   |
-| `onshape_mcp_auth_status`  | Returns auth status (valid/invalid/expired), last check time, connectivity  |
+| Tool | Description |
+| --- | --- |
+| `onshape_mcp_get_mode` | Returns current mode, max mode, escalation allowed |
+| `onshape_mcp_request_mode` | Request mode change (escalate or de-escalate, within max) |
+| `onshape_mcp_auth_status` | Returns auth status (valid/invalid/expired), last check time, connectivity |
 
 ### MCP Tools — Onshape API
 
 #### Phase A: Read-Only Foundation (MVP)
 
-| Tool                             | Mode   | Description                                 |
-|----------------------------------|--------|---------------------------------------------|
-| **Documents**                    |        |                                             |
-| `onshape_list_documents`         | `read` | List user's documents (with search/filter)  |
-| `onshape_get_document`           | `read` | Get document metadata, workspaces, versions |
-| `onshape_list_elements`          | `read` | List elements (tabs) in a document          |
-| **Part Studios**                 |        |                                             |
-| `onshape_get_part_studio`        | `read` | Get part studio metadata                    |
-| `onshape_list_features`          | `read` | List features in a part studio              |
-| `onshape_get_feature`            | `read` | Get details of a specific feature           |
-| `onshape_list_parts`             | `read` | List parts in a part studio                 |
-| `onshape_get_mass_properties`    | `read` | Get mass, volume, center of mass            |
-| `onshape_get_bounding_box`       | `read` | Get bounding box                            |
-| **Assemblies**                   |        |                                             |
-| `onshape_get_assembly`           | `read` | Get assembly definition                     |
-| `onshape_get_bom`                | `read` | Get bill of materials                       |
-| `onshape_list_instances`         | `read` | List parts/subassemblies                    |
-| **Variables & Configurations**   |        |                                             |
-| `onshape_list_variables`         | `read` | List variables in a part studio             |
-| `onshape_list_configurations`    | `read` | List configuration options                  |
+| Tool | Mode | Description |
+| --- | --- | --- |
+| **Documents** | | |
+| `onshape_list_documents` | `read` | List user's documents (with search/filter) |
+| `onshape_get_document` | `read` | Get document metadata, workspaces, versions |
+| `onshape_list_elements` | `read` | List elements (tabs) in a document |
+| **Part Studios** | | |
+| `onshape_get_part_studio` | `read` | Get part studio metadata |
+| `onshape_list_features` | `read` | List features in a part studio |
+| `onshape_get_feature` | `read` | Get details of a specific feature |
+| `onshape_list_parts` | `read` | List parts in a part studio |
+| `onshape_get_mass_properties` | `read` | Get mass, volume, center of mass |
+| `onshape_get_bounding_box` | `read` | Get bounding box |
+| **Assemblies** | | |
+| `onshape_get_assembly` | `read` | Get assembly definition |
+| `onshape_get_bom` | `read` | Get bill of materials |
+| `onshape_list_instances` | `read` | List parts/subassemblies |
+| **Variables & Configurations** | | |
+| `onshape_list_variables` | `read` | List variables in a part studio |
+| `onshape_list_configurations` | `read` | List configuration options |
 
 #### Phase B: Export (MVP)
 
 Export tools pass through to Onshape's export API. Tool names mirror Onshape's format names. All formats supported by Onshape are supported — examples include:
 
-| Tool                         | Mode   | Description                              |
-|------------------------------|--------|------------------------------------------|
-| `onshape_export_stl`         | `read` | Export part/assembly as STL              |
-| `onshape_export_step`        | `read` | Export as STEP                           |
-| `onshape_export_gltf`        | `read` | Export as glTF                           |
-| `onshape_export_parasolid`   | `read` | Export as Parasolid                      |
-| `onshape_export_iges`        | `read` | Export as IGES                           |
-| `onshape_export_drawing_pdf` | `read` | Export drawing as PDF                    |
-| ...                          | `read` | Other formats as provided by Onshape API |
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `onshape_export_stl` | `read` | Export part/assembly as STL |
+| `onshape_export_step` | `read` | Export as STEP |
+| `onshape_export_gltf` | `read` | Export as glTF |
+| `onshape_export_parasolid` | `read` | Export as Parasolid |
+| `onshape_export_iges` | `read` | Export as IGES |
+| `onshape_export_drawing_pdf` | `read` | Export drawing as PDF |
+| ... | `read` | Other formats as provided by Onshape API |
 
 #### Export Destination
 
@@ -381,10 +381,10 @@ Exports support two modes: returning a download URL (default) or saving to a loc
 
 **Parameters:**
 
-| Parameter   | Type      | Default | Description                                    |
-|-------------|-----------|---------|------------------------------------------------|
-| `save_to`   | `string?` | `null`  | Local file path. If omitted, returns URL only. |
-| `overwrite` | `bool`    | `false` | If `false`, fail when file exists.             |
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `save_to` | `string?` | `null` | Local file path. If omitted, returns URL only. |
+| `overwrite` | `bool` | `false` | If `false`, fail when file exists. |
 
 **Return Value (URL mode):**
 
@@ -407,38 +407,38 @@ Exports support two modes: returning a download URL (default) or saving to a loc
 
 **Error Types (local file mode):**
 
-| Error               | Description                              |
-|---------------------|------------------------------------------|
-| `file_exists`       | File exists and `overwrite=false`        |
-| `permission_denied` | Cannot write to path                     |
-| `out_of_space`      | Insufficient disk space                  |
-| `invalid_path`      | Path invalid or directory doesn't exist  |
-| `download_failed`   | Failed to download from Onshape          |
+| Error | Description |
+| --- | --- |
+| `file_exists` | File exists and `overwrite=false` |
+| `permission_denied` | Cannot write to path |
+| `out_of_space` | Insufficient disk space |
+| `invalid_path` | Path invalid or directory doesn't exist |
+| `download_failed` | Failed to download from Onshape |
 
 **Tool Description Note:** Export tools will document that download URLs are temporary (typically 5-15 minutes; exact expiration in response if available from API). Use `save_to` to download immediately if the file will be needed later.
 
 #### Phase C: Modify Operations
 
-| Tool                        | Mode     | Description                     |
-|-----------------------------|----------|---------------------------------|
-| `onshape_set_variable`      | `modify` | Update a variable value         |
-| `onshape_set_configuration` | `modify` | Set configuration values        |
-| `onshape_add_feature`       | `modify` | Add a feature to a part studio  |
-| `onshape_update_feature`    | `modify` | Modify an existing feature      |
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `onshape_set_variable` | `modify` | Update a variable value |
+| `onshape_set_configuration` | `modify` | Set configuration values |
+| `onshape_add_feature` | `modify` | Add a feature to a part studio |
+| `onshape_update_feature` | `modify` | Modify an existing feature |
 
 #### Phase D: Destroy Operations
 
-| Tool                     | Mode      | Description      |
-|--------------------------|-----------|------------------|
+| Tool | Mode | Description |
+| --- | --- | --- |
 | `onshape_delete_feature` | `destroy` | Remove a feature |
 
 #### Phase E: FeatureScript (Future)
 
-| Tool                             | Mode      | Description                        |
-|----------------------------------|-----------|------------------------------------|
-| `onshape_eval_featurescript`     | `destroy` | Execute FeatureScript expressions  |
-| `onshape_get_featurescript_spec` | `read`    | Get FeatureScript function specs   |
-| `onshape_list_custom_features`   | `read`    | List available custom features     |
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `onshape_eval_featurescript` | `destroy` | Execute FeatureScript expressions |
+| `onshape_get_featurescript_spec` | `read` | Get FeatureScript function specs |
+| `onshape_list_custom_features` | `read` | List available custom features |
 
 ### Tool Parameters
 
@@ -461,10 +461,10 @@ Onshape uses compound identifiers. Tools accept these as separate parameters:
 
 ### Supported Methods
 
-| Method    | Status                 | Notes                        |
-|-----------|------------------------|------------------------------|
-| API Keys  | Initial implementation | Personal use, single user    |
-| OAuth 2.0 | Future                 | Multi-user apps, team access |
+| Method | Status | Notes |
+| --- | --- | --- |
+| API Keys | Initial implementation | Personal use, single user |
+| OAuth 2.0 | Future | Multi-user apps, team access |
 
 ### Credential Sources
 
@@ -480,10 +480,10 @@ secret_key = "..."
 
 **Environment variables:**
 
-| Variable                 | Description              |
-|--------------------------|--------------------------|
-| `ONSHAPE_MCP_ACCESS_KEY` | Onshape API access key   |
-| `ONSHAPE_MCP_SECRET_KEY` | Onshape API secret key   |
+| Variable | Description |
+| --- | --- |
+| `ONSHAPE_MCP_ACCESS_KEY` | Onshape API access key |
+| `ONSHAPE_MCP_SECRET_KEY` | Onshape API secret key |
 
 **Future credential sources** (to be implemented):
 
@@ -500,12 +500,12 @@ If permissions are too open, the server **blocks access** and informs the user o
 
 ### Credential Validation
 
-| Event               | Behavior                                                                                                     |
-|---------------------|--------------------------------------------------------------------------------------------------------------|
-| Startup             | Validate credentials, fail if invalid                                                                        |
-| Periodic            | Re-validate at configured interval (see `auth.check_interval` in [Configuration](#all-settings-reference))   |
-| API call            | Updates auth status, resets periodic check timer                                                             |
-| Invalid credentials | Fail API calls with clear error, emit MCP notification                                                       |
+| Event | Behavior |
+| --- | --- |
+| Startup | Validate credentials, fail if invalid |
+| Periodic | Re-validate at configured interval (see `auth.check_interval` in [Configuration](#all-settings-reference)) |
+| API call | Updates auth status, resets periodic check timer |
+| Invalid credentials | Fail API calls with clear error, emit MCP notification |
 
 **No caching:** If credentials become invalid mid-session, all subsequent API calls fail until credentials are fixed.
 
@@ -555,38 +555,38 @@ pub enum OnshapeApiError {
 
 ### HTTP Status Code Mapping
 
-| HTTP Code | Error Type             |
-|-----------|------------------------|
-| 401       | `AuthenticationFailed` |
-| 403       | `PermissionDenied`     |
-| 404       | `NotFound`             |
-| 408       | `Timeout`              |
-| 429       | `RateLimited`          |
-| 500, 503  | `ServerError`          |
+| HTTP Code | Error Type |
+| --- | --- |
+| 401 | `AuthenticationFailed` |
+| 403 | `PermissionDenied` |
+| 404 | `NotFound` |
+| 408 | `Timeout` |
+| 429 | `RateLimited` |
+| 500, 503 | `ServerError` |
 
 ### Error Context
 
 All errors include context for debugging:
 
-| Field        | Description                              |
-|--------------|------------------------------------------|
+| Field | Description |
+| --- | --- |
 | `request_id` | Onshape request ID from response headers |
-| `endpoint`   | API endpoint called                      |
-| `timestamp`  | When the error occurred                  |
+| `endpoint` | API endpoint called |
+| `timestamp` | When the error occurred |
 
 ### MCP Error Mapping
 
 Hybrid approach: standard JSON-RPC codes where they fit, custom codes for actionable distinctions.
 
-| Error Type             | MCP Code | Rationale               |
-|------------------------|----------|-------------------------|
-| `AuthenticationFailed` | `-32603` | Internal error          |
-| `PermissionDenied`     | `-32603` | Internal error          |
-| `NotFound`             | `-32602` | Invalid params (bad ID) |
-| `RateLimited`          | `-32000` | Custom: retryable       |
-| `Timeout`              | `-32000` | Custom: retryable       |
-| `ServerError`          | `-32603` | Internal error          |
-| `CadOperationFailed`   | `-32603` | Internal error          |
+| Error Type | MCP Code | Rationale |
+| --- | --- | --- |
+| `AuthenticationFailed` | `-32603` | Internal error |
+| `PermissionDenied` | `-32603` | Internal error |
+| `NotFound` | `-32602` | Invalid params (bad ID) |
+| `RateLimited` | `-32000` | Custom: retryable |
+| `Timeout` | `-32000` | Custom: retryable |
+| `ServerError` | `-32603` | Internal error |
+| `CadOperationFailed` | `-32603` | Internal error |
 
 All MCP errors include structured `data` field:
 
@@ -608,11 +608,11 @@ All MCP errors include structured `data` field:
 
 The standard `tracing` library relies on global/thread-local subscriber state, which conflicts with sans-IO principles. After researching the ecosystem:
 
-| Crate             | Purpose                     | Sans-IO Compatible |
-|-------------------|-----------------------------|--------------------|
-| `tracing`         | Core instrumentation macros | No (global state)  |
-| `tracing-tunnel`  | Serializable event capture  | Yes                |
-| `tracing-capture` | Testing/inspection          | Partial            |
+| Crate | Purpose | Sans-IO Compatible |
+| --- | --- | --- |
+| `tracing` | Core instrumentation macros | No (global state) |
+| `tracing-tunnel` | Serializable event capture | Yes |
+| `tracing-capture` | Testing/inspection | Partial |
 
 `tracing-tunnel` provides the foundation:
 
@@ -660,16 +660,16 @@ crates/
     └── src/lib.rs
 ```
 
-| Crate                   | Purpose                                                                     |
-|-------------------------|-----------------------------------------------------------------------------|
-| `tracing-sansio`        | `Captured<T>` type, `capture_tracing()` function, re-exports `TracingEvent` |
-| `tracing-sansio-macros` | `#[capture_tracing]` attribute macro                                        |
+| Crate | Purpose |
+| --- | --- |
+| `tracing-sansio` | `Captured<T>` type, `capture_tracing()` function, re-exports `TracingEvent` |
+| `tracing-sansio-macros` | `#[capture_tracing]` attribute macro |
 
 ### Key Types
 
-| Type           | Description                                                    |
-|----------------|----------------------------------------------------------------|
-| `Captured<T>`  | Wrapper containing `result: T` and `events: Vec<TracingEvent>` |
+| Type | Description |
+| --- | --- |
+| `Captured<T>` | Wrapper containing `result: T` and `events: Vec<TracingEvent>` |
 | `TracingEvent` | Re-exported from `tracing-tunnel`; represents spans and events |
 
 ### Dependencies
@@ -686,10 +686,10 @@ crates/
 
 ### Limitations
 
-| Limitation                    | Workaround                                            |
-|-------------------------------|-------------------------------------------------------|
-| Sync functions only (macro)   | Use `capture_tracing()` closure for async             |
-| Thread-local capture          | Events from spawned threads not captured              |
+| Limitation | Workaround |
+| --- | --- |
+| Sync functions only (macro) | Use `capture_tracing()` closure for async |
+| Thread-local capture | Events from spawned threads not captured |
 | Bounded channel (default 256) | Use `capture_tracing_with_capacity()` for high-volume |
 
 ### Integration Pattern
@@ -725,16 +725,16 @@ This section documents the manual configuration required in GitHub repository se
 
 #### Branch Protection (main)
 
-| Setting                     | Value                               |
-|-----------------------------|-------------------------------------|
-| Require PR before merge     | Yes                                 |
-| Required approvals          | 0 (increase when contributors join) |
-| Require status checks       | Yes — `alls-green` job only         |
-| Require merge queue         | Yes                                 |
-| Require branches up-to-date | No (merge queue handles this)       |
-| Show update branch button   | Always                              |
-| Require signed commits      | Yes                                 |
-| Include administrators      | Yes                                 |
+| Setting | Value |
+| --- | --- |
+| Require PR before merge | Yes |
+| Required approvals | 0 (increase when contributors join) |
+| Require status checks | Yes — `alls-green` job only |
+| Require merge queue | Yes |
+| Require branches up-to-date | No (merge queue handles this) |
+| Show update branch button | Always |
+| Require signed commits | Yes |
+| Include administrators | Yes |
 
 #### Merge Queue
 
@@ -742,34 +742,34 @@ Merge queue enabled to guarantee main stays green. PRs merge only after passing 
 
 #### Merge Strategy
 
-| Option        | Enabled    |
-|---------------|------------|
+| Option | Enabled |
+| --- | --- |
 | Merge commits | Yes (only) |
-| Squash merge  | No         |
-| Rebase merge  | No         |
+| Squash merge | No |
+| Rebase merge | No |
 
 #### Other Settings
 
-| Setting                   | Value                                                                       |
-|---------------------------|-----------------------------------------------------------------------------|
-| Description               | "A Rust-based MCP (Model Context Protocol) server for Onshape integration." |
-| Default branch            | `main`                                                                      |
-| Auto-delete head branches | Yes                                                                         |
-| Discussions               | Disabled                                                                    |
-| Wiki                      | Disabled                                                                    |
-| Projects                  | Disabled                                                                    |
-| Issues                    | Enabled                                                                     |
-| Pull Requests             | Enabled                                                                     |
+| Setting | Value |
+| --- | --- |
+| Description | "A Rust-based MCP (Model Context Protocol) server for Onshape integration." |
+| Default branch | `main` |
+| Auto-delete head branches | Yes |
+| Discussions | Disabled |
+| Wiki | Disabled |
+| Projects | Disabled |
+| Issues | Enabled |
+| Pull Requests | Enabled |
 
 #### GitHub App
 
 Create a GitHub App for CI to run on auto-generated PRs (e.g., OpenAPI spec updates):
 
-| Setting      | Value                                     |
-|--------------|-------------------------------------------|
-| Permissions  | `contents: write`, `pull-requests: write` |
-| Installation | Repository only                           |
-| Webhook      | Disabled (not needed)                     |
+| Setting | Value |
+| --- | --- |
+| Permissions | `contents: write`, `pull-requests: write` |
+| Installation | Repository only |
+| Webhook | Disabled (not needed) |
 
 Store credentials in repository secrets:
 
@@ -778,11 +778,11 @@ Store credentials in repository secrets:
 
 ### Workflow Structure
 
-| File                                        | Purpose                                                   |
-|---------------------------------------------|-----------------------------------------------------------|
-| `.github/workflows/ci.yml`                  | Entry point, Rust version matrix, alls-green aggregation  |
-| `.github/workflows/rust.yml`                | Reusable workflow, platform matrix, all checks            |
-| `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR            |
+| File | Purpose |
+| --- | --- |
+| `.github/workflows/ci.yml` | Entry point, Rust version matrix, alls-green aggregation |
+| `.github/workflows/rust.yml` | Reusable workflow, platform matrix, all checks |
+| `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR |
 
 ### CI Architecture
 
@@ -830,19 +830,19 @@ Store credentials in repository secrets:
 
 #### Rust Version Matrix
 
-| Toolchain     | Required | Notes                        |
-|---------------|----------|------------------------------|
-| MSRV (1.75)   | Yes      | From `rust-toolchain.toml`   |
-| Latest stable | Yes      | Primary development target   |
-| Beta          | No       | Allowed to fail              |
+| Toolchain | Required | Notes |
+| --- | --- | --- |
+| MSRV (1.75) | Yes | From `rust-toolchain.toml` |
+| Latest stable | Yes | Primary development target |
+| Beta | No | Allowed to fail |
 
 #### Platform Matrix
 
-| OS             | Architecture    |
-|----------------|-----------------|
+| OS | Architecture |
+| --- | --- |
 | Linux (ubuntu) | x86_64, aarch64 |
-| macOS          | x86_64, aarch64 |
-| Windows        | x86_64, aarch64 |
+| macOS | x86_64, aarch64 |
+| Windows | x86_64, aarch64 |
 
 **Total jobs:**
 
@@ -852,22 +852,22 @@ Store credentials in repository secrets:
 
 ### CI Tooling
 
-| Tool                                                                                                | Purpose                                                  |
-|-----------------------------------------------------------------------------------------------------|----------------------------------------------------------|
-| [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust installation, reads `rust-toolchain.toml`, caching  |
-| [re-actors/alls-green](https://github.com/re-actors/alls-green)                                     | Aggregate job status, allow beta failures                |
+| Tool | Purpose |
+| --- | --- |
+| [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust installation, reads `rust-toolchain.toml`, caching |
+| [re-actors/alls-green](https://github.com/re-actors/alls-green) | Aggregate job status, allow beta failures |
 
 **GitHub branch protection:** Only the `alls-green` job is required.
 
 ### Checks
 
-| Check            | Tool                | Run On                      |
-|------------------|---------------------|-----------------------------|
-| Formatting       | `cargo fmt --check` | All matrix combinations     |
-| Linting          | `cargo clippy`      | All matrix combinations     |
-| Tests            | `cargo test`        | All matrix combinations     |
-| Dependency audit | `cargo deny`        | All matrix combinations     |
-| Coverage         | `cargo-llvm-cov`    | Stable only, all platforms  |
+| Check | Tool | Run On |
+| --- | --- | --- |
+| Formatting | `cargo fmt --check` | All matrix combinations |
+| Linting | `cargo clippy` | All matrix combinations |
+| Tests | `cargo test` | All matrix combinations |
+| Dependency audit | `cargo deny` | All matrix combinations |
+| Coverage | `cargo-llvm-cov` | Stable only, all platforms |
 
 ### PR Title Enforcement
 
@@ -903,11 +903,11 @@ panic = "deny"
 
 ### Testing Strategy
 
-| Test Type         | Location               | Coverage Target      |
-|-------------------|------------------------|----------------------|
-| Unit tests        | `crates/*/src/**/*.rs` | 100% with exclusions |
-| Integration tests | `tests/`               | Key workflows        |
-| Doc tests         | Inline                 | All public APIs      |
+| Test Type | Location | Coverage Target |
+| --- | --- | --- |
+| Unit tests | `crates/*/src/**/*.rs` | 100% with exclusions |
+| Integration tests | `tests/` | Key workflows |
+| Doc tests | Inline | All public APIs |
 
 ### Coverage Requirements
 
@@ -920,10 +920,10 @@ panic = "deny"
 
 #### Enforcement Strategy
 
-| Check            | Behavior                                                                               |
-|------------------|----------------------------------------------------------------------------------------|
+| Check | Behavior |
+| --- | --- |
 | Project coverage | Ratchet — fail if drops more than 2% from main (catches accidental loss of code/tests) |
-| Patch coverage   | 100% enforced — new code must be fully covered or explicitly excluded                  |
+| Patch coverage | 100% enforced — new code must be fully covered or explicitly excluded |
 
 Codecov configuration:
 
@@ -960,19 +960,19 @@ Err(e) => {
 
 The Onshape OpenAPI specification is stored locally for reference and code generation.
 
-| Setting  | Value                                        |
-|----------|----------------------------------------------|
-| Location | `specs/onshape-openapi.json`                 |
-| Source   | `https://cad.onshape.com/api/v6/openapi`     |
-| License  | Apache 2.0 (see `specs/ONSHAPE-API-LICENSE`) |
-| Format   | Pretty-printed JSON                          |
+| Setting | Value |
+| --- | --- |
+| Location | `specs/onshape-openapi.json` |
+| Source | `https://cad.onshape.com/api/v6/openapi` |
+| License | Apache 2.0 (see `specs/ONSHAPE-API-LICENSE`) |
+| Format | Pretty-printed JSON |
 
 #### Update Workflow
 
-| Trigger | Schedule          |
-|---------|-------------------|
-| Nightly | 09:00 UTC         |
-| Manual  | workflow_dispatch |
+| Trigger | Schedule |
+| --- | --- |
+| Nightly | 09:00 UTC |
+| Manual | workflow_dispatch |
 
 **Tooling:**
 
@@ -1013,20 +1013,20 @@ cargo llvm-cov --all-features --workspace
 
 #### Hook Configuration
 
-| Hook                   | Source                   | Stage      | Purpose                |
-|------------------------|--------------------------|------------|------------------------|
-| `trailing-whitespace`  | pre-commit-hooks         | pre-commit | Clean whitespace       |
-| `end-of-file-fixer`    | pre-commit-hooks         | pre-commit | Consistent EOF         |
-| `check-toml`           | pre-commit-hooks         | pre-commit | TOML syntax            |
-| `check-yaml`           | pre-commit-hooks         | pre-commit | YAML syntax            |
-| `check-merge-conflict` | pre-commit-hooks         | pre-commit | Catch conflict markers |
-| `typos`                | crate-ci/typos           | pre-commit | Spell checking         |
-| `actionlint`           | rhysd/actionlint         | pre-commit | GitHub Actions linting |
-| `action-validator`     | mpalmer/action-validator | pre-commit | Action/workflow schema |
-| `cargo fmt --check`    | local                    | pre-commit | Formatting             |
-| `cargo clippy`         | local                    | pre-commit | Linting                |
-| `cargo test`           | local                    | manual     | Tests                  |
-| `cargo deny`           | local                    | manual     | Dependency audit       |
+| Hook | Source | Stage | Purpose |
+| --- | --- | --- | --- |
+| `trailing-whitespace` | pre-commit-hooks | pre-commit | Clean whitespace |
+| `end-of-file-fixer` | pre-commit-hooks | pre-commit | Consistent EOF |
+| `check-toml` | pre-commit-hooks | pre-commit | TOML syntax |
+| `check-yaml` | pre-commit-hooks | pre-commit | YAML syntax |
+| `check-merge-conflict` | pre-commit-hooks | pre-commit | Catch conflict markers |
+| `typos` | crate-ci/typos | pre-commit | Spell checking |
+| `actionlint` | rhysd/actionlint | pre-commit | GitHub Actions linting |
+| `action-validator` | mpalmer/action-validator | pre-commit | Action/workflow schema |
+| `cargo fmt --check` | local | pre-commit | Formatting |
+| `cargo clippy` | local | pre-commit | Linting |
+| `cargo test` | local | manual | Tests |
+| `cargo deny` | local | manual | Dependency audit |
 
 **Stages:**
 
@@ -1035,19 +1035,19 @@ cargo llvm-cov --all-features --workspace
 
 #### Configuration Files
 
-| File                      | Purpose                    |
-|---------------------------|----------------------------|
-| `.pre-commit-config.yaml` | Hook definitions           |
-| `typos.toml`              | Spell check word allowlist |
+| File | Purpose |
+| --- | --- |
+| `.pre-commit-config.yaml` | Hook definitions |
+| `typos.toml` | Spell check word allowlist |
 
 ## Documentation
 
 ### Tooling
 
-| Tool    | Purpose                                    |
-|---------|--------------------------------------------|
-| rustdoc | API documentation from source              |
-| mdBook  | Prose documentation (design docs, guides)  |
+| Tool | Purpose |
+| --- | --- |
+| rustdoc | API documentation from source |
+| mdBook | Prose documentation (design docs, guides) |
 
 ### Structure
 
@@ -1075,10 +1075,10 @@ docs/
 
 Users can install the server via:
 
-| Method             | Description                                  |
-|--------------------|----------------------------------------------|
-| `cargo install`    | From crates.io                               |
-| Pre-built binaries | GitHub releases for all supported platforms  |
+| Method | Description |
+| --- | --- |
+| `cargo install` | From crates.io |
+| Pre-built binaries | GitHub releases for all supported platforms |
 
 *Details to be discussed — see [Pending](#pending).*
 
@@ -1167,9 +1167,9 @@ Items to address later in the project:
 
 ## Version History
 
-| Version | Date | Changes              |
-|---------|------|----------------------|
-| 0.1.0   | TBD  | Initial requirements |
+| Version | Date | Changes |
+| --- | --- | --- |
+| 0.1.0 | TBD | Initial requirements |
 
 ---
 
