@@ -15,7 +15,7 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 | macOS | x86_64 | Required |
 | macOS | aarch64 | Required |
 | Windows | x86_64 | Required |
-| Windows | aarch64 | Required |
+| Windows | aarch64 | Deferred (ecosystem support insufficient) |
 
 **Constraints:**
 
@@ -842,13 +842,15 @@ Store credentials in repository secrets:
 | --- | --- |
 | Linux (ubuntu) | x86_64, aarch64 |
 | macOS | x86_64, aarch64 |
-| Windows | x86_64, aarch64 |
+| Windows | x86_64 |
+
+**Note:** Windows aarch64 is excluded due to insufficient ecosystem support.
 
 **Total jobs:**
 
-- Checks: 3 rust × 6 platforms = 18 jobs
-- Coverage: 1 rust (stable) × 6 platforms = 6 jobs
-- **Total: 24 jobs** (plus alls-green)
+- Checks: 3 rust × 5 platforms = 15 jobs
+- Coverage: 1 rust (stable) × 5 platforms = 5 jobs
+- **Total: 20 jobs** (plus alls-green)
 
 ### CI Tooling
 

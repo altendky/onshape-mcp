@@ -21,6 +21,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.library.outputs.matrix).axes.os }}
         arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
+        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
