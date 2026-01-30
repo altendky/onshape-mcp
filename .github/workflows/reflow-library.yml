@@ -44,8 +44,8 @@ jobs:
             emoji: 🌀
     steps:
       - run: |
-        echo "This job never runs"
-        false
+          echo "This job never runs"
+          false
 
   generate:
     name: Generate library
