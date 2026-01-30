@@ -2,4 +2,4 @@
 
 For project requirements, architecture, and conventions, see:
 
-- [Design Document](docs/src/project/design.md)
+- [Project Documentation](docs/src/project/index.md)
