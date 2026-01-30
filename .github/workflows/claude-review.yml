@@ -40,4 +40,6 @@ jobs:
             - `gh pr review --comment -b "feedback"` for neutral feedback
 
           claude_args: |
+            --model claude-opus-4-5-20251101
+            --max-turns 15
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr review:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
