@@ -1,1 +1,2 @@
-/.opencode/
+/.opencode/*
+!/.opencode/commands/
