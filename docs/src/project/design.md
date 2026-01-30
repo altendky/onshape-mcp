@@ -1013,18 +1013,20 @@ cargo llvm-cov --all-features --workspace
 
 #### Hook Configuration
 
-| Hook                   | Source           | Stage      | Purpose                |
-|------------------------|------------------|------------|------------------------|
-| `trailing-whitespace`  | pre-commit-hooks | pre-commit | Clean whitespace       |
-| `end-of-file-fixer`    | pre-commit-hooks | pre-commit | Consistent EOF         |
-| `check-toml`           | pre-commit-hooks | pre-commit | TOML syntax            |
-| `check-yaml`           | pre-commit-hooks | pre-commit | YAML syntax            |
-| `check-merge-conflict` | pre-commit-hooks | pre-commit | Catch conflict markers |
-| `typos`                | crate-ci/typos   | pre-commit | Spell checking         |
-| `cargo fmt --check`    | local            | pre-commit | Formatting             |
-| `cargo clippy`         | local            | pre-commit | Linting                |
-| `cargo test`           | local            | manual     | Tests                  |
-| `cargo deny`           | local            | manual     | Dependency audit       |
+| Hook                   | Source                   | Stage      | Purpose                |
+|------------------------|--------------------------|------------|------------------------|
+| `trailing-whitespace`  | pre-commit-hooks         | pre-commit | Clean whitespace       |
+| `end-of-file-fixer`    | pre-commit-hooks         | pre-commit | Consistent EOF         |
+| `check-toml`           | pre-commit-hooks         | pre-commit | TOML syntax            |
+| `check-yaml`           | pre-commit-hooks         | pre-commit | YAML syntax            |
+| `check-merge-conflict` | pre-commit-hooks         | pre-commit | Catch conflict markers |
+| `typos`                | crate-ci/typos           | pre-commit | Spell checking         |
+| `actionlint`           | rhysd/actionlint         | pre-commit | GitHub Actions linting |
+| `action-validator`     | mpalmer/action-validator | pre-commit | Action/workflow schema |
+| `cargo fmt --check`    | local                    | pre-commit | Formatting             |
+| `cargo clippy`         | local                    | pre-commit | Linting                |
+| `cargo test`           | local                    | manual     | Tests                  |
+| `cargo deny`           | local                    | manual     | Dependency audit       |
 
 **Stages:**
 
