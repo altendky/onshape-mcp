@@ -36,7 +36,6 @@ description: Research, assess, and address a GitHub issue
 7. **Check repository status:**
    - Identify the default branch (typically `main` or `master`)
    - If currently on a non-default branch, ask the user if this is intentional before proceeding
-   - If there are uncommitted changes, ask the user how to proceed (options: stash changes, commit changes first, discard changes, or abort)
    - If there are uncommitted changes, ask the user how to proceed before continuing
 
 8. **Execute:**
