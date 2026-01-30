@@ -1,0 +1,17 @@
+# Markdownlint configuration
+# See: https://github.com/DavidAnson/markdownlint
+
+# This project uses semantic line breaks (one sentence per line) for better
+# diffs and easier editing. See: https://sembr.org/
+#
+# Long lines are intentional and should not be wrapped at arbitrary positions.
+
+# Automatically respect .gitignore
+gitignore: true
+
+config:
+  # Disable line length checking - we use semantic newlines
+  MD013: false
+  # Use compact table style (single space around content, no alignment padding)
+  MD060:
+    style: "compact"
