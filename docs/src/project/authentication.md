@@ -35,7 +35,13 @@ secret_key = "..."
 The config file contains secrets and must have restricted permissions:
 
 - **Unix:** `0600` (owner read/write only)
-- **Windows:** Equivalent ACL restrictions
+- **Windows:** File accessible only to the owner account (remove inherited permissions and grant only the owner read/write access)
+
+  To set Windows permissions via command line:
+
+  ```cmd
+  icacls "path\to\config.toml" /inheritance:r /grant:r "%USERNAME%:(R,W)"
+  ```
 
 If permissions are too open, the server **blocks access** and informs the user of the issue.
 
