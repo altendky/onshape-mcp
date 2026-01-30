@@ -10,7 +10,7 @@ os:
     emoji: 🍎
     runs-on:
       arm: macos-latest
-      intel: macos-13
+      intel: macos-15-intel
   - name: Windows
     matrix: windows
     emoji: 🪟
