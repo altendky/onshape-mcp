@@ -54,5 +54,5 @@ If permissions are too open, the server **blocks access** and informs the user o
 
 The server emits MCP notifications for auth status changes:
 
-- `onshape/auth/invalid` — Credentials became invalid
-- `onshape/auth/restored` — Credentials are valid again
+- `notifications/onshape/auth/invalid` — Credentials became invalid
+- `notifications/onshape/auth/restored` — Credentials are valid again
