@@ -1,7 +1,3 @@
-# Rust build artifacts
-/target/
-
-# OpenCode
 /.opencode/*
 !/.opencode/commands/
 /target/
