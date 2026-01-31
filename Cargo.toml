@@ -1,0 +1,23 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/altendky/onshape-mcp"
+homepage = "https://github.com/altendky/onshape-mcp"
+description = "A Rust-based MCP (Model Context Protocol) server for Onshape integration"
+keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
+categories = ["development-tools", "api-bindings"]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
