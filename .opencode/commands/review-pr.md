@@ -50,7 +50,7 @@ description: Review a GitHub pull request with inline comments
 6. **Determine review type:**
    - If there are ANY inline comments about issues or improvements: **REQUEST_CHANGES**
    - If everything looks good as-is with no comments needed: **APPROVE**
-   - Never use COMMENT
+   - Never use COMMENT — reviews should drive clear action: if there is anything to consider (a noted bug, a suggestion, or a clarifying question), use REQUEST_CHANGES to block until addressed; otherwise APPROVE so the PR can move forward. COMMENT leaves PRs in an ambiguous state where feedback exists but no decision is made.
 
 7. **Submit review:**
    - Create JSON payload with:
