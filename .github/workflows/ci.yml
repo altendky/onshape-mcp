@@ -27,18 +27,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      # lychee only has compatible release assets for Linux
-      # (Windows is .exe not archive, macOS uses 'macos' not 'darwin')
       - uses: jaxxstorm/action-install-gh-release@v1
-        if: runner.os == 'Linux'
         with:
           repo: lycheeverse/lychee
           cache: enable
       - uses: pre-commit/action@v3.0.1
-        env:
-          # Skip lychee on non-Linux since we can't install it there.
-          # Link checking is platform-independent so running on Linux is sufficient.
-          SKIP: ${{ runner.os != 'Linux' && 'lychee' || '' }}
 
   all:
     name: all
