@@ -10,7 +10,7 @@ This section documents the manual configuration required in GitHub repository se
 | --------- | ------- |
 | Require PR before merge | Yes |
 | Required approvals | 0 (increase when contributors join) |
-| Require status checks | Yes — `alls-green` job only |
+| Require status checks | Yes — `all` job only |
 | Require merge queue | Yes |
 | Require branches up-to-date | No (merge queue handles this) |
 | Show update branch button | Always |
@@ -61,55 +61,121 @@ Store credentials in repository secrets:
 
 | File | Purpose |
 | ------ | --------- |
-| `.github/workflows/ci.yml` | Entry point, Rust version matrix, alls-green aggregation |
-| `.github/workflows/rust.yml` | Reusable workflow, platform matrix, all checks |
-| `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR |
+| `.github/workflows/ci.yml` | Entry point, platform matrix, pre-commit checks, `all` job aggregation |
+| `.github/workflows/reflow-library.yml` | Reusable workflow that outputs matrix configuration |
+| `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
 
 ## CI Architecture
+
+The current CI runs pre-commit hooks across all supported platforms.
+Rust-specific checks will be added directly to `ci.yml` when Rust code is added.
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    ci.yml (entry point)                      │
 ├─────────────────────────────────────────────────────────────┤
-│  matrix:                                                     │
-│    rust: [1.75, stable, beta]                               │
-│                                                              │
 │  jobs:                                                       │
-│    build:                                                    │
-│      uses: ./.github/workflows/rust.yml                     │
-│      with:                                                   │
-│        rust-version: ${{ matrix.rust }}                     │
+│    library:                                                  │
+│      uses: ./.github/workflows/reflow-library.yml           │
+│      outputs: matrix (JSON)                                  │
 │                                                              │
-│    alls-green:                                               │
-│      needs: [build]                                          │
-│      allowed-failures: [beta]                                │
+│    pre-commit:                                               │
+│      needs: [library]                                        │
+│      matrix: from library.outputs.matrix                     │
+│        os: [Linux, macOS, Windows]                          │
+│        arch: [ARM, Intel]                                   │
+│        exclude: Windows + ARM                               │
+│      steps:                                                  │
+│        - pre-commit/action (runs all hooks)                 │
+│                                                              │
+│    all:                                                      │
+│      needs: [pre-commit]                                     │
+│      uses: re-actors/alls-green                             │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│              rust.yml (reusable workflow)                    │
+│           reflow-library.yml (reusable workflow)             │
 ├─────────────────────────────────────────────────────────────┤
-│  inputs:                                                     │
-│    rust-version: (required)                                  │
-│                                                              │
-│  matrix (internal):                                          │
-│    os: [ubuntu, macos, windows]                             │
-│    arch: [x86_64, aarch64]                                  │
-│                                                              │
-│  jobs (all 6 platform combinations):                         │
-│    - setup-rust-toolchain (with rust-version)               │
-│    - cargo fmt --check                                       │
-│    - cargo clippy                                            │
-│    - cargo test                                              │
-│    - cargo deny                                              │
-│                                                              │
-│  jobs (stable × all 6 platforms):                            │
-│    - coverage (cargo-llvm-cov)                              │
+│  jobs:                                                       │
+│    generate:                                                 │
+│      uses: ./.github/actions/library                        │
+│      outputs: matrix configuration as JSON                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Version & Platform Matrices
+### Future: Rust Checks
 
-### Rust Version Matrix
+When Rust code is added, the following checks will be integrated directly into `ci.yml`:
+
+- Rust version matrix: MSRV (1.75), stable, beta (allowed to fail)
+- `cargo fmt --check`
+- `cargo clippy`
+- `cargo test`
+- `cargo deny`
+- Coverage with `cargo-llvm-cov` (stable only)
+
+## Library Action
+
+The CI matrix is generated by a composite action at `.github/actions/library/`.
+
+### Configuration
+
+Matrix configuration is defined in `.github/actions/library/library.yml`:
+
+```yaml
+axes:
+  os:
+    - name: Linux
+      matrix: linux
+      emoji: 🐧
+      runs-on:
+        arm: ubuntu-24.04-arm
+        intel: ubuntu-latest
+    - name: macOS
+      matrix: macos
+      emoji: 🍎
+      runs-on:
+        arm: macos-latest
+        intel: macos-15-intel
+    - name: Windows
+      matrix: windows
+      emoji: 🪟
+      runs-on:
+        arm: windows-11-arm
+        intel: windows-latest
+  arch:
+    - name: ARM
+      matrix: arm
+      emoji: 💪
+    - name: Intel
+      matrix: intel
+      emoji: 🌀
+
+exclude:
+  windows-arm:
+    - os:
+        matrix: windows
+      arch:
+        matrix: arm
+```
+
+The action parses this YAML and outputs it as JSON for use in workflow matrices.
+
+## Platform Matrix
+
+| OS | Architecture |
+| ---- | -------------- |
+| Linux (ubuntu) | ARM, Intel |
+| macOS | ARM, Intel |
+| Windows | Intel |
+
+**Note:** Windows ARM is excluded due to insufficient ecosystem support.
+
+**Current job count:** 5 platform combinations (plus library and `all` jobs)
+
+### Future: Rust Version Matrix
+
+When Rust code is added:
 
 | Toolchain | Required | Notes |
 | ----------- | ---------- | ------- |
@@ -117,32 +183,34 @@ Store credentials in repository secrets:
 | Latest stable | Yes | Primary development target |
 | Beta | No | Allowed to fail |
 
-### Platform Matrix
-
-| OS | Architecture |
-| ---- | -------------- |
-| Linux (ubuntu) | x86_64, aarch64 |
-| macOS | x86_64, aarch64 |
-| Windows | x86_64 |
-
-**Note:** Windows aarch64 is excluded due to insufficient ecosystem support.
-
-**Total jobs:**
+**Projected jobs with Rust:**
 
 - Checks: 3 rust × 5 platforms = 15 jobs
 - Coverage: 1 rust (stable) × 5 platforms = 5 jobs
-- **Total: 20 jobs** (plus alls-green)
+- **Total: 20 jobs** (plus `all`)
 
 ## CI Tooling
 
 | Tool | Purpose |
 | ------ | --------- |
-| [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust installation, reads `rust-toolchain.toml`, caching |
-| [re-actors/alls-green](https://github.com/re-actors/alls-green) | Aggregate job status, allow beta failures |
+| [pre-commit/action](https://github.com/pre-commit/action) | Runs pre-commit hooks in CI |
+| [re-actors/alls-green](https://github.com/re-actors/alls-green) | Aggregate job status |
+| [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust installation (future) |
 
-**GitHub branch protection:** Only the `alls-green` job is required.
+**GitHub branch protection:** Only the `all` job is required.
 
 ## Checks
+
+### Current Checks
+
+Pre-commit hooks run on all platform combinations.
+See [Development > Pre-commit Hooks](development.md#pre-commit-hooks) for the full list of hooks.
+
+| Check | Tool | Run On |
+| ------- | ------ | -------- |
+| Pre-commit hooks | `pre-commit/action` | All 5 platform combinations |
+
+### Planned Rust Checks
 
 | Check | Tool | Run On |
 | ------- | ------ | -------- |
