@@ -61,36 +61,59 @@ Store credentials in repository secrets:
 
 | File | Purpose |
 | ------ | --------- |
-| `.github/workflows/ci.yml` | Entry point, platform matrix, pre-commit checks, `all` job aggregation |
+| `.github/workflows/ci.yml` | Entry point, calls reusable workflows, `all` job aggregation |
 | `.github/workflows/reflow-library.yml` | Reusable workflow that outputs matrix configuration |
+| `.github/workflows/reflow-pre-commit.yml` | Reusable workflow for pre-commit checks (5 platform jobs) |
+| `.github/workflows/reflow-rust.yml` | Reusable workflow for Rust checks (15 matrix jobs) |
+| `.github/workflows/reflow-coverage.yml` | Reusable workflow for coverage generation (5 platform jobs) |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
 
 ## CI Architecture
 
-The current CI runs pre-commit hooks across all supported platforms.
-Rust-specific checks will be added directly to `ci.yml` when Rust code is added.
+The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Each reusable workflow appears as a collapsible group containing its matrix jobs.
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    ci.yml (entry point)                      │
 ├─────────────────────────────────────────────────────────────┤
 │  jobs:                                                       │
-│    library:                                                  │
-│      uses: ./.github/workflows/reflow-library.yml           │
-│      outputs: matrix (JSON)                                  │
-│                                                              │
 │    pre-commit:                                               │
-│      needs: [library]                                        │
-│      matrix: from library.outputs.matrix                     │
-│        os: [Linux, macOS, Windows]                          │
-│        arch: [ARM, Intel]                                   │
-│        exclude: Windows + ARM                               │
-│      steps:                                                  │
-│        - pre-commit/action (runs all hooks)                 │
+│      uses: ./.github/workflows/reflow-pre-commit.yml        │
+│                                                              │
+│    rust:                                                     │
+│      uses: ./.github/workflows/reflow-rust.yml              │
+│                                                              │
+│    coverage:                                                 │
+│      uses: ./.github/workflows/reflow-coverage.yml          │
 │                                                              │
 │    all:                                                      │
-│      needs: [pre-commit]                                     │
+│      needs: [pre-commit, rust, coverage]                    │
 │      uses: re-actors/alls-green                             │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│        reflow-pre-commit.yml (reusable workflow)             │
+├─────────────────────────────────────────────────────────────┤
+│  jobs:                                                       │
+│    library: uses reflow-library.yml                         │
+│    check: 5 platform jobs (pre-commit/action)               │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│           reflow-rust.yml (reusable workflow)                │
+├─────────────────────────────────────────────────────────────┤
+│  jobs:                                                       │
+│    library: uses reflow-library.yml                         │
+│    check: 15 matrix jobs (3 rust × 5 platforms)             │
+│      - cargo fmt, clippy, test, deny                        │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│         reflow-coverage.yml (reusable workflow)              │
+├─────────────────────────────────────────────────────────────┤
+│  jobs:                                                       │
+│    library: uses reflow-library.yml                         │
+│    check: 5 platform jobs (cargo-llvm-cov, stable only)     │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -103,16 +126,7 @@ Rust-specific checks will be added directly to `ci.yml` when Rust code is added.
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Future: Rust Checks
-
-When Rust code is added, the following checks will be integrated directly into `ci.yml`:
-
-- Rust version matrix: MSRV (1.88), stable, beta (allowed to fail)
-- `cargo fmt --check`
-- `cargo clippy`
-- `cargo test`
-- `cargo deny`
-- Coverage with `cargo-llvm-cov` (stable only)
+**Note:** Each reusable workflow calls `reflow-library.yml` internally to get the matrix configuration. This results in the library job running 3 times per CI run, but the overhead is minimal.
 
 ## Library Action
 
@@ -171,11 +185,7 @@ The action parses this YAML and outputs it as JSON for use in workflow matrices.
 
 **Note:** Windows ARM is excluded due to insufficient ecosystem support.
 
-**Current job count:** 5 platform combinations (plus library and `all` jobs)
-
-### Future: Rust Version Matrix
-
-When Rust code is added:
+### Rust Version Matrix
 
 | Toolchain | Required | Notes |
 | ----------- | ---------- | ------- |
@@ -183,11 +193,16 @@ When Rust code is added:
 | Latest stable | Yes | Primary development target |
 | Beta | No | Allowed to fail |
 
-**Projected jobs with Rust:**
+### Job Count
 
-- Checks: 3 rust × 5 platforms = 15 jobs
-- Coverage: 1 rust (stable) × 5 platforms = 5 jobs
-- **Total: 20 jobs** (plus `all`)
+| Workflow | Jobs |
+| -------- | ---- |
+| Pre-commit | 5 (1 per platform) |
+| Rust | 15 (3 rust versions × 5 platforms) |
+| Coverage | 5 (stable only × 5 platforms) |
+| Library | 3 (called by each reusable workflow) |
+| All | 1 |
+| **Total** | **29 jobs** |
 
 ## CI Tooling
 
@@ -195,13 +210,15 @@ When Rust code is added:
 | ------ | --------- |
 | [pre-commit/action](https://github.com/pre-commit/action) | Runs pre-commit hooks in CI |
 | [re-actors/alls-green](https://github.com/re-actors/alls-green) | Aggregate job status |
-| [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust installation (future) |
+| [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust toolchain installation |
+| [taiki-e/install-action](https://github.com/taiki-e/install-action) | Install cargo tools (cargo-deny, cargo-llvm-cov) |
+| [codecov/codecov-action](https://github.com/codecov/codecov-action) | Upload coverage to Codecov |
 
 **GitHub branch protection:** Only the `all` job is required.
 
 ## Checks
 
-### Current Checks
+### Pre-commit Checks
 
 Pre-commit hooks run on all platform combinations.
 See [Development > Pre-commit Hooks](development.md#pre-commit-hooks) for the full list of hooks.
@@ -210,15 +227,21 @@ See [Development > Pre-commit Hooks](development.md#pre-commit-hooks) for the fu
 | ------- | ------ | -------- |
 | Pre-commit hooks | `pre-commit/action` | All 5 platform combinations |
 
-### Planned Rust Checks
+### Rust Checks
 
 | Check | Tool | Run On |
 | ------- | ------ | -------- |
-| Formatting | `cargo fmt --check` | All matrix combinations |
-| Linting | `cargo clippy` | All matrix combinations |
-| Tests | `cargo test` | All matrix combinations |
-| Dependency audit | `cargo deny` | All matrix combinations |
-| Coverage | `cargo-llvm-cov` | Stable only, all platforms |
+| Formatting | `cargo fmt --check` | All 15 matrix combinations |
+| Linting | `cargo clippy` | All 15 matrix combinations |
+| Tests | `cargo test` | All 15 matrix combinations |
+| Dependency audit | `cargo deny` | All 15 matrix combinations |
+
+### Coverage
+
+| Check | Tool | Run On |
+| ------- | ------ | -------- |
+| Coverage | `cargo-llvm-cov` | Stable only, all 5 platforms |
+| Upload | `codecov/codecov-action` | With OIDC authentication |
 
 ## PR Title Enforcement
 
