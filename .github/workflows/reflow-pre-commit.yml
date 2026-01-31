@@ -1,0 +1,27 @@
+name: Pre-commit
+
+on:
+  workflow_call:
+
+jobs:
+  library:
+    name: Generate library
+    uses: ./.github/workflows/reflow-library.yml
+
+  check:
+    name: ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }}
+    needs: library
+    runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.library.outputs.matrix).axes.os }}
+        arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
+        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: ./.github/actions/setup-lychee
+      - uses: pre-commit/action@v3.0.1
