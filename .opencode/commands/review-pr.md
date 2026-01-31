@@ -53,11 +53,39 @@ description: Review a GitHub pull request with inline comments
    - Never use COMMENT — reviews should drive clear action: if there is anything to consider (a noted bug, a suggestion, or a clarifying question), use REQUEST_CHANGES to block until addressed; otherwise APPROVE so the PR can move forward. COMMENT leaves PRs in an ambiguous state where feedback exists but no decision is made.
 
 7. **Submit review:**
-   - Create JSON payload with:
-     - `event`: "APPROVE" or "REQUEST_CHANGES"
-     - `body`: Overall review summary
-     - `comments`: Array of inline comments with path, line, and body
-   - Submit via `gh api repos/:owner/:repo/pulls/<N>/reviews --input <file>`
+   - Create a file named `review_payload.json` in the current working directory with the review payload:
+
+     ```json
+     {
+       "event": "REQUEST_CHANGES",
+       "body": "Overall review summary describing the main findings.",
+       "comments": [
+         {
+           "path": "src/utils/metrics.py",
+           "line": 42,
+           "body": "Consider renaming this function for clarity.\n\n```suggestion\ndef fetch_user_metrics():\n```"
+         },
+         {
+           "path": "src/api/handlers.py",
+           "line": 87,
+           "body": "This error message should include the actual status code.\n\n```suggestion\nraise ApiError(f\"Request failed with status {response.status_code}\")\n```"
+         }
+       ]
+     }
+     ```
+
+   - If there are no inline comments (i.e., approving a clean PR), use an empty array: `"comments": []`
+   - Submit via:
+
+     ```bash
+     gh api repos/{owner}/{repo}/pulls/<N>/reviews --input review_payload.json
+     ```
+
+   - After successful submission, delete the payload file:
+
+     ```bash
+     rm review_payload.json
+     ```
 
 8. **Report completion:**
    - Provide the review URL
