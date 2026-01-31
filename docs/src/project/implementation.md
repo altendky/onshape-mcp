@@ -33,7 +33,6 @@
 - [ ] Implement MCP Tools — Phase A (read-only)
 - [ ] Implement MCP Tools — Phase B (export)
 - [ ] Implement server admin tools (`onshape_mcp_*`)
-- [ ] Build-time collision check for `onshape_mcp_` prefix
 - [ ] Write comprehensive unit tests for core crates
 
 ## Phase 3: I/O Integration
