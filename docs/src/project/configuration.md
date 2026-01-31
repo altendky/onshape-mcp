@@ -24,9 +24,17 @@ From lowest to highest priority:
 | Unix | `~/.config/onshape-mcp/config.toml` |
 | Windows | `%APPDATA%\onshape-mcp\config.toml` |
 
-> **Security note:** This file contains credentials. Ensure it is not committed
-> to source control and restrict permissions (e.g., `chmod 600` on Unix).
-> Improved credential handling patterns are being explored in [#19](https://github.com/altendky/onshape-mcp/issues/19).
+> **Security note:** The `[auth]` section contains sensitive credentials
+> (`access_key` and `secret_key`). To protect them:
+>
+> - **Preferred:** Use your OS secret store (macOS Keychain, Windows Credential
+>   Manager, or Linux secret service) and pass credentials via environment
+>   variables
+> - Add the config file path to `.gitignore`
+> - On Unix, restrict permissions: `chmod 600 ~/.config/onshape-mcp/config.toml`
+>
+> See [#19](https://github.com/altendky/onshape-mcp/issues/19) for improved credential handling
+> patterns.
 
 Example config file:
 
