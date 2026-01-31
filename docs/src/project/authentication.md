@@ -28,7 +28,16 @@ secret_key = "..."
 
 **Future credential sources** (to be implemented):
 
-- System keychain integration
+- System keychain integration via the [`keyring`](https://docs.rs/keyring) crate
+
+| Platform | Backend | Feature Flag |
+| -------- | -------- | ------- |
+| macOS | Keychain Services | `apple-native` |
+| Windows | Credential Manager | `windows-native` |
+| Linux | Secret Service (DBus) | `sync-secret-service` |
+| Linux | keyutils (kernel) | `linux-native` |
+
+Tradeoffs: most secure (OS-managed encryption), but requires unlock prompt on first access and DBus dependency on Linux.
 
 ## Config File Security
 
@@ -71,3 +80,14 @@ The server emits MCP notifications for auth status changes:
 
 - `notifications/onshape/auth/invalid` — Credentials became invalid
 - `notifications/onshape/auth/restored` — Credentials are valid again
+
+## Ecosystem Context
+
+Our security approach exceeds MCP ecosystem norms:
+
+- **File permission enforcement** — No surveyed MCP servers enforce config file permissions; we block access if permissions are too open
+- **Environment variables are standard** — Most MCP servers rely solely on environment variables for credentials
+- **No keychain implementations** — System keychain integration is an ecosystem gap we plan to address
+
+The MCP specification provides security best practices but does not mandate credential storage mechanisms.
+See [SEP-1024](https://modelcontextprotocol.io/community/seps/1024-mcp-client-security-requirements-for-local-server-.md) (client security for local servers) and [SEP-1046](https://modelcontextprotocol.io/community/seps/1046-support-oauth-client-credentials-flow-in-authoriza.md) (OAuth client credentials flow) for related guidance.
