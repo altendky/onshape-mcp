@@ -13,7 +13,7 @@ jobs:
     uses: ./.github/workflows/reflow-library.yml
 
   pre-commit:
-    name: ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }}
+    name: 🔶 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }}
     needs: library
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
     strategy:
