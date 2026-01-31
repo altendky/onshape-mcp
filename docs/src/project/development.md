@@ -33,6 +33,7 @@ cargo llvm-cov --all-features --workspace
 | `check-merge-conflict` | pre-commit-hooks | pre-commit | Catch conflict markers |
 | `typos` | crate-ci/typos | pre-commit | Spell checking |
 | `markdownlint-cli2` | DavidAnson/markdownlint-cli2 | pre-commit | Markdown linting |
+| `lychee` | lycheeverse/lychee | pre-commit | Link validation |
 | `actionlint` | rhysd/actionlint | pre-commit | GitHub Actions linting |
 | `action-validator` | mpalmer/action-validator | pre-commit | Action/workflow schema |
 | `cargo fmt --check` | local | pre-commit | Formatting |
@@ -51,6 +52,7 @@ cargo llvm-cov --all-features --workspace
 | ------ | --------- |
 | `.pre-commit-config.yaml` | Hook definitions |
 | `.markdownlint-cli2.yaml` | Markdown linting configuration |
+| `.lychee.toml` | Link validation configuration |
 | `typos.toml` | Spell check word allowlist |
 
 ## Testing Strategy

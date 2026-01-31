@@ -18,6 +18,15 @@ repos:
     hooks:
       - id: markdownlint-cli2
 
+  # TODO: switch back to release tag once the shebang fix is released
+  #       https://github.com/lycheeverse/lychee/pull/2002
+  - repo: https://github.com/lycheeverse/lychee
+    rev: 7bf09ac8f919719d36dfc50be15cb26e553a816c
+    hooks:
+      - id: lychee
+        args: ["--no-progress"]
+        types: [markdown]
+
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.10
     hooks:
