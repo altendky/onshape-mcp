@@ -4,7 +4,7 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration.
 
 ## Status
 
-Early development. See the [design document](docs/src/project/design.md) for project requirements and architecture.
+Early development. See the [project documentation](docs/src/project/index.md) for project requirements and architecture.
 
 ## License
 
