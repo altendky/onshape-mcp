@@ -19,6 +19,8 @@ jobs:
   coverage:
     name: Coverage
     uses: ./.github/workflows/reflow-coverage.yml
+    permissions:
+      id-token: write
 
   all:
     name: all
