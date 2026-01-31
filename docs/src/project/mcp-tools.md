@@ -16,10 +16,8 @@ All MCP tools use the `onshape_` prefix to avoid collisions with other MCP serve
 
 | Prefix | Purpose | Example |
 | -------- | --------- | --------- |
-| `onshape_` | Onshape API operations | `onshape_list_documents` |
-| `onshape_mcp_` | Server administration | `onshape_mcp_get_mode` |
-
-**Build-time check:** A build-time test must verify that `onshape_mcp_` does not collide with any Onshape API endpoint names.
+| `onshape_api_` | Onshape REST API operations | `onshape_api_list_documents` |
+| `onshape_mcp_` | MCP server administration | `onshape_mcp_get_mode` |
 
 ## Transport Support
 
@@ -56,13 +54,13 @@ Tools are hidden (not advertised) when the current mode doesn't permit them. Thi
 
 | Tool | Required Mode | `readOnlyHint` | `destructiveHint` |
 | ------ | --------------- | ---------------- | ------------------- |
-| `onshape_list_documents` | `read` | `true` | — |
-| `onshape_get_assembly` | `read` | `true` | — |
-| `onshape_export_stl` | `read` | `true` | — |
-| `onshape_set_variable` | `modify` | `false` | `false` |
-| `onshape_add_feature` | `modify` | `false` | `false` |
-| `onshape_update_feature` | `modify` | `false` | `false` |
-| `onshape_delete_feature` | `destroy` | `false` | `true` |
+| `onshape_api_list_documents` | `read` | `true` | — |
+| `onshape_api_get_assembly` | `read` | `true` | — |
+| `onshape_api_export_stl` | `read` | `true` | — |
+| `onshape_api_set_variable` | `modify` | `false` | `false` |
+| `onshape_api_add_feature` | `modify` | `false` | `false` |
+| `onshape_api_update_feature` | `modify` | `false` | `false` |
+| `onshape_api_delete_feature` | `destroy` | `false` | `true` |
 
 ### MCP Tool Annotations
 
@@ -90,23 +88,23 @@ Always visible (read-only operations on the server itself).
 | Tool | Mode | Description |
 | ------ | ------ | ------------- |
 | **Documents** | | |
-| `onshape_list_documents` | `read` | List user's documents (with search/filter) |
-| `onshape_get_document` | `read` | Get document metadata, workspaces, versions |
-| `onshape_list_elements` | `read` | List elements (tabs) in a document |
+| `onshape_api_list_documents` | `read` | List user's documents (with search/filter) |
+| `onshape_api_get_document` | `read` | Get document metadata, workspaces, versions |
+| `onshape_api_list_elements` | `read` | List elements (tabs) in a document |
 | **Part Studios** | | |
-| `onshape_get_part_studio` | `read` | Get part studio metadata |
-| `onshape_list_features` | `read` | List features in a part studio |
-| `onshape_get_feature` | `read` | Get details of a specific feature |
-| `onshape_list_parts` | `read` | List parts in a part studio |
-| `onshape_get_mass_properties` | `read` | Get mass, volume, center of mass |
-| `onshape_get_bounding_box` | `read` | Get bounding box |
+| `onshape_api_get_part_studio` | `read` | Get part studio metadata |
+| `onshape_api_list_features` | `read` | List features in a part studio |
+| `onshape_api_get_feature` | `read` | Get details of a specific feature |
+| `onshape_api_list_parts` | `read` | List parts in a part studio |
+| `onshape_api_get_mass_properties` | `read` | Get mass, volume, center of mass |
+| `onshape_api_get_bounding_box` | `read` | Get bounding box |
 | **Assemblies** | | |
-| `onshape_get_assembly` | `read` | Get assembly definition |
-| `onshape_get_bom` | `read` | Get bill of materials |
-| `onshape_list_instances` | `read` | List parts/subassemblies |
+| `onshape_api_get_assembly` | `read` | Get assembly definition |
+| `onshape_api_get_bom` | `read` | Get bill of materials |
+| `onshape_api_list_instances` | `read` | List parts/subassemblies |
 | **Variables & Configurations** | | |
-| `onshape_list_variables` | `read` | List variables in a part studio |
-| `onshape_list_configurations` | `read` | List configuration options |
+| `onshape_api_list_variables` | `read` | List variables in a part studio |
+| `onshape_api_list_configurations` | `read` | List configuration options |
 
 ### Phase B: Export (MVP)
 
@@ -114,12 +112,12 @@ Export tools pass through to Onshape's export API. Tool names mirror Onshape's f
 
 | Tool | Mode | Description |
 | ------ | ------ | ------------- |
-| `onshape_export_stl` | `read` | Export part/assembly as STL |
-| `onshape_export_step` | `read` | Export as STEP |
-| `onshape_export_gltf` | `read` | Export as glTF |
-| `onshape_export_parasolid` | `read` | Export as Parasolid |
-| `onshape_export_iges` | `read` | Export as IGES |
-| `onshape_export_drawing_pdf` | `read` | Export drawing as PDF |
+| `onshape_api_export_stl` | `read` | Export part/assembly as STL |
+| `onshape_api_export_step` | `read` | Export as STEP |
+| `onshape_api_export_gltf` | `read` | Export as glTF |
+| `onshape_api_export_parasolid` | `read` | Export as Parasolid |
+| `onshape_api_export_iges` | `read` | Export as IGES |
+| `onshape_api_export_drawing_pdf` | `read` | Export drawing as PDF |
 | ... | `read` | Other formats as provided by Onshape API |
 
 #### Export Destination
@@ -168,24 +166,24 @@ Exports support two modes: returning a download URL (default) or saving to a loc
 
 | Tool | Mode | Description |
 | ------ | ------ | ------------- |
-| `onshape_set_variable` | `modify` | Update a variable value |
-| `onshape_set_configuration` | `modify` | Set configuration values |
-| `onshape_add_feature` | `modify` | Add a feature to a part studio |
-| `onshape_update_feature` | `modify` | Modify an existing feature |
+| `onshape_api_set_variable` | `modify` | Update a variable value |
+| `onshape_api_set_configuration` | `modify` | Set configuration values |
+| `onshape_api_add_feature` | `modify` | Add a feature to a part studio |
+| `onshape_api_update_feature` | `modify` | Modify an existing feature |
 
 ### Phase D: Destroy Operations
 
 | Tool | Mode | Description |
 | ------ | ------ | ------------- |
-| `onshape_delete_feature` | `destroy` | Remove a feature |
+| `onshape_api_delete_feature` | `destroy` | Remove a feature |
 
 ### Phase E: FeatureScript (Future)
 
 | Tool | Mode | Description |
 | ------ | ------ | ------------- |
-| `onshape_eval_featurescript` | `destroy` | Execute FeatureScript expressions |
-| `onshape_get_featurescript_spec` | `read` | Get FeatureScript function specs |
-| `onshape_list_custom_features` | `read` | List available custom features |
+| `onshape_api_eval_featurescript` | `destroy` | Execute FeatureScript expressions |
+| `onshape_api_get_featurescript_spec` | `read` | Get FeatureScript function specs |
+| `onshape_api_list_custom_features` | `read` | List available custom features |
 
 ## Tool Parameters
 
