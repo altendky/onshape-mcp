@@ -27,10 +27,68 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - uses: jaxxstorm/action-install-gh-release@v1
+      # Install Rust toolchain (only needed for macOS Intel which has no pre-built lychee)
+      - name: Install Rust
+        if: matrix.os.matrix == 'macos' && matrix.arch.matrix == 'intel'
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cache cargo registry for macOS Intel builds
+      - name: Cache cargo
+        if: matrix.os.matrix == 'macos' && matrix.arch.matrix == 'intel'
+        uses: actions/cache@v4
         with:
-          repo: lycheeverse/lychee
-          cache: enable
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/lychee
+          key: cargo-lychee-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install lychee
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Get latest release version
+          VERSION=$(curl -fsSL https://api.github.com/repos/lycheeverse/lychee/releases/latest | jq -r '.tag_name')
+          BASE_URL="https://github.com/lycheeverse/lychee/releases/download/${VERSION}"
+
+          # Map matrix to asset name
+          case "${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}" in
+            linux-intel)   ASSET="lychee-x86_64-unknown-linux-gnu.tar.gz" ;;
+            linux-arm)     ASSET="lychee-aarch64-unknown-linux-gnu.tar.gz" ;;
+            macos-arm)     ASSET="lychee-arm64-macos.tar.gz" ;;
+            windows-intel) ASSET="lychee-x86_64-windows.exe" ;;
+            macos-intel)
+              # No pre-built binary - check cache or build from source
+              if command -v lychee &>/dev/null; then
+                echo "lychee found in cache"
+                exit 0
+              fi
+              echo "Building lychee from source (no pre-built macOS Intel binary)..."
+              cargo install lychee
+              exit 0
+              ;;
+            *)
+              echo "::error::Unsupported platform: ${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}"
+              exit 1
+              ;;
+          esac
+
+          echo "Downloading ${ASSET}..."
+          curl -fsSL "${BASE_URL}/${ASSET}" -o "${ASSET}"
+
+          # Install to ~/.local/bin
+          mkdir -p "$HOME/.local/bin"
+
+          if [[ "$ASSET" == *.exe ]]; then
+            mv "${ASSET}" "$HOME/.local/bin/lychee.exe"
+          else
+            tar -xzf "${ASSET}"
+            mv lychee "$HOME/.local/bin/"
+          fi
+
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - uses: pre-commit/action@v3.0.1
 
   all:
