@@ -9,7 +9,7 @@ jobs:
     uses: ./.github/workflows/reflow-library.yml
 
   check:
-    name: ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }}
+    name: 🦀 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }}
     needs: library
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
     continue-on-error: ${{ matrix.rust.matrix == 'beta' }}
