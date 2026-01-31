@@ -1,0 +1,76 @@
+# lychee link checker configuration
+# https://github.com/lycheeverse/lychee
+
+#############################  Display  #############################
+
+# Verbose program output
+verbose = "warn"
+
+# Don't show interactive progress bar while checking links
+no_progress = false
+
+#############################  Cache  ###############################
+
+# Enable link caching to speed up repeated runs
+cache = true
+
+# Discard cached requests older than this duration
+max_cache_age = "1d"
+
+#############################  Runtime  #############################
+
+# Maximum number of allowed redirects
+max_redirects = 10
+
+# Maximum number of retries before declaring a link dead
+max_retries = 3
+
+# Maximum concurrent link checks
+max_concurrency = 16
+
+#############################  Requests  ############################
+
+# Website timeout from connect to response finished (seconds)
+timeout = 30
+
+# Minimum wait time in seconds between retries
+retry_wait_time = 2
+
+# Proceed for server connections considered insecure (invalid TLS)
+insecure = false
+
+# Request method (HEAD is faster, GET is more reliable)
+method = "get"
+
+#############################  Exclusions  ##########################
+
+# Exclude URLs from checking (regex patterns)
+exclude = [
+    # Placeholder/example URLs
+    "^https?://localhost",
+    "^https?://127\\.0\\.0\\.1",
+    "^https?://\\[::1\\]",
+    "^https?://example\\.(com|org|net)",
+    "^https://\\.\\.\\.",  # Literal "https://..." placeholder
+
+    # URLs that require authentication or have rate limits
+    "^https?://cad\\.onshape\\.com",  # Onshape API requires auth
+]
+
+# Exclude paths from checking (regex patterns)
+exclude_path = [
+    # Exclude build artifacts
+    "^target/",
+]
+
+# Check these file extensions
+extensions = ["md"]
+
+# Enable fragment/anchor checking
+include_fragments = true
+
+# Exclude mail addresses from checking (avoid false positives)
+include_mail = false
+
+# Exclude all private IPs
+exclude_all_private = true

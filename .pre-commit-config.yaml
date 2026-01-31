@@ -18,6 +18,12 @@ repos:
     hooks:
       - id: markdownlint-cli2
 
+  - repo: https://github.com/lycheeverse/lychee
+    rev: lychee-v0.22.0
+    hooks:
+      - id: lychee
+        args: ["--no-progress"]
+
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.10
     hooks:
