@@ -29,10 +29,22 @@ description: Review a GitHub pull request with inline comments
    - Note specific line numbers for inline comments
 
 5. **Prepare inline comments:**
-   - For each comment with a `suggestion` block:
-     - Read the exact original line(s) from the local checkout
-     - Write the replacement with identical indentation
-   - Alternative suggestions in a single comment are acceptable
+   - Use suggestion blocks (fenced code with `suggestion` as the language) to propose concrete fixes. Example comment body:
+
+     ````markdown
+     The function name is unclear. Consider:
+
+     ```suggestion
+     def fetch_user_metrics():
+     ```
+
+     Or if this is for admin users specifically:
+
+     ```suggestion
+     def fetch_admin_metrics():
+     ```
+     ````
+
    - Nitpicks are acceptable
 
 6. **Determine review type:**
