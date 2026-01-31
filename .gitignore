@@ -4,3 +4,4 @@
 # OpenCode
 /.opencode/*
 !/.opencode/commands/
+/target/

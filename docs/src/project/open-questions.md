@@ -12,7 +12,7 @@
 - [ ] AI awareness setup — Create root-level AI context file (e.g., `AGENTS.md` or `CLAUDE.md`) that references REQUIREMENTS.md for project standards, architecture, and conventions; use symlinks for tool-specific locations (`.cursorrules`, `.github/copilot-instructions.md`, etc.) to maintain single source of truth; prioritize portable/standard formats over tool-specific syntax where possible
 - [ ] AI file validation and testing — Review mechanisms for validating AI context files in CI (e.g., symlink integrity, reference validity, format linting)
 - [ ] Git ignore strategy — Discuss root .gitignore vs distributed approach, required patterns (target/, IDE files, OS files, etc.)
-- [ ] Markdown validation — Evaluate CI/pre-commit checks for markdown files (markdownlint for style/formatting, markdown-link-check for broken links, prose linting with vale)
+- [x] Markdown validation — ~~Evaluate CI/pre-commit checks for markdown files~~ Implemented: markdownlint-cli2 for style/formatting, lychee for broken links. Remaining: prose linting with vale (deferred)
 
 ## Deferred
 
