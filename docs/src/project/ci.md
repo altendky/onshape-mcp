@@ -107,7 +107,7 @@ Rust-specific checks will be added directly to `ci.yml` when Rust code is added.
 
 When Rust code is added, the following checks will be integrated directly into `ci.yml`:
 
-- Rust version matrix: MSRV (1.75), stable, beta (allowed to fail)
+- Rust version matrix: MSRV (1.88), stable, beta (allowed to fail)
 - `cargo fmt --check`
 - `cargo clippy`
 - `cargo test`
@@ -179,7 +179,7 @@ When Rust code is added:
 
 | Toolchain | Required | Notes |
 | ----------- | ---------- | ------- |
-| MSRV (1.75) | Yes | From `rust-toolchain.toml` |
+| MSRV (1.88) | Yes | From `rust-toolchain.toml` |
 | Latest stable | Yes | Primary development target |
 | Beta | No | Allowed to fail |
 

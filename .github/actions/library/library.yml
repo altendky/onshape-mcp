@@ -25,6 +25,19 @@ axes:
     - name: Intel
       matrix: intel
       emoji: 🌀
+  rust:
+    - name: MSRV
+      matrix: msrv
+      version: "1.88"
+      emoji: ⏬
+    - name: stable
+      matrix: stable
+      version: stable
+      emoji: 🪨
+    - name: beta
+      matrix: beta
+      version: beta
+      emoji: 🔮
 
 exclude:
   windows-arm:

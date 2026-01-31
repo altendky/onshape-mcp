@@ -30,15 +30,86 @@ jobs:
       - uses: ./.github/actions/setup-lychee
       - uses: pre-commit/action@v3.0.1
 
+  rust:
+    name: 🦀 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }}
+    needs: library
+    runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
+    continue-on-error: ${{ matrix.rust.matrix == 'beta' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.library.outputs.matrix).axes.os }}
+        arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
+        rust: ${{ fromJSON(needs.library.outputs.matrix).axes.rust }}
+        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust.version }}
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-features
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Check dependencies
+        run: cargo deny check
+
+  coverage:
+    name: ☂️ ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} coverage
+    needs: library
+    runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
+    permissions:
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.library.outputs.matrix).axes.os }}
+        arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
+        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
+          files: lcov.info
+          fail_ci_if_error: true
+
   all:
     name: all
     if: always()
-    needs: [pre-commit]
+    needs: [pre-commit, rust, coverage]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@release/v1
         with:
           jobs: ${{ toJSON(needs) }}
-      - name: CAD Status Report
-        run: |
-          echo "Model regeneration complete. No rebuild errors. All features resolved."

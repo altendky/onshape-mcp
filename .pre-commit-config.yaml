@@ -39,3 +39,19 @@ repos:
       - id: action-validator
         args: [-v]
         files: ^\.github/(workflows/.*\.ya?ml|actions/.*/action\.ya?ml)$
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false

@@ -1,0 +1,5 @@
+# Rustfmt configuration
+# Using default settings for maximum compatibility
+# See: https://rust-lang.github.io/rustfmt/
+
+style_edition = "2024"

@@ -1,0 +1,16 @@
+[package]
+name = "onshape-mcp"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "MCP server for Onshape CAD integration"
+keywords = ["mcp", "onshape", "cad", "modelcontextprotocol", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+# Codecov configuration
+# See: https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  status:
+    project:
+      default:
+        # Ratchet - fail if coverage drops more than 2% from main
+        # Catches accidental loss of code/tests
+        threshold: 2%
+    patch:
+      default:
+        # New code must be fully covered or explicitly excluded
+        target: 100%
+
+comment:
+  layout: "header, diff, flags, components"
+  behavior: default
+  require_changes: true
