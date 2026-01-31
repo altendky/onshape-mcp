@@ -69,7 +69,7 @@ jobs:
         run: cargo deny check
 
   coverage:
-    name: ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} 📊 ${{ matrix.os.name }} ${{ matrix.arch.name }} coverage
+    name: ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ☂️ ${{ matrix.os.name }} ${{ matrix.arch.name }} coverage
     needs: library
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
     permissions:
