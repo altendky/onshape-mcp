@@ -35,7 +35,22 @@ secret_key = "..."
 The config file contains secrets and must have restricted permissions:
 
 - **Unix:** `0600` (owner read/write only)
-- **Windows:** Equivalent ACL restrictions
+- **Windows:** File accessible only to the owner account (remove inherited permissions, clear all existing access rules, and grant only the owner read/write access)
+
+  To set Windows permissions via PowerShell:
+
+  ```powershell
+  $path = "path\to\config.toml"
+  $acl = Get-Acl $path
+  $acl.SetAccessRuleProtection($true, $false)
+  $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) } | Out-Null
+  $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+      "$env:USERDOMAIN\$env:USERNAME", "Read,Write", "Allow")
+  $acl.AddAccessRule($rule)
+  Set-Acl $path $acl
+  ```
+
+  To verify, run `Get-Acl "path\to\config.toml" | Format-List` and confirm only your account has access.
 
 If permissions are too open, the server **blocks access** and informs the user of the issue.
 
