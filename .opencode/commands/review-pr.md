@@ -15,7 +15,8 @@ description: Review a GitHub pull request with inline comments
 2. **Gather PR context:**
    - Fetch PR metadata: `gh pr view <N> --json title,body,baseRefName,headRefName,headRefOid`
    - Fetch the diff: `gh pr diff <N>`
-   - Fetch changed files list: `gh api repos/{owner}/{repo}/pulls/<N>/files`
+   - Fetch changed files list: `gh api repos/:owner/:repo/pulls/<N>/files`
+     (`:owner` and `:repo` are auto-substituted by `gh` when run from within the repo; alternatively, retrieve them via `gh repo view --json owner,name -q '.owner.login + "/" + .name'`)
    - If the PR references an issue, fetch the issue details
 
 3. **Checkout the PR branch locally:**
@@ -44,7 +45,7 @@ description: Review a GitHub pull request with inline comments
      - `event`: "APPROVE" or "REQUEST_CHANGES"
      - `body`: Overall review summary
      - `comments`: Array of inline comments with path, line, and body
-   - Submit via `gh api repos/{owner}/{repo}/pulls/<N>/reviews --input <file>`
+   - Submit via `gh api repos/:owner/:repo/pulls/<N>/reviews --input <file>`
 
 8. **Report completion:**
    - Provide the review URL
