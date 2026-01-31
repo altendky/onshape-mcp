@@ -26,7 +26,6 @@ Items to address later in the project:
 ### Authentication Enhancements
 
 - [ ] OAuth 2.0 authentication — Multi-user apps, team access (see [Authentication](authentication.md))
-- [ ] System keychain credential source — Platform-native secure storage
 
 ### Features
 
