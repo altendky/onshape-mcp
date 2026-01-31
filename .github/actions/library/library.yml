@@ -29,15 +29,15 @@ axes:
     - name: MSRV
       matrix: msrv
       version: "1.88"
-      emoji: 📌
+      emoji: ⏬
     - name: stable
       matrix: stable
       version: stable
-      emoji: 🦀
+      emoji: 🪨
     - name: beta
       matrix: beta
       version: beta
-      emoji: 🧪
+      emoji: 🔮
 
 exclude:
   windows-arm:
