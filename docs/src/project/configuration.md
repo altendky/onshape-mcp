@@ -24,6 +24,10 @@ From lowest to highest priority:
 | Unix | `~/.config/onshape-mcp/config.toml` |
 | Windows | `%APPDATA%\onshape-mcp\config.toml` |
 
+> **Security note:** This file contains credentials. Ensure it is not committed
+> to source control and restrict permissions (e.g., `chmod 600` on Unix).
+> Improved credential handling patterns are being explored in [#19](https://github.com/altendky/onshape-mcp/issues/19).
+
 Example config file:
 
 ```toml
