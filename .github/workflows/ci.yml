@@ -27,6 +27,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: lychee
       - uses: pre-commit/action@v3.0.1
 
   all:
