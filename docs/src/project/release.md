@@ -6,6 +6,7 @@ Users can install the server via:
 
 | Method | Description |
 | -------- | ------------- |
+| `npx onshape-mcp` | Via npm wrapper package (see [npm Wrapper](npm-wrapper.md)) |
 | `cargo install` | From crates.io |
 | Pre-built binaries | GitHub releases for all supported platforms |
 

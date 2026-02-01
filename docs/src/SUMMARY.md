@@ -23,6 +23,7 @@
 - [CI](project/ci.md)
 - [Development](project/development.md)
 - [Release](project/release.md)
+- [npm Wrapper](project/npm-wrapper.md)
 
 # Project Management
 

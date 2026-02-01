@@ -41,3 +41,19 @@ Resolved design decisions and their rationale.
 ## Repository Setup
 
 **Decision:** Branch protection, merge queue, signed commits, merge commits only. See [CI > GitHub Repository Settings](ci.md#github-repository-settings).
+
+## npm Wrapper Package
+
+**Decision:** Multi-package architecture with platform-specific optional dependencies.
+
+| Topic | Decision |
+| ----- | -------- |
+| Main package | `onshape-mcp` (unscoped for simpler `npx` usage) |
+| Platform packages | `@onshape-mcp/{platform}-{arch}` (scoped) |
+| Platforms | linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64 |
+| Linux linking | Static musl (single binary works on glibc and musl systems) |
+| Execution | Synchronous JS shim with inherited stdio |
+| Signal handling | Process group semantics (no manual forwarding) |
+| Version sync | Lockstep with Cargo version |
+
+See [npm Wrapper](npm-wrapper.md) for details.

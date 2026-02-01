@@ -4,7 +4,7 @@
 
 - [ ] Documentation standards — Rustdoc coverage, README structure, usage examples
 - [ ] Distribution details — cargo install setup, GitHub releases workflow, binary naming
-- [ ] npm wrapper package — Evaluate publishing JS wrapper for `npx` installation; check availability of `onshape-mcp`, consider scoped name or platform-specific optional deps pattern (like `swc`, `esbuild`)
+- [x] npm wrapper package — ~~Evaluate publishing JS wrapper for `npx` installation~~ Resolved: using platform-specific optional deps pattern. See [npm Wrapper](npm-wrapper.md)
 - [ ] Release process — Versioning strategy, changelog, release workflow, crates.io publishing
 - [ ] Contribution guidelines — CONTRIBUTING.md, PR expectations, code review process
 - [ ] Project files — Standard files not yet documented (.gitignore, .gitattributes, rustfmt.toml, clippy.toml, deny.toml, .editorconfig, codecov.yml, CHANGELOG.md, dependabot.yml, CODEOWNERS, issue/PR templates)
