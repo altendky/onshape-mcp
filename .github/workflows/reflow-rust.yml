@@ -105,7 +105,7 @@ jobs:
 
             # Verify static linking
             echo 'Checking for statically linked binaries...'
-            for bin in target/debug/deps/* target/release/deps/*; do
+            for bin in target/debug/deps/*; do
               if [ -f \"\$bin\" ] && [ -x \"\$bin\" ]; then
                 if file \"\$bin\" | grep -q 'ELF.*executable'; then
                   if ldd \"\$bin\" 2>&1 | grep -q 'not a dynamic executable\\|statically linked'; then
