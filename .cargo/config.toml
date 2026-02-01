@@ -1,0 +1,4 @@
+# Static linking configuration for musl targets
+# This ensures Linux binaries are fully portable across distributions
+[target.'cfg(target_env = "musl")']
+rustflags = ["-C", "target-feature=+crt-static"]

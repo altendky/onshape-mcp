@@ -42,6 +42,18 @@ This ensures compatibility across all Linux distributions, including:
 Dynamic linking against glibc creates binaries that may fail on systems with older glibc versions.
 Static musl linking eliminates this dependency, producing portable binaries that work everywhere.
 
+### Configuration
+
+Static linking for musl targets is configured in `.cargo/config.toml`:
+
+```toml
+[target.'cfg(target_env = "musl")']
+rustflags = ["-C", "target-feature=+crt-static"]
+```
+
+This automatically applies to all builds on musl targets (Alpine, etc.), ensuring consistent behavior
+between local development and CI.
+
 ### Verification
 
 Static linking is verified in CI using `ldd`:
