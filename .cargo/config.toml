@@ -1,4 +1,12 @@
 # Static linking configuration for musl targets
 # This ensures Linux binaries are fully portable across distributions
-[target.'cfg(target_env = "musl")']
+#
+# Note: We use explicit target triples instead of cfg(target_env = "musl")
+# because cfg-based matching can be unreliable when rust-toolchain.toml
+# triggers a toolchain switch during cargo execution.
+
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+crt-static"]

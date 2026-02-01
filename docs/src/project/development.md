@@ -47,12 +47,16 @@ Static musl linking eliminates this dependency, producing portable binaries that
 Static linking for musl targets is configured in `.cargo/config.toml`:
 
 ```toml
-[target.'cfg(target_env = "musl")']
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+crt-static"]
 ```
 
-This automatically applies to all builds on musl targets (Alpine, etc.), ensuring consistent behavior
-between local development and CI.
+This uses explicit target triples (rather than `cfg(target_env = "musl")`) to ensure
+reliable matching even when `rust-toolchain.toml` triggers toolchain switches during
+cargo execution. Applies to both x86_64 and ARM64 architectures.
 
 ### Verification
 
