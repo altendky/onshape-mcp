@@ -7,7 +7,7 @@ This document describes the npm wrapper package design that enables installation
 The npm distribution uses a multi-package architecture with platform-specific binaries distributed as optional dependencies.
 This pattern (used by projects like `swc` and `esbuild`) provides:
 
-- Native binary performance without compilation
+- Pre-built binaries (no Rust toolchain required)
 - Automatic platform detection
 - Small download size (only the relevant binary is installed)
 - Fallback instructions for unsupported platforms
