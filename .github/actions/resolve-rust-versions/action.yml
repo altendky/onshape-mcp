@@ -46,11 +46,11 @@ runs:
         }
 
         # Function to check if Docker Hub has a specific rust image tag
+        # Returns: exit code 0 if tag exists, non-zero otherwise
         check_docker_hub_tag() {
           local tag="$1"
           local url="https://hub.docker.com/v2/repositories/library/rust/tags/${tag}"
-          local response
-          response=$(curl -sSf "$url" 2>/dev/null) && echo "true" || echo "false"
+          curl -sSf "$url" >/dev/null 2>&1
         }
 
         # Function to get the last updated time for a Docker Hub tag
@@ -61,22 +61,18 @@ runs:
         }
 
         # Function to check if a timestamp is within the grace period
-        # Returns "true" if within grace period, "false" otherwise
+        # Returns: exit code 0 if within grace period, 1 otherwise
         is_within_grace_period() {
           local timestamp="$1"
           local grace_hours="$2"
 
           if [ -z "$timestamp" ]; then
-            echo "false"
-            return
+            return 1
           fi
 
           # Convert ISO 8601 timestamp to epoch seconds
           local tag_epoch
-          tag_epoch=$(date -d "$timestamp" +%s 2>/dev/null) || {
-            echo "false"
-            return
-          }
+          tag_epoch=$(date -d "$timestamp" +%s 2>/dev/null) || return 1
 
           local now_epoch
           now_epoch=$(date +%s)
@@ -84,11 +80,7 @@ runs:
           local grace_seconds=$((grace_hours * 3600))
           local age_seconds=$((now_epoch - tag_epoch))
 
-          if [ "$age_seconds" -le "$grace_seconds" ]; then
-            echo "true"
-          else
-            echo "false"
-          fi
+          [ "$age_seconds" -le "$grace_seconds" ]
         }
 
         # Get stable version from rustup
@@ -103,14 +95,13 @@ runs:
 
         # Check Docker Hub for stable version
         echo "Checking Docker Hub for rust:${RUSTUP_STABLE}-alpine..."
-        DOCKER_HAS_STABLE=$(check_docker_hub_tag "${RUSTUP_STABLE}-alpine")
-        echo "Docker Hub has stable: $DOCKER_HAS_STABLE"
-
-        RESOLVED_STABLE="$RUSTUP_STABLE"
-        STABLE_DOCKER_AVAILABLE="$DOCKER_HAS_STABLE"
-
-        if [ "$DOCKER_HAS_STABLE" = "false" ]; then
+        if check_docker_hub_tag "${RUSTUP_STABLE}-alpine"; then
+          echo "Docker Hub has rust:${RUSTUP_STABLE}-alpine"
+          RESOLVED_STABLE="$RUSTUP_STABLE"
+          STABLE_DOCKER_AVAILABLE="true"
+        else
           echo "::warning::Docker Hub does not have rust:${RUSTUP_STABLE}-alpine"
+          STABLE_DOCKER_AVAILABLE="false"
 
           # Try to find the previous stable version
           # Extract major.minor and decrement patch, or try previous minor
@@ -127,16 +118,13 @@ runs:
           fi
 
           echo "Checking Docker Hub for rust:${PREV_VERSION}-alpine..."
-          DOCKER_HAS_PREV=$(check_docker_hub_tag "${PREV_VERSION}-alpine")
-
-          if [ "$DOCKER_HAS_PREV" = "true" ]; then
+          if check_docker_hub_tag "${PREV_VERSION}-alpine"; then
             # Check if the lag is within grace period by examining when the previous version was last updated
             # If Docker recently updated the previous version, it's likely just catching up to the new release
             PREV_TAG_DATE=$(get_docker_hub_tag_date "${PREV_VERSION}-alpine")
             echo "Previous version last updated: $PREV_TAG_DATE"
 
-            WITHIN_GRACE=$(is_within_grace_period "$PREV_TAG_DATE" "$GRACE_PERIOD_HOURS")
-            if [ "$WITHIN_GRACE" = "true" ]; then
+            if is_within_grace_period "$PREV_TAG_DATE" "$GRACE_PERIOD_HOURS"; then
               echo "::warning::Using previous version ${PREV_VERSION} (Docker Hub lag within ${GRACE_PERIOD_HOURS}h grace period)"
               RESOLVED_STABLE="$PREV_VERSION"
               STABLE_DOCKER_AVAILABLE="true"
