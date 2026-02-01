@@ -53,34 +53,43 @@ axes:
       container: alpine:latest
 
 exclude:
-  # Windows ARM runners not available
-  - os:
-      matrix: windows
-    arch:
-      matrix: arm
+  # For jobs without libc axis (coverage, pre-commit, build)
+  windows-arm:
+    - os:
+        matrix: windows
+      arch:
+        matrix: arm
 
-  # macOS only uses native (no glibc/musl concept)
-  - os:
-      matrix: macos
-    libc:
-      matrix: glibc
-  - os:
-      matrix: macos
-    libc:
-      matrix: musl
+  # For test job with libc axis
+  test:
+    # Windows ARM runners not available
+    - os:
+        matrix: windows
+      arch:
+        matrix: arm
 
-  # Windows only uses native (no glibc/musl concept)
-  - os:
-      matrix: windows
-    libc:
-      matrix: glibc
-  - os:
-      matrix: windows
-    libc:
-      matrix: musl
+    # macOS only uses native (no glibc/musl concept)
+    - os:
+        matrix: macos
+      libc:
+        matrix: glibc
+    - os:
+        matrix: macos
+      libc:
+        matrix: musl
 
-  # Linux excludes native (uses glibc + musl for testing)
-  - os:
-      matrix: linux
-    libc:
-      matrix: native
+    # Windows only uses native (no glibc/musl concept)
+    - os:
+        matrix: windows
+      libc:
+        matrix: glibc
+    - os:
+        matrix: windows
+      libc:
+        matrix: musl
+
+    # Linux excludes native (uses glibc + musl for testing)
+    - os:
+        matrix: linux
+      libc:
+        matrix: native

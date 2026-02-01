@@ -65,7 +65,7 @@ jobs:
         os: ${{ fromJSON(needs.library.outputs.matrix).axes.os }}
         arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
         rust: ${{ fromJSON(needs.library.outputs.matrix).axes.rust }}
-        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude }}
+        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
     steps:
       - uses: actions/checkout@v4
 
@@ -159,7 +159,7 @@ jobs:
         arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
         rust: ${{ fromJSON(needs.library.outputs.matrix).axes.rust }}
         libc: ${{ fromJSON(needs.library.outputs.matrix).axes.libc }}
-        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude }}
+        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.test }}
     steps:
       - uses: actions/checkout@v4
 
