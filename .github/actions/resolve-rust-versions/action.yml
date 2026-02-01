@@ -112,9 +112,12 @@ runs:
           # Try previous patch version first
           if [ "$PATCH" -gt 0 ]; then
             PREV_VERSION="${MAJOR}.${MINOR}.$((PATCH - 1))"
-          else
+          elif [ "$MINOR" -gt 0 ]; then
             # Try previous minor version with patch 0
             PREV_VERSION="${MAJOR}.$((MINOR - 1)).0"
+          else
+            echo "::error::Cannot compute previous version for ${RUSTUP_STABLE}"
+            exit 1
           fi
 
           echo "Checking Docker Hub for rust:${PREV_VERSION}-alpine..."
