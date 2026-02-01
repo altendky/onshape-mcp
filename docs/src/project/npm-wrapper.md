@@ -62,7 +62,7 @@ npm/
 
 ### Optional Dependencies
 
-The main `onshape-mcp` package declares all platform packages as `optionalDependencies`:
+The main `onshape-mcp` package declares all platform packages as `optionalDependencies` (example showing illustrative version 0.1.0):
 
 ```json
 {
