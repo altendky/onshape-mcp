@@ -8,7 +8,9 @@ description: Process a GitHub PR review comment
 
 ## Process
 
-1. **Parse the input:**
+1. **Validate and parse the input:**
+   - If the input contains `/issues/` → **stop** and inform the user: "This appears to be an issue URL, not a PR review comment. Use `/process-issue` instead."
+   - If the input contains `/pull/` but does NOT contain `#discussion_r`, `/files#r`, or `#r` → **stop** and inform the user: "This appears to be a PR URL without a comment reference. Use `/review-pr` to review the PR, or provide a specific comment URL (e.g., ending in `#discussion_r1234567890`)."
    - If given a URL like `https://github.com/owner/repo/pull/123#discussion_r1234567890` or `https://github.com/owner/repo/pull/123/files#r1234567890`, extract the comment ID (the number after `r`)
    - If given just a comment ID number, use it directly
 
