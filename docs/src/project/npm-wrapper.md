@@ -142,6 +142,15 @@ All npm packages use **lockstep versioning** with the Cargo version:
 
 This ensures consistency and simplifies the release process.
 
+### Enforcement
+
+Version synchronization is enforced through two mechanisms:
+
+1. **Release script** — Updates all `package.json` files to match the version in `Cargo.toml`
+2. **CI check** — Validates that all versions match, failing the build if any mismatch is detected
+
+This defense-in-depth approach prevents version drift from reaching production.
+
 ## Fallback Behavior
 
 When running on an unsupported platform (e.g., Windows ARM64, FreeBSD):
@@ -168,13 +177,24 @@ This requires the Rust toolchain. See https://rustup.rs for installation.
 
 The npm packages are published as part of the release process:
 
-1. **Build binaries** — CI builds release binaries for all supported platforms
-2. **Prepare packages** — Copy binaries into their respective `npm/` platform directories
-3. **Update versions** — Ensure all `package.json` files have the release version
-4. **Publish platform packages** — Publish each `@onshape-mcp/*` package to npm
-5. **Publish main package** — Publish the main `onshape-mcp` package last
+1. **Sync versions** — Run release script to update all `package.json` versions from `Cargo.toml`
+2. **Build binaries** — CI builds release binaries for all supported platforms
+3. **Validate versions** — CI job verifies all `package.json` versions match `Cargo.toml`
+4. **Prepare packages** — Copy binaries into their respective `npm/` platform directories
+5. **Publish platform packages** — Publish each `@onshape-mcp/*` package to npm
+6. **Publish main package** — Publish the main `onshape-mcp` package last
 
 The main package must be published last to ensure all platform dependencies are available when users install it.
+
+### Version Validation
+
+The CI version check will:
+
+1. Extract version from `Cargo.toml`
+2. Compare against each `package.json` in `npm/`
+3. Fail with clear error message if any mismatch is found
+
+This runs on every PR to catch version drift before merge.
 
 ## Testing Strategy
 
