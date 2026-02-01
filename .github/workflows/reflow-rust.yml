@@ -111,8 +111,9 @@ jobs:
                   if ldd \"\$bin\" 2>&1 | grep -q 'not a dynamic executable\\|statically linked'; then
                     echo \"OK: \$bin is statically linked\"
                   else
-                    echo \"INFO: \$bin linking:\"
+                    echo \"ERROR: \$bin is dynamically linked\"
                     ldd \"\$bin\" 2>&1 || true
+                    exit 1
                   fi
                 fi
               fi
