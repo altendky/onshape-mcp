@@ -83,6 +83,41 @@ The `bin.js` shim handles platform detection and binary execution:
 3. Spawns the binary with inherited stdio
 4. Exits with the binary's exit code
 
+### Signal Handling
+
+The synchronous execution model (`execFileSync` with `stdio: 'inherit'`) handles OS signals naturally without manual forwarding.
+
+**Unix (Linux, macOS):**
+
+- Both the JS shim and Rust binary share the same controlling terminal
+- They belong to the same foreground process group
+- When the user sends SIGINT (Ctrl+C) or SIGTERM, the kernel delivers the signal to the entire process group
+- The Rust binary receives the signal directly and handles graceful shutdown
+- No manual signal forwarding is required in the JS shim
+
+**Windows:**
+
+- Windows uses console control events instead of Unix signals
+- With inherited stdio, console events (like Ctrl+C) reach the child process directly
+
+**Exit code propagation:**
+
+```js
+try {
+  execFileSync(binPath, process.argv.slice(2), { stdio: 'inherit' });
+} catch (e) {
+  process.exit(e.status ?? 1);
+}
+```
+
+### stdio Behavior
+
+With `stdio: 'inherit'`, the Rust binary directly inherits the parent's file descriptors.
+The JS shim is not in the data path — the MCP client communicates directly with the Rust binary's stdin/stdout.
+This avoids any buffering concerns at the JS layer.
+
+For Rust-side stdio buffering considerations, see [#37](https://github.com/altendky/onshape-mcp/issues/37).
+
 ### Platform Detection
 
 | `process.platform` | `process.arch` | Package |
