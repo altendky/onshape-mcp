@@ -58,14 +58,32 @@ ldd target/debug/<binary-name>
 To build musl-linked binaries locally:
 
 ```bash
-# Option 1: Use Docker (recommended)
+# Option 1: Use rust:alpine image (simplest)
 docker run --rm -v "$PWD":/app -w /app rust:alpine \
   cargo build --release
 
-# Option 2: Install musl target (Linux only)
+# Option 2: Use alpine:latest with rustup (matches CI)
+# Allows testing with specific Rust versions (stable/beta/MSRV)
+docker run --rm -v "$PWD":/app -w /app alpine:latest sh -c "
+  apk add --no-cache curl bash gcc musl-dev
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain beta
+  . \$HOME/.cargo/env
+  cargo build --release
+"
+
+# Option 3: Install musl target natively (Linux only)
 rustup target add x86_64-unknown-linux-musl
+rustup target add aarch64-unknown-linux-musl  # For ARM64
 cargo build --release --target x86_64-unknown-linux-musl
+# Or for ARM64:
+# cargo build --release --target aarch64-unknown-linux-musl
 ```
+
+**When to use each approach:**
+
+- **Option 1 (rust:alpine)**: Quick local builds with the latest stable Rust. Simplest approach.
+- **Option 2 (alpine:latest + rustup)**: Matches CI configuration. Use this to test with specific Rust versions including beta releases for early compatibility testing.
+- **Option 3 (native musl target)**: Fastest builds if you're on Linux and have the musl target installed.
 
 ## CI Architecture
 
