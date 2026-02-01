@@ -48,7 +48,9 @@ Static linking is verified in CI using `ldd`:
 
 ```bash
 # Should report "not a dynamic executable" or "statically linked"
-ldd target/release/onshape-mcp
+ldd target/debug/<binary-name>
+# Or for release builds:
+# ldd target/release/<binary-name>
 ```
 
 ### Local musl Builds
