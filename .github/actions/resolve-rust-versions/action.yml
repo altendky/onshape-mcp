@@ -60,6 +60,37 @@ runs:
           curl -sSf "$url" 2>/dev/null | jq -r '.last_updated // empty' || echo ""
         }
 
+        # Function to check if a timestamp is within the grace period
+        # Returns "true" if within grace period, "false" otherwise
+        is_within_grace_period() {
+          local timestamp="$1"
+          local grace_hours="$2"
+
+          if [ -z "$timestamp" ]; then
+            echo "false"
+            return
+          fi
+
+          # Convert ISO 8601 timestamp to epoch seconds
+          local tag_epoch
+          tag_epoch=$(date -d "$timestamp" +%s 2>/dev/null) || {
+            echo "false"
+            return
+          }
+
+          local now_epoch
+          now_epoch=$(date +%s)
+
+          local grace_seconds=$((grace_hours * 3600))
+          local age_seconds=$((now_epoch - tag_epoch))
+
+          if [ "$age_seconds" -le "$grace_seconds" ]; then
+            echo "true"
+          else
+            echo "false"
+          fi
+        }
+
         # Get stable version from rustup
         echo "Querying rustup for stable version..."
         RUSTUP_STABLE=$(get_rustup_version "stable")
@@ -99,12 +130,21 @@ runs:
           DOCKER_HAS_PREV=$(check_docker_hub_tag "${PREV_VERSION}-alpine")
 
           if [ "$DOCKER_HAS_PREV" = "true" ]; then
-            # Check if the lag is within grace period
-            # For simplicity, we assume if Docker is behind, it's recent
-            # In production, you'd compare actual timestamps
-            echo "::warning::Using previous version ${PREV_VERSION} (Docker Hub lag within grace period)"
-            RESOLVED_STABLE="$PREV_VERSION"
-            STABLE_DOCKER_AVAILABLE="true"
+            # Check if the lag is within grace period by examining when the previous version was last updated
+            # If Docker recently updated the previous version, it's likely just catching up to the new release
+            PREV_TAG_DATE=$(get_docker_hub_tag_date "${PREV_VERSION}-alpine")
+            echo "Previous version last updated: $PREV_TAG_DATE"
+
+            WITHIN_GRACE=$(is_within_grace_period "$PREV_TAG_DATE" "$GRACE_PERIOD_HOURS")
+            if [ "$WITHIN_GRACE" = "true" ]; then
+              echo "::warning::Using previous version ${PREV_VERSION} (Docker Hub lag within ${GRACE_PERIOD_HOURS}h grace period)"
+              RESOLVED_STABLE="$PREV_VERSION"
+              STABLE_DOCKER_AVAILABLE="true"
+            else
+              echo "::error::Docker Hub lag exceeds grace period of ${GRACE_PERIOD_HOURS} hours"
+              echo "::error::Previous version ${PREV_VERSION} last updated: $PREV_TAG_DATE"
+              exit 1
+            fi
           else
             echo "::error::Cannot find a suitable stable Rust version on Docker Hub"
             echo "::error::Rustup has ${RUSTUP_STABLE}, Docker Hub missing both ${RUSTUP_STABLE}-alpine and ${PREV_VERSION}-alpine"
