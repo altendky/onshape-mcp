@@ -23,6 +23,7 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 - [CI](ci.md) — GitHub settings, workflows, coverage, OpenAPI management
 - [Development](development.md) — Local development, pre-commit hooks, testing
 - [Release](release.md) — Distribution, versioning, publishing
+- [npm Wrapper](npm-wrapper.md) — npm package design for `npx` installation
 
 ### Project Management
 
