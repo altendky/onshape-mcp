@@ -141,7 +141,7 @@ We use [cargo-nextest](https://nexte.st/) for test execution:
 | `action-validator` | mpalmer/action-validator | pre-commit | Action/workflow schema |
 | `cargo fmt --check` | local | pre-commit | Formatting |
 | `cargo clippy` | local | pre-commit | Linting |
-| `cargo nextest run` | local | manual | Tests |
+| `cargo nextest run --all-features` | local | manual | Tests |
 | `cargo deny` | local | manual | Dependency audit |
 
 **Stages:**
