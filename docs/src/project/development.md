@@ -9,12 +9,83 @@ cargo fmt
 # Lint
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Test
-cargo test
+# Test (using nextest for faster, more reliable test runs)
+cargo nextest run --all-features
 
 # Coverage
 cargo llvm-cov --all-features --workspace
 ```
+
+### Installing Development Tools
+
+```bash
+# Install cargo-nextest (next-generation test runner)
+cargo install cargo-nextest --locked
+
+# Install cargo-llvm-cov (coverage)
+cargo install cargo-llvm-cov --locked
+
+# Install cargo-deny (dependency audit)
+cargo install cargo-deny --locked
+```
+
+## Linux Static Linking
+
+Linux binaries are built with musl libc to produce fully static executables.
+This ensures compatibility across all Linux distributions, including:
+
+- glibc-based distributions (Ubuntu, Debian, Fedora, RHEL, etc.)
+- musl-based distributions (Alpine, Void Linux, etc.)
+
+### Why Static Linking?
+
+Dynamic linking against glibc creates binaries that may fail on systems with older glibc versions.
+Static musl linking eliminates this dependency, producing portable binaries that work everywhere.
+
+### Verification
+
+Static linking is verified in CI using `ldd`:
+
+```bash
+# Should report "not a dynamic executable" or "statically linked"
+ldd target/release/onshape-mcp
+```
+
+### Local musl Builds
+
+To build musl-linked binaries locally:
+
+```bash
+# Option 1: Use Docker (recommended)
+docker run --rm -v "$PWD":/app -w /app rust:alpine \
+  cargo build --release
+
+# Option 2: Install musl target (Linux only)
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+## CI Architecture
+
+The CI workflow separates build and test stages:
+
+1. **Build stage**: Compiles tests and creates archives
+   - Linux: Builds in Alpine containers (musl-linked)
+   - macOS/Windows: Builds natively
+
+2. **Test stage**: Runs pre-built tests in multiple environments
+   - Linux tests run on both glibc (Ubuntu) and musl (Alpine)
+   - macOS/Windows tests run natively
+
+This architecture verifies that musl binaries work correctly on glibc systems and vice versa.
+
+### Test Runner
+
+We use [cargo-nextest](https://nexte.st/) for test execution:
+
+- Faster parallel test execution
+- Better CI integration with archiving support
+- Cleaner output and failure reporting
 
 ## Pre-commit Hooks
 
@@ -38,7 +109,7 @@ cargo llvm-cov --all-features --workspace
 | `action-validator` | mpalmer/action-validator | pre-commit | Action/workflow schema |
 | `cargo fmt --check` | local | pre-commit | Formatting |
 | `cargo clippy` | local | pre-commit | Linting |
-| `cargo test` | local | manual | Tests |
+| `cargo nextest run` | local | manual | Tests |
 | `cargo deny` | local | manual | Dependency audit |
 
 **Stages:**

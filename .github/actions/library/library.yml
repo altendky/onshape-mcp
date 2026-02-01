@@ -38,10 +38,55 @@ axes:
       matrix: beta
       version: beta
       emoji: 🔮
+  libc:
+    - name: native
+      matrix: native
+      emoji: 🏠
+      # No container - runs directly on runner
+    - name: glibc
+      matrix: glibc
+      emoji: 🐃
+      # Runs on Ubuntu runner (glibc-based), no container needed
+    - name: musl
+      matrix: musl
+      emoji: 🦌
+      container: alpine:latest
 
 exclude:
+  # Windows ARM runners not available
   windows-arm:
     - os:
         matrix: windows
       arch:
         matrix: arm
+
+  # macOS only uses native (no glibc/musl concept)
+  macos-glibc:
+    - os:
+        matrix: macos
+      libc:
+        matrix: glibc
+  macos-musl:
+    - os:
+        matrix: macos
+      libc:
+        matrix: musl
+
+  # Windows only uses native (no glibc/musl concept)
+  windows-glibc:
+    - os:
+        matrix: windows
+      libc:
+        matrix: glibc
+  windows-musl:
+    - os:
+        matrix: windows
+      libc:
+        matrix: musl
+
+  # Linux excludes native (uses glibc + musl for testing)
+  linux-native:
+    - os:
+        matrix: linux
+      libc:
+        matrix: native

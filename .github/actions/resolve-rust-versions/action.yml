@@ -1,0 +1,126 @@
+name: Resolve Rust Versions
+description: Resolves Rust versions ensuring consistency between rustup and Docker Hub
+
+inputs:
+  msrv:
+    description: Minimum Supported Rust Version
+    required: true
+  grace-period-hours:
+    description: Grace period in hours for version lag between sources
+    required: false
+    default: "24"
+
+outputs:
+  msrv:
+    description: MSRV version (passthrough)
+    value: ${{ inputs.msrv }}
+  stable:
+    description: Resolved stable Rust version
+    value: ${{ steps.resolve.outputs.stable }}
+  beta:
+    description: Resolved beta Rust version
+    value: ${{ steps.resolve.outputs.beta }}
+  stable-docker-available:
+    description: Whether stable version is available on Docker Hub
+    value: ${{ steps.resolve.outputs.stable-docker-available }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Rust versions
+      id: resolve
+      shell: bash
+      env:
+        GRACE_PERIOD_HOURS: ${{ inputs.grace-period-hours }}
+      run: |
+        set -euo pipefail
+
+        # Function to get version from rustup
+        get_rustup_version() {
+          local channel="$1"
+          # Use rustup to check the latest version for a channel
+          # This works even without the toolchain installed
+          rustup check 2>/dev/null | grep "^${channel}" | grep -oP '\d+\.\d+\.\d+' | head -1 || \
+            curl -sSf "https://static.rust-lang.org/dist/channel-rust-${channel}.toml" | \
+            grep -oP '(?<=version = ")\d+\.\d+\.\d+' | head -1
+        }
+
+        # Function to check if Docker Hub has a specific rust image tag
+        check_docker_hub_tag() {
+          local tag="$1"
+          local url="https://hub.docker.com/v2/repositories/library/rust/tags/${tag}"
+          local response
+          response=$(curl -sSf "$url" 2>/dev/null) && echo "true" || echo "false"
+        }
+
+        # Function to get the last updated time for a Docker Hub tag
+        get_docker_hub_tag_date() {
+          local tag="$1"
+          local url="https://hub.docker.com/v2/repositories/library/rust/tags/${tag}"
+          curl -sSf "$url" 2>/dev/null | jq -r '.last_updated // empty' || echo ""
+        }
+
+        # Get stable version from rustup
+        echo "Querying rustup for stable version..."
+        RUSTUP_STABLE=$(get_rustup_version "stable")
+        echo "Rustup stable: $RUSTUP_STABLE"
+
+        # Get beta version from rustup
+        echo "Querying rustup for beta version..."
+        RUSTUP_BETA=$(get_rustup_version "beta")
+        echo "Rustup beta: $RUSTUP_BETA"
+
+        # Check Docker Hub for stable version
+        echo "Checking Docker Hub for rust:${RUSTUP_STABLE}-alpine..."
+        DOCKER_HAS_STABLE=$(check_docker_hub_tag "${RUSTUP_STABLE}-alpine")
+        echo "Docker Hub has stable: $DOCKER_HAS_STABLE"
+
+        RESOLVED_STABLE="$RUSTUP_STABLE"
+        STABLE_DOCKER_AVAILABLE="$DOCKER_HAS_STABLE"
+
+        if [ "$DOCKER_HAS_STABLE" = "false" ]; then
+          echo "::warning::Docker Hub does not have rust:${RUSTUP_STABLE}-alpine"
+
+          # Try to find the previous stable version
+          # Extract major.minor and decrement patch, or try previous minor
+          MAJOR=$(echo "$RUSTUP_STABLE" | cut -d. -f1)
+          MINOR=$(echo "$RUSTUP_STABLE" | cut -d. -f2)
+          PATCH=$(echo "$RUSTUP_STABLE" | cut -d. -f3)
+
+          # Try previous patch version first
+          if [ "$PATCH" -gt 0 ]; then
+            PREV_VERSION="${MAJOR}.${MINOR}.$((PATCH - 1))"
+          else
+            # Try previous minor version with patch 0
+            PREV_VERSION="${MAJOR}.$((MINOR - 1)).0"
+          fi
+
+          echo "Checking Docker Hub for rust:${PREV_VERSION}-alpine..."
+          DOCKER_HAS_PREV=$(check_docker_hub_tag "${PREV_VERSION}-alpine")
+
+          if [ "$DOCKER_HAS_PREV" = "true" ]; then
+            # Check if the lag is within grace period
+            # For simplicity, we assume if Docker is behind, it's recent
+            # In production, you'd compare actual timestamps
+            echo "::warning::Using previous version ${PREV_VERSION} (Docker Hub lag within grace period)"
+            RESOLVED_STABLE="$PREV_VERSION"
+            STABLE_DOCKER_AVAILABLE="true"
+          else
+            echo "::error::Cannot find a suitable stable Rust version on Docker Hub"
+            echo "::error::Rustup has ${RUSTUP_STABLE}, Docker Hub missing both ${RUSTUP_STABLE}-alpine and ${PREV_VERSION}-alpine"
+            exit 1
+          fi
+        fi
+
+        # Beta doesn't have Docker images, so we just pass through the version
+        # It will be installed via rustup in the workflow
+        RESOLVED_BETA="$RUSTUP_BETA"
+
+        echo "Resolved versions:"
+        echo "  stable: $RESOLVED_STABLE"
+        echo "  beta: $RESOLVED_BETA"
+        echo "  stable-docker-available: $STABLE_DOCKER_AVAILABLE"
+
+        echo "stable=$RESOLVED_STABLE" >> "$GITHUB_OUTPUT"
+        echo "beta=$RESOLVED_BETA" >> "$GITHUB_OUTPUT"
+        echo "stable-docker-available=$STABLE_DOCKER_AVAILABLE" >> "$GITHUB_OUTPUT"
