@@ -95,7 +95,7 @@ jobs:
 
             # Install Rust
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${{ steps.rust-version.outputs.version }}
-            . \"$HOME/.cargo/env\"
+            export PATH=\"\$HOME/.cargo/bin:\$PATH\"
 
             # Install nextest (architecture-aware)
             ARCH=\$(uname -m)
