@@ -65,7 +65,7 @@ jobs:
         os: ${{ fromJSON(needs.library.outputs.matrix).axes.os }}
         arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
         rust: ${{ fromJSON(needs.library.outputs.matrix).axes.rust }}
-        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
+        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude }}
     steps:
       - uses: actions/checkout@v4
 
@@ -158,35 +158,7 @@ jobs:
         arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
         rust: ${{ fromJSON(needs.library.outputs.matrix).axes.rust }}
         libc: ${{ fromJSON(needs.library.outputs.matrix).axes.libc }}
-        exclude:
-          # Windows ARM not available
-          - os:
-              matrix: windows
-            arch:
-              matrix: arm
-          # macOS only uses native (no glibc/musl)
-          - os:
-              matrix: macos
-            libc:
-              matrix: glibc
-          - os:
-              matrix: macos
-            libc:
-              matrix: musl
-          # Windows only uses native (no glibc/musl)
-          - os:
-              matrix: windows
-            libc:
-              matrix: glibc
-          - os:
-              matrix: windows
-            libc:
-              matrix: musl
-          # Linux uses glibc + musl (not native)
-          - os:
-              matrix: linux
-            libc:
-              matrix: native
+        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude }}
     steps:
       - uses: actions/checkout@v4
 

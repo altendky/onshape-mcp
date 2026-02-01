@@ -54,39 +54,33 @@ axes:
 
 exclude:
   # Windows ARM runners not available
-  windows-arm:
-    - os:
-        matrix: windows
-      arch:
-        matrix: arm
+  - os:
+      matrix: windows
+    arch:
+      matrix: arm
 
   # macOS only uses native (no glibc/musl concept)
-  macos-glibc:
-    - os:
-        matrix: macos
-      libc:
-        matrix: glibc
-  macos-musl:
-    - os:
-        matrix: macos
-      libc:
-        matrix: musl
+  - os:
+      matrix: macos
+    libc:
+      matrix: glibc
+  - os:
+      matrix: macos
+    libc:
+      matrix: musl
 
   # Windows only uses native (no glibc/musl concept)
-  windows-glibc:
-    - os:
-        matrix: windows
-      libc:
-        matrix: glibc
-  windows-musl:
-    - os:
-        matrix: windows
-      libc:
-        matrix: musl
+  - os:
+      matrix: windows
+    libc:
+      matrix: glibc
+  - os:
+      matrix: windows
+    libc:
+      matrix: musl
 
   # Linux excludes native (uses glibc + musl for testing)
-  linux-native:
-    - os:
-        matrix: linux
-      libc:
-        matrix: native
+  - os:
+      matrix: linux
+    libc:
+      matrix: native
