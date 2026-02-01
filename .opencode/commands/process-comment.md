@@ -41,8 +41,9 @@ description: Process a GitHub PR review comment
    - Briefly describe what changes were made to address the comment
 
 8. **Confirm with user:**
+   - Show the changes made: run `git diff` to display all modifications
    - Ask if they are satisfied with the changes and would like to commit and push
-   - If no, stop
+   - If no, stop without committing (the changes remain in the working directory for manual review or further editing)
 
 9. **Commit and push:**
    - Stage the changed files
