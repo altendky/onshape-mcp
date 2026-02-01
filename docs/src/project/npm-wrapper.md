@@ -23,6 +23,11 @@ This pattern (used by projects like `swc` and `esbuild`) provides:
 | `@onshape-mcp/darwin-arm64` | macOS ARM64 (Apple Silicon) binary |
 | `@onshape-mcp/win32-x64` | Windows x86_64 binary |
 
+### Linux Static Linking
+
+Linux binaries are compiled with the `x86_64-unknown-linux-musl` (or `aarch64-unknown-linux-musl`) target, producing fully static binaries.
+This ensures compatibility with both glibc-based distributions (Ubuntu, Debian, Fedora) and musl-based distributions (Alpine).
+
 ## Directory Structure
 
 ```text
@@ -170,6 +175,27 @@ The npm packages are published as part of the release process:
 5. **Publish main package** — Publish the main `onshape-mcp` package last
 
 The main package must be published last to ensure all platform dependencies are available when users install it.
+
+## Testing Strategy
+
+### Pre-publish Verification
+
+- Verify each platform package contains the correct binary
+- Verify binaries are executable (`--version` or `--help`)
+- Verify the JS shim correctly locates and spawns the binary
+- Test fallback error message on unsupported platforms
+
+### CI Integration
+
+- Run `npm pack` + install for each platform in CI
+- Smoke test on native platform runners (Linux x64, Linux ARM64, macOS x64, macOS ARM64, Windows x64)
+- ARM testing uses actual ARM runners, not emulation
+
+### End-to-end Testing
+
+- Test `npx onshape-mcp` against an MCP client
+- Verify JSON-RPC communication over stdio
+- Verify graceful shutdown on SIGINT/SIGTERM
 
 ## Usage
 
