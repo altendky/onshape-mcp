@@ -91,11 +91,11 @@ jobs:
             set -ex
 
             # Install dependencies
-            apk add --no-cache curl bash gcc musl-dev
+            apk add --no-cache curl bash gcc musl-dev file
 
             # Install Rust
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${{ steps.rust-version.outputs.version }}
-            export PATH=\"\$HOME/.cargo/bin:\$PATH\"
+            . \"$HOME/.cargo/env\"
 
             # Install nextest
             curl -LsSf https://get.nexte.st/latest/linux-musl | tar zxf - -C /usr/local/bin
@@ -106,13 +106,13 @@ jobs:
             # Verify static linking
             echo 'Checking for statically linked binaries...'
             for bin in target/debug/deps/*; do
-              if [ -f \"\$bin\" ] && [ -x \"\$bin\" ]; then
-                if file \"\$bin\" | grep -q 'ELF.*executable'; then
-                  if ldd \"\$bin\" 2>&1 | grep -q 'not a dynamic executable\\|statically linked'; then
-                    echo \"OK: \$bin is statically linked\"
+              if [ -f \"$bin\" ] && [ -x \"$bin\" ]; then
+                if file \"$bin\" | grep -q 'ELF.*executable'; then
+                  if ldd \"$bin\" 2>&1 | grep -q 'not a dynamic executable\\|statically linked'; then
+                    echo \"OK: $bin is statically linked\"
                   else
-                    echo \"ERROR: \$bin is dynamically linked\"
-                    ldd \"\$bin\" 2>&1 || true
+                    echo \"ERROR: $bin is dynamically linked\"
+                    ldd \"$bin\" 2>&1 || true
                     exit 1
                   fi
                 fi
