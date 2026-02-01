@@ -13,10 +13,11 @@ description: Research, assess, and address a GitHub issue
    - If not provided, run `/issues` to list open issues and ask the user which to process
 
 1a. **Validate input type:**
-    - If the input URL contains `/pull/` → **stop** and inform the user: "This appears to be a pull request URL, not an issue. Use `/review-pr` to review PRs, or `/process-comment` for PR review comments."
     - If the input contains `#discussion_r` or `#r` → **stop** and inform the user: "This appears to be a PR review comment URL. Use `/process-comment` instead."
+    - If the input URL contains `/pull/` → **stop** and inform the user: "This appears to be a pull request URL, not an issue. Use `/review-pr` to review PRs, or `/process-comment` for PR review comments."
     - If given a number, run `gh issue view <N> --json url --jq '.url'` and check the returned URL:
-      - If it contains `/pull/` → **stop** and inform the user: "Number #N refers to a pull request, not an issue. Use `/review-pr` to review it."
+      - If the command fails (non-zero exit) → **stop** and ask the user: "Could not view issue `#N` — ensure the issue exists and you have access, or provide a full issue URL."
+      - If it contains `/pull/` → **stop** and inform the user: "Number `#N` refers to a pull request, not an issue. Use `/review-pr` to review it."
       - If it contains `/issues/` → proceed
 
 2. **Retrieve issue details:**
