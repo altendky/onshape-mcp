@@ -18,10 +18,10 @@ description: Process a GitHub PR review comment
    - This returns the comment body, file path, line numbers, and diff context
 
 3. **Verify branch:**
-   - Extract the PR number from the comment's `pull_request_url` field
-   - Get the PR's head branch: `gh pr view <N> --json headRefName`
-   - Compare with current local branch: `git branch --show-current`
-   - If they don't match, inform the user and **stop**
+   - Extract `PR_NUMBER` from the comment's `pull_request_url` field (e.g., `echo "$pull_request_url" | grep -oP '(?<=pull/)\d+'`)
+   - Get the PR's head branch: `HEAD_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')`
+   - Get current local branch: `CURRENT_BRANCH=$(git branch --show-current)`
+   - Compare `HEAD_BRANCH` and `CURRENT_BRANCH`; if they don't match, inform the user and **stop**
 
 4. **Understand the feedback:**
    - Read the comment body carefully
