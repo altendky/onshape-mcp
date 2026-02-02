@@ -81,6 +81,8 @@ jobs:
           esac
 
       # Linux: Run build in Alpine container for musl linking
+      # The script calls separate phases: setup, install-nextest, build-tests
+      # Each phase outputs ::group:: markers for collapsible log sections
       - name: Build in Alpine container (Linux)
         if: matrix.os.matrix == 'linux'
         uses: docker://alpine:latest
@@ -138,6 +140,8 @@ jobs:
           name: nextest-archive-${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}-${{ matrix.rust.matrix }}
 
       # Test in Alpine container (musl)
+      # The script calls separate phases: install dependencies, install-nextest, run-tests
+      # Each phase outputs ::group:: markers for collapsible log sections
       - name: Run tests in Alpine (musl)
         if: matrix.libc.matrix == 'musl'
         uses: docker://alpine:latest

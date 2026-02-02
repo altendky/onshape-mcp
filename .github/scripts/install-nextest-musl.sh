@@ -9,6 +9,8 @@
 
 set -ex
 
+echo "::group::Install cargo-nextest"
+
 ARCH=$(uname -m)
 case "$ARCH" in
 x86_64)
@@ -38,3 +40,5 @@ aarch64)
 	echo "Unsupported architecture: $ARCH" && exit 1
 	;;
 esac
+
+echo "::endgroup::"
