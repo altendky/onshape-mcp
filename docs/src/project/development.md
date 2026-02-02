@@ -60,14 +60,17 @@ cargo execution. Applies to both x86_64 and ARM64 architectures.
 
 ### Verification
 
-Static linking is verified in CI using `ldd`:
+Static linking is verified in CI using the `file` command:
 
 ```bash
-# Should report "not a dynamic executable" or "statically linked"
-ldd target/debug/<binary-name>
+# Should report "statically linked" or "static-pie linked"
+file target/debug/<binary-name>
 # Or for release builds:
-# ldd target/release/<binary-name>
+# file target/release/<binary-name>
 ```
+
+**Note:** We use `file` instead of `ldd` because musl's `ldd` outputs the loader path
+even for static binaries, unlike glibc's `ldd` which says "not a dynamic executable".
 
 ### Local musl Builds
 
