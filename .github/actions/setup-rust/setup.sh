@@ -6,7 +6,7 @@
 #   toolchain   - Rust toolchain version (e.g., "1.88", "stable", "beta")
 #   components  - Optional comma-separated list of components (e.g., "rustfmt,clippy")
 
-set -ex
+set -eux
 
 TOOLCHAIN="${1:?Usage: setup.sh <toolchain> [components]}"
 COMPONENTS="${2:-}"

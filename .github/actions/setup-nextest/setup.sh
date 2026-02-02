@@ -6,7 +6,7 @@
 #   x86_64:  Downloads prebuilt musl binary
 #   aarch64: Builds from source (installs Rust if needed)
 
-set -ex
+set -eux
 
 ARCH=$(uname -m)
 case "$ARCH" in

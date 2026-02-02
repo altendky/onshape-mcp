@@ -2,7 +2,7 @@
 # Build in Alpine container for musl static linking
 # Usage: alpine-build.sh <rust-version>
 
-set -ex
+set -eux
 
 RUST_VERSION="${1:?Usage: alpine-build.sh <rust-version>}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

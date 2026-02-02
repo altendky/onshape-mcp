@@ -133,7 +133,7 @@ CI scripts use POSIX shell (`sh`) for Alpine container compatibility:
 | Convention | Value |
 | ---------- | ----- |
 | Shebang | `#!/usr/bin/env sh` |
-| Error handling | `set -eu` (POSIX) |
+| Error handling | `set -eux` (POSIX: exit on error, undefined vars, trace) |
 | Location | `.github/scripts/` and `.github/actions/*/setup.sh` |
 
 **Why POSIX shell?** Alpine Linux uses BusyBox ash, not bash. Scripts that run in

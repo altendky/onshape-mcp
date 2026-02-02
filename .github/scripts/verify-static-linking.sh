@@ -5,7 +5,7 @@
 # that outputs the loader path even for static binaries, unlike glibc's ldd
 # which says "not a dynamic executable" for static binaries.
 
-set -ex
+set -eux
 
 # Install file command if not present (Alpine)
 if ! command -v file >/dev/null 2>&1; then
