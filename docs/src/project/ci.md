@@ -64,7 +64,7 @@ Store credentials in repository secrets:
 | `.github/workflows/ci.yml` | Entry point, calls reusable workflows, `all` job aggregation |
 | `.github/workflows/reflow-library.yml` | Reusable workflow that outputs matrix configuration |
 | `.github/workflows/reflow-pre-commit.yml` | Reusable workflow for pre-commit checks (5 platform jobs) |
-| `.github/workflows/reflow-rust.yml` | Reusable workflow for Rust checks (15 matrix jobs) |
+| `.github/workflows/reflow-rust.yml` | Reusable workflow for Rust lint, build, and test jobs |
 | `.github/workflows/reflow-coverage.yml` | Reusable workflow for coverage generation (5 platform jobs) |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
 
@@ -104,8 +104,14 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 ├─────────────────────────────────────────────────────────────┤
 │  jobs:                                                       │
 │    library: uses reflow-library.yml                         │
-│    check: 15 matrix jobs (3 rust × 5 platforms)             │
-│      - cargo fmt, clippy, test, deny                        │
+│    resolve-versions: resolves rustup/Docker Hub versions    │
+│    lint: 1 job (fmt, clippy, deny on stable)                │
+│    build: 15 jobs (3 rust × 5 platforms)                    │
+│      - Builds and archives tests with cargo-nextest         │
+│      - Linux builds in Alpine containers (musl)             │
+│    test: 21 jobs (3 rust × 7 platform/libc combinations)    │
+│      - Runs archived tests                                  │
+│      - Linux tests on both glibc and musl                   │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -126,7 +132,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Note:** Each reusable workflow calls `reflow-library.yml` internally to get the matrix configuration. This results in the library job running 3 times per CI run, but the overhead is minimal.
+**Note:** Each reusable workflow calls `reflow-library.yml` internally to get the matrix configuration. This results in the library job running 3 times per CI run (once per reusable workflow), but the overhead is minimal.
 
 ## Library Action
 
@@ -198,11 +204,21 @@ The action parses this YAML and outputs it as JSON for use in workflow matrices.
 | Workflow | Jobs |
 | -------- | ---- |
 | Pre-commit | 5 (1 per platform) |
-| Rust | 15 (3 rust versions × 5 platforms) |
+| Rust | 38 (1 lint + 15 build + 21 test + 1 resolve-versions) |
 | Coverage | 5 (stable only × 5 platforms) |
 | Library | 3 (called by each reusable workflow) |
 | All | 1 |
-| **Total** | **29 jobs** |
+| **Total** | **52 jobs** |
+
+**Rust job breakdown:**
+
+- **Lint:** 1 job (runs fmt, clippy, deny on stable)
+- **Build:** 15 jobs (3 rust versions × 5 platforms)
+- **Test:** 21 jobs (3 rust versions × 7 platform/libc combinations)
+  - Linux: 2 arch × 2 libc (glibc + musl) = 4 combinations
+  - macOS: 2 arch × 1 (native) = 2 combinations
+  - Windows: 1 arch × 1 (native) = 1 combination
+  - Total: 7 combinations × 3 rust versions = 21 jobs
 
 ## CI Tooling
 
@@ -229,12 +245,18 @@ See [Development > Pre-commit Hooks](development.md#pre-commit-hooks) for the fu
 
 ### Rust Checks
 
-| Check | Tool | Run On |
-| ------- | ------ | -------- |
-| Formatting | `cargo fmt --check` | All 15 matrix combinations |
-| Linting | `cargo clippy` | All 15 matrix combinations |
-| Tests | `cargo test` | All 15 matrix combinations |
-| Dependency audit | `cargo deny` | All 15 matrix combinations |
+The Rust workflow is split into lint, build, and test stages:
+
+| Stage | Check | Tool | Run On |
+| ----- | ----- | ---- | ------ |
+| Lint | Formatting | `cargo fmt --check` | 1 job (stable) |
+| Lint | Linting | `cargo clippy` | 1 job (stable) |
+| Lint | Dependency audit | `cargo deny` | 1 job (stable) |
+| Build | Compile + archive | `cargo nextest archive` | 15 jobs (3 rust × 5 platforms) |
+| Test | Run tests | `cargo-nextest run` | 21 jobs (3 rust × 7 platform/libc) |
+
+**Build/Test split rationale:** Linux binaries are built with musl in Alpine containers,
+then tested on both glibc (Ubuntu) and musl (Alpine) environments to verify portability.
 
 ### Coverage
 
