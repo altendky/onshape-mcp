@@ -53,11 +53,12 @@ jobs:
         run: cargo deny check
 
   # Build job: builds and archives tests
-  # Linux builds use Alpine containers for musl linking
+  # Linux builds use Alpine containers for musl static linking
   build:
     name: 🔨 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }}
     needs: [library, resolve-versions]
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
+    container: ${{ matrix.os.container }}
     continue-on-error: ${{ matrix.rust.matrix == 'beta' }}
     strategy:
       fail-fast: false
@@ -80,34 +81,42 @@ jobs:
             beta) echo "version=${{ needs.resolve-versions.outputs.beta }}" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      # Linux: Run build in Alpine container for musl linking
-      # The script calls separate phases: setup, install-nextest, build-tests
-      # Each phase outputs ::group:: markers for collapsible log sections
-      - name: Build in Alpine container (Linux)
-        if: matrix.os.matrix == 'linux'
-        uses: docker://alpine:latest
-        with:
-          entrypoint: /bin/sh
-          args: .github/scripts/alpine-build.sh ${{ steps.rust-version.outputs.version }}
+      # Linux (Alpine container): Install dependencies and Rust
+      - name: Install Alpine dependencies
+        if: matrix.os.container
+        run: apk add --no-cache curl bash gcc musl-dev file
 
-      # Non-Linux: Native build
-      - name: Install Rust toolchain (non-Linux)
-        if: matrix.os.matrix != 'linux'
+      - name: Install Rust
+        if: matrix.os.container
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "${{ steps.rust-version.outputs.version }}"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install cargo-nextest (Linux)
+        if: matrix.os.container
+        run: .github/scripts/install-nextest-musl.sh
+
+      # Non-Linux (bare runner): Install Rust and nextest via actions
+      - name: Install Rust toolchain
+        if: ${{ !matrix.os.container }}
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ steps.rust-version.outputs.version }}
 
-      - name: Install cargo-nextest (non-Linux)
-        if: matrix.os.matrix != 'linux'
+      - name: Install cargo-nextest
+        if: ${{ !matrix.os.container }}
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
 
-      - name: Build and archive tests (non-Linux)
-        if: matrix.os.matrix != 'linux'
+      # Common: Build and archive tests
+      - name: Build and archive tests
         run: cargo nextest archive --all-features --archive-file target/nextest-archive.tar.zst
 
-      # Upload artifact
+      - name: Verify static linking
+        if: matrix.os.container
+        run: .github/scripts/verify-static-linking.sh
+
       - name: Upload test archive
         uses: actions/upload-artifact@v4
         with:
@@ -121,6 +130,7 @@ jobs:
     name: 🧪 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.libc.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }} ${{ matrix.libc.name }}
     needs: [library, resolve-versions, build]
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
+    container: ${{ matrix.libc.container }}
     continue-on-error: ${{ matrix.rust.matrix == 'beta' }}
     strategy:
       fail-fast: false
@@ -133,29 +143,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Download the test archive
       - name: Download test archive
         uses: actions/download-artifact@v4
         with:
           name: nextest-archive-${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}-${{ matrix.rust.matrix }}
 
-      # Test in Alpine container (musl)
-      # The script calls separate phases: install dependencies, install-nextest, run-tests
-      # Each phase outputs ::group:: markers for collapsible log sections
-      - name: Run tests in Alpine (musl)
-        if: matrix.libc.matrix == 'musl'
-        uses: docker://alpine:latest
-        with:
-          entrypoint: /bin/sh
-          args: .github/scripts/alpine-test.sh
+      # Musl (Alpine container): Install dependencies and nextest
+      - name: Install Alpine dependencies
+        if: matrix.libc.container
+        run: apk add --no-cache curl bash tar gzip
 
-      # Test on native runner (glibc for Linux, native for macOS/Windows)
-      - name: Install cargo-nextest (glibc/native)
-        if: matrix.libc.matrix != 'musl'
+      - name: Install cargo-nextest (musl)
+        if: matrix.libc.container
+        run: .github/scripts/install-nextest-musl.sh
+
+      # Non-musl (bare runner): Install nextest via action
+      - name: Install cargo-nextest
+        if: ${{ !matrix.libc.container }}
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
 
-      - name: Run tests (glibc/native)
-        if: matrix.libc.matrix != 'musl'
+      # Common: Run tests
+      - name: Run tests
         run: cargo-nextest nextest run --archive-file nextest-archive.tar.zst --workspace-remap .

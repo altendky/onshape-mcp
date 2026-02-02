@@ -1,17 +1,12 @@
 #!/bin/sh
-# Build and archive tests with nextest
-# Assumes Rust and nextest are already installed
-
-set -ex
-
-echo "::group::Build and archive tests"
-cargo nextest archive --all-features --archive-file target/nextest-archive.tar.zst
-echo "::endgroup::"
-
-echo "::group::Verify static linking"
+# Verify that binaries are statically linked
+#
 # Note: We use 'file' instead of 'ldd' because musl's ldd is a simple wrapper
 # that outputs the loader path even for static binaries, unlike glibc's ldd
 # which says "not a dynamic executable" for static binaries.
+
+set -ex
+
 for bin in target/debug/deps/*; do
 	if [ -f "$bin" ] && [ -x "$bin" ]; then
 		if file "$bin" | grep -q 'ELF.*executable'; then
@@ -25,4 +20,3 @@ for bin in target/debug/deps/*; do
 		fi
 	fi
 done
-echo "::endgroup::"
