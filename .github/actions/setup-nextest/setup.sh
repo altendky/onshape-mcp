@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # Install cargo-nextest in Alpine container
 # Usage: setup.sh
 #

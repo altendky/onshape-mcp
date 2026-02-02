@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # Run tests in Alpine container (musl environment)
 # Usage: alpine-test.sh
 

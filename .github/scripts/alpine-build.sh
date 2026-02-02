@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # Build in Alpine container for musl static linking
 # Usage: alpine-build.sh <rust-version>
 

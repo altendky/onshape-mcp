@@ -126,6 +126,23 @@ We use [cargo-nextest](https://nexte.st/) for test execution:
 - Better CI integration with archiving support
 - Cleaner output and failure reporting
 
+### Shell Scripts
+
+CI scripts use POSIX shell (`sh`) for Alpine container compatibility:
+
+| Convention | Value |
+| ---------- | ----- |
+| Shebang | `#!/usr/bin/env sh` |
+| Error handling | `set -eu` (POSIX) |
+| Location | `.github/scripts/` and `.github/actions/*/setup.sh` |
+
+**Why POSIX shell?** Alpine Linux uses BusyBox ash, not bash. Scripts that run in
+Alpine containers must be POSIX-compatible. The `#!/usr/bin/env sh` shebang ensures
+portability across environments.
+
+**Exception:** `resolve.sh` uses `#!/usr/bin/env bash` because it runs on Ubuntu
+runners (not in containers) and benefits from bash features like `pipefail`.
+
 ## Pre-commit Hooks
 
 **Philosophy:** Pre-commit hooks provide developers an opt-in mechanism for fast local feedback. They do **not** enforce policy — CI is the source of truth.

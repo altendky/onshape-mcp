@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # Install Rust toolchain in Alpine container
 # Usage: setup.sh <toolchain> [components]
 #

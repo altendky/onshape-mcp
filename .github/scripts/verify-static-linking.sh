@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # Verify that binaries are statically linked
 #
 # Note: We use 'file' instead of 'ldd' because musl's ldd is a simple wrapper
