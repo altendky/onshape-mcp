@@ -21,17 +21,17 @@ fn find_binary() -> PathBuf {
 
     // The test binary is in target/debug/deps/, the main binary is in target/debug/
     // Go up from deps to debug, then look for the binary
-    if let Some(deps_dir) = current_exe.parent() {
-        if let Some(debug_dir) = deps_dir.parent() {
-            let binary_name = if cfg!(windows) {
-                "onshape-mcp.exe"
-            } else {
-                "onshape-mcp"
-            };
-            let binary_path = debug_dir.join(binary_name);
-            if binary_path.exists() {
-                return binary_path;
-            }
+    if let Some(deps_dir) = current_exe.parent()
+        && let Some(debug_dir) = deps_dir.parent()
+    {
+        let binary_name = if cfg!(windows) {
+            "onshape-mcp.exe"
+        } else {
+            "onshape-mcp"
+        };
+        let binary_path = debug_dir.join(binary_name);
+        if binary_path.exists() {
+            return binary_path;
         }
     }
 
