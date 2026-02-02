@@ -4,11 +4,6 @@
 
 set -euo pipefail
 
-# Install yq for proper TOML parsing
-echo "Installing yq..."
-curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
-	-o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
-
 # Function to get version from Rust release channel TOML
 # Uses yq for proper TOML parsing to extract pkg.rust.version (not pkg.cargo.version)
 get_rustup_version() {
