@@ -127,6 +127,8 @@ echo "  stable: $RESOLVED_STABLE"
 echo "  beta: $RESOLVED_BETA"
 echo "  stable-docker-available: $STABLE_DOCKER_AVAILABLE"
 
-echo "stable=$RESOLVED_STABLE" >>"$GITHUB_OUTPUT"
-echo "beta=$RESOLVED_BETA" >>"$GITHUB_OUTPUT"
-echo "stable-docker-available=$STABLE_DOCKER_AVAILABLE" >>"$GITHUB_OUTPUT"
+{
+	echo "stable=$RESOLVED_STABLE"
+	echo "beta=$RESOLVED_BETA"
+	echo "stable-docker-available=$STABLE_DOCKER_AVAILABLE"
+} >>"$GITHUB_OUTPUT"
