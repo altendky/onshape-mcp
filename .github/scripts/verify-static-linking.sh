@@ -7,6 +7,11 @@
 
 set -ex
 
+# Install file command if not present (Alpine)
+if ! command -v file >/dev/null 2>&1; then
+	apk add --no-cache file
+fi
+
 for bin in target/debug/deps/*; do
 	if [ -f "$bin" ] && [ -x "$bin" ]; then
 		if file "$bin" | grep -q 'ELF.*executable'; then
