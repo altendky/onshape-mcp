@@ -87,15 +87,10 @@ jobs:
           toolchain: ${{ steps.rust-version.outputs.version }}
           use-rustup: ${{ matrix.os.container && 'true' || 'false' }}
 
-      - name: Install cargo-nextest (Linux)
-        if: matrix.os.container
-        run: .github/scripts/install-nextest-musl.sh
-
-      - name: Install cargo-nextest
-        if: ${{ !matrix.os.container }}
-        uses: taiki-e/install-action@v2
+      - name: Setup nextest
+        uses: ./.github/actions/setup-nextest
         with:
-          tool: cargo-nextest
+          use-musl: ${{ matrix.os.container && 'true' || 'false' }}
 
       # Common: Build and archive tests
       - name: Build and archive tests
@@ -141,16 +136,10 @@ jobs:
         if: matrix.libc.container
         run: apk add --no-cache curl bash tar gzip
 
-      - name: Install cargo-nextest (musl)
-        if: matrix.libc.container
-        run: .github/scripts/install-nextest-musl.sh
-
-      # Non-musl (bare runner): Install nextest via action
-      - name: Install cargo-nextest
-        if: ${{ !matrix.libc.container }}
-        uses: taiki-e/install-action@v2
+      - name: Setup nextest
+        uses: ./.github/actions/setup-nextest
         with:
-          tool: cargo-nextest
+          use-musl: ${{ matrix.libc.container && 'true' || 'false' }}
 
       # Common: Run tests
       - name: Run tests
