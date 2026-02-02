@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Resolve Rust versions ensuring consistency between rustup and Docker Hub
+# Required environment variable: GRACE_PERIOD_HOURS
+
+set -euo pipefail
+
+# Install yq for proper TOML parsing
+echo "Installing yq..."
+curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+	-o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+# Function to get version from Rust release channel TOML
+# Uses yq for proper TOML parsing to extract pkg.rust.version (not pkg.cargo.version)
+get_rustup_version() {
+	local channel="$1"
+	# Parse the channel TOML and extract just the semver portion
+	# e.g., "1.94.0-beta.2 (23a44d3c7 2026-01-25)" -> "1.94.0-beta.2"
+	curl -sSf "https://static.rust-lang.org/dist/channel-rust-${channel}.toml" |
+		yq -p toml '.pkg.rust.version' |
+		grep -oP '^\S+'
+}
+
+# Function to check if Docker Hub has a specific rust image tag
+# Returns: exit code 0 if tag exists, non-zero otherwise
+check_docker_hub_tag() {
+	local tag="$1"
+	local url="https://hub.docker.com/v2/repositories/library/rust/tags/${tag}"
+	curl -sSf "$url" >/dev/null 2>&1
+}
+
+# Function to get the last updated time for a Docker Hub tag
+get_docker_hub_tag_date() {
+	local tag="$1"
+	local url="https://hub.docker.com/v2/repositories/library/rust/tags/${tag}"
+	curl -sSf "$url" 2>/dev/null | jq -r '.last_updated // empty' || echo ""
+}
+
+# Function to check if a timestamp is within the grace period
+# Returns: exit code 0 if within grace period, 1 otherwise
+is_within_grace_period() {
+	local timestamp="$1"
+	local grace_hours="$2"
+
+	if [ -z "$timestamp" ]; then
+		return 1
+	fi
+
+	# Convert ISO 8601 timestamp to epoch seconds
+	local tag_epoch
+	tag_epoch=$(date -d "$timestamp" +%s 2>/dev/null) || return 1
+
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	local grace_seconds=$((grace_hours * 3600))
+	local age_seconds=$((now_epoch - tag_epoch))
+
+	[ "$age_seconds" -le "$grace_seconds" ]
+}
+
+# Get stable version from rustup
+echo "Querying rustup for stable version..."
+RUSTUP_STABLE=$(get_rustup_version "stable")
+echo "Rustup stable: $RUSTUP_STABLE"
+
+# Get beta version from rustup
+echo "Querying rustup for beta version..."
+RUSTUP_BETA=$(get_rustup_version "beta")
+echo "Rustup beta: $RUSTUP_BETA"
+
+# Check Docker Hub for stable version
+echo "Checking Docker Hub for rust:${RUSTUP_STABLE}-alpine..."
+if check_docker_hub_tag "${RUSTUP_STABLE}-alpine"; then
+	echo "Docker Hub has rust:${RUSTUP_STABLE}-alpine"
+	RESOLVED_STABLE="$RUSTUP_STABLE"
+	STABLE_DOCKER_AVAILABLE="true"
+else
+	echo "::warning::Docker Hub does not have rust:${RUSTUP_STABLE}-alpine"
+	STABLE_DOCKER_AVAILABLE="false"
+
+	# Try to find the previous stable version
+	# Extract major.minor and decrement patch, or try previous minor
+	MAJOR=$(echo "$RUSTUP_STABLE" | cut -d. -f1)
+	MINOR=$(echo "$RUSTUP_STABLE" | cut -d. -f2)
+	PATCH=$(echo "$RUSTUP_STABLE" | cut -d. -f3)
+
+	# Try previous patch version first
+	if [ "$PATCH" -gt 0 ]; then
+		PREV_VERSION="${MAJOR}.${MINOR}.$((PATCH - 1))"
+	elif [ "$MINOR" -gt 0 ]; then
+		# Try previous minor version with patch 0
+		PREV_VERSION="${MAJOR}.$((MINOR - 1)).0"
+	else
+		echo "::error::Cannot compute previous version for ${RUSTUP_STABLE}"
+		exit 1
+	fi
+
+	echo "Checking Docker Hub for rust:${PREV_VERSION}-alpine..."
+	if check_docker_hub_tag "${PREV_VERSION}-alpine"; then
+		# Check if the lag is within grace period by examining when the previous version was last updated
+		# If Docker recently updated the previous version, it's likely just catching up to the new release
+		PREV_TAG_DATE=$(get_docker_hub_tag_date "${PREV_VERSION}-alpine")
+		echo "Previous version last updated: $PREV_TAG_DATE"
+
+		if is_within_grace_period "$PREV_TAG_DATE" "$GRACE_PERIOD_HOURS"; then
+			echo "::warning::Using previous version ${PREV_VERSION} (Docker Hub lag within ${GRACE_PERIOD_HOURS}h grace period)"
+			RESOLVED_STABLE="$PREV_VERSION"
+			STABLE_DOCKER_AVAILABLE="true"
+		else
+			echo "::error::Docker Hub lag exceeds grace period of ${GRACE_PERIOD_HOURS} hours"
+			echo "::error::Previous version ${PREV_VERSION} last updated: $PREV_TAG_DATE"
+			exit 1
+		fi
+	else
+		echo "::error::Cannot find a suitable stable Rust version on Docker Hub"
+		echo "::error::Rustup has ${RUSTUP_STABLE}, Docker Hub missing both ${RUSTUP_STABLE}-alpine and ${PREV_VERSION}-alpine"
+		exit 1
+	fi
+fi
+
+# Beta doesn't have Docker images, so we just pass through the version
+# It will be installed via rustup in the workflow
+RESOLVED_BETA="$RUSTUP_BETA"
+
+echo "Resolved versions:"
+echo "  stable: $RESOLVED_STABLE"
+echo "  beta: $RESOLVED_BETA"
+echo "  stable-docker-available: $STABLE_DOCKER_AVAILABLE"
+
+echo "stable=$RESOLVED_STABLE" >>"$GITHUB_OUTPUT"
+echo "beta=$RESOLVED_BETA" >>"$GITHUB_OUTPUT"
+echo "stable-docker-available=$STABLE_DOCKER_AVAILABLE" >>"$GITHUB_OUTPUT"
