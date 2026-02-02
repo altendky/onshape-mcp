@@ -16,9 +16,17 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --defaul
 # Install nextest (architecture-aware)
 ARCH=$(uname -m)
 case "$ARCH" in
-x86_64) NEXTEST_URL="https://get.nexte.st/latest/linux-musl" ;;
-aarch64) NEXTEST_URL="https://get.nexte.st/latest/linux-arm-musl" ;;
-*) echo "Unsupported architecture: $ARCH" && exit 1 ;;
+x86_64)
+	NEXTEST_URL="https://get.nexte.st/latest/linux-musl"
+	;;
+aarch64)
+	# No musl binary available for ARM; use glibc binary with compat layer
+	apk add --no-cache gcompat
+	NEXTEST_URL="https://get.nexte.st/latest/linux-arm"
+	;;
+*)
+	echo "Unsupported architecture: $ARCH" && exit 1
+	;;
 esac
 curl -LsSf "$NEXTEST_URL" | tar zxf - -C /usr/local/bin
 
