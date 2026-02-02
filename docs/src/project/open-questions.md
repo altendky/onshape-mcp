@@ -7,7 +7,7 @@
 - [x] npm wrapper package — ~~Evaluate publishing JS wrapper for `npx` installation~~ Resolved: using platform-specific optional deps pattern. See [npm Wrapper](npm-wrapper.md)
 - [ ] Release process — Versioning strategy, changelog, release workflow, crates.io publishing
 - [ ] Contribution guidelines — CONTRIBUTING.md, PR expectations, code review process
-- [ ] Project files — Standard files not yet documented (.gitignore, .gitattributes, rustfmt.toml, clippy.toml, deny.toml, .editorconfig, codecov.yml, CHANGELOG.md, dependabot.yml, CODEOWNERS, issue/PR templates)
+- [ ] Project files — Standard files not yet documented (.gitignore, .gitattributes, rustfmt.toml, clippy.toml, deny.toml, .editorconfig, codecov.yml, CHANGELOG.md, CODEOWNERS, issue/PR templates). Note: dependabot.yml is now configured, see [CI > Dependency Monitoring](ci.md#dependency-monitoring)
 - [ ] Non-manual repository configuration — Discuss opportunities for automated repo config (Terraform, GitHub API, etc.)
 - [ ] AI awareness setup — Create root-level AI context file (e.g., `AGENTS.md` or `CLAUDE.md`) that references REQUIREMENTS.md for project standards, architecture, and conventions; use symlinks for tool-specific locations (`.cursorrules`, `.github/copilot-instructions.md`, etc.) to maintain single source of truth; prioritize portable/standard formats over tool-specific syntax where possible
 - [ ] AI file validation and testing — Review mechanisms for validating AI context files in CI (e.g., symlink integrity, reference validity, format linting)
