@@ -17,18 +17,18 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --defaul
 ARCH=$(uname -m)
 case "$ARCH" in
 x86_64)
-	NEXTEST_URL="https://get.nexte.st/latest/linux-musl"
+	# Use prebuilt musl binary for x86_64
+	curl -LsSf "https://get.nexte.st/latest/linux-musl" | tar zxf - -C /usr/local/bin
 	;;
 aarch64)
-	# No musl binary available for ARM; use glibc binary with compat layer
-	apk add --no-cache gcompat
-	NEXTEST_URL="https://get.nexte.st/latest/linux-arm"
+	# No prebuilt musl binary for ARM, and glibc binary doesn't work with gcompat
+	# (__res_init symbol missing). Build from source instead.
+	cargo install cargo-nextest --locked
 	;;
 *)
 	echo "Unsupported architecture: $ARCH" && exit 1
 	;;
 esac
-curl -LsSf "$NEXTEST_URL" | tar zxf - -C /usr/local/bin
 
 # Build and archive tests (static linking configured in .cargo/config.toml)
 cargo nextest archive --all-features --archive-file target/nextest-archive.tar.zst
