@@ -1,0 +1,23 @@
+# Dependency monitoring configuration
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 20
+
+  # Rust dependencies (Cargo)
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 20
+
+  # npm wrapper package
+  - package-ecosystem: "npm"
+    directory: "/npm/onshape-mcp"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 20

@@ -309,3 +309,29 @@ The Onshape OpenAPI specification is stored locally for reference and code gener
 - Creates PR if changes detected (no PR on empty diff)
 - Auto-merge enabled (optional, requires branch protection)
 - Branch `automated/update-openapi-spec` deleted after merge
+
+## Dependency Monitoring
+
+Dependabot is configured to monitor dependencies and create PRs for updates.
+
+| Setting | Value |
+| ------- | ----- |
+| Location | `.github/dependabot.yml` |
+| Schedule | Daily |
+| Grouping | None (individual PRs) |
+
+### Monitored Ecosystems
+
+| Ecosystem | Directory | Description |
+| --------- | --------- | ----------- |
+| `github-actions` | `/` | Actions used in workflows |
+| `cargo` | `/` | Rust dependencies |
+| `npm` | `/npm/onshape-mcp` | npm wrapper package |
+
+### Not Covered by Dependabot
+
+The following dependency mechanisms require alternative approaches:
+
+| Mechanism | Location | Update Method |
+| --------- | -------- | ------------- |
+| Pre-commit hooks | `.pre-commit-config.yaml` | `pre-commit autoupdate` or Renovate |
