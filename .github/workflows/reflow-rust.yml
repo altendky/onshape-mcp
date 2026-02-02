@@ -58,7 +58,6 @@ jobs:
     name: 🔨 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }}
     needs: [library, resolve-versions]
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
-    container: ${{ matrix.os.container }}
     continue-on-error: ${{ matrix.rust.matrix == 'beta' }}
     strategy:
       fail-fast: false
@@ -81,24 +80,28 @@ jobs:
             beta) echo "version=${{ needs.resolve-versions.outputs.beta }}" >> "$GITHUB_OUTPUT" ;;
           esac
 
+      # Linux: Build in Alpine container for musl static linking
+      - name: Build in Alpine container (Linux)
+        if: matrix.os.matrix == 'linux'
+        uses: docker://alpine:latest
+        with:
+          entrypoint: /bin/sh
+          args: .github/scripts/alpine-build.sh ${{ steps.rust-version.outputs.version }}
+
+      # Non-Linux: Native build
       - name: Setup Rust
+        if: matrix.os.matrix != 'linux'
         uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ steps.rust-version.outputs.version }}
-          use-rustup: ${{ matrix.os.container && 'true' || 'false' }}
 
       - name: Setup nextest
+        if: matrix.os.matrix != 'linux'
         uses: ./.github/actions/setup-nextest
-        with:
-          use-musl: ${{ matrix.os.container && 'true' || 'false' }}
 
-      # Common: Build and archive tests
       - name: Build and archive tests
+        if: matrix.os.matrix != 'linux'
         run: cargo nextest archive --all-features --archive-file target/nextest-archive.tar.zst
-
-      - name: Verify static linking
-        if: matrix.os.container
-        run: .github/scripts/verify-static-linking.sh
 
       - name: Upload test archive
         uses: actions/upload-artifact@v4
@@ -113,7 +116,6 @@ jobs:
     name: 🧪 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.libc.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }} ${{ matrix.libc.name }}
     needs: [library, resolve-versions, build]
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
-    container: ${{ matrix.libc.container }}
     continue-on-error: ${{ matrix.rust.matrix == 'beta' }}
     strategy:
       fail-fast: false
@@ -131,16 +133,19 @@ jobs:
         with:
           name: nextest-archive-${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}-${{ matrix.rust.matrix }}
 
-      # Musl (Alpine container): Install dependencies and nextest
-      - name: Install Alpine dependencies
-        if: matrix.libc.container
-        run: apk add --no-cache curl bash tar gzip
-
-      - name: Setup nextest
-        uses: ./.github/actions/setup-nextest
+      # Musl: Run tests in Alpine container
+      - name: Run tests in Alpine (musl)
+        if: matrix.libc.matrix == 'musl'
+        uses: docker://alpine:latest
         with:
-          use-musl: ${{ matrix.libc.container && 'true' || 'false' }}
+          entrypoint: /bin/sh
+          args: .github/scripts/alpine-test.sh
 
-      # Common: Run tests
+      # Non-musl: Run tests natively
+      - name: Setup nextest
+        if: matrix.libc.matrix != 'musl'
+        uses: ./.github/actions/setup-nextest
+
       - name: Run tests
+        if: matrix.libc.matrix != 'musl'
         run: cargo-nextest nextest run --archive-file nextest-archive.tar.zst --workspace-remap .

@@ -6,7 +6,6 @@ axes:
       runs-on:
         arm: ubuntu-24.04-arm
         intel: ubuntu-latest
-      container: alpine:latest
     - name: macOS
       matrix: macos
       emoji: 🍎
@@ -51,7 +50,7 @@ axes:
     - name: musl
       matrix: musl
       emoji: 🦌
-      container: alpine:latest
+      # Uses Docker container action (alpine:latest) in workflow
 
 exclude:
   # For jobs without libc axis (coverage, pre-commit, build)
