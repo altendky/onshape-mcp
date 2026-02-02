@@ -227,7 +227,8 @@ The action parses this YAML and outputs it as JSON for use in workflow matrices.
 | [pre-commit/action](https://github.com/pre-commit/action) | Runs pre-commit hooks in CI |
 | [re-actors/alls-green](https://github.com/re-actors/alls-green) | Aggregate job status |
 | [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust toolchain installation |
-| [taiki-e/install-action](https://github.com/taiki-e/install-action) | Install cargo tools (cargo-deny, cargo-llvm-cov) |
+| [taiki-e/install-action](https://github.com/taiki-e/install-action) | Install cargo tools (cargo-deny, cargo-llvm-cov, cargo-nextest) |
+| [cargo-nextest](https://nexte.st/) | Next-generation test runner with archiving support |
 | [codecov/codecov-action](https://github.com/codecov/codecov-action) | Upload coverage to Codecov |
 
 **GitHub branch protection:** Only the `all` job is required.
