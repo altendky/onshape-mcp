@@ -5,6 +5,7 @@
 set -ex
 
 RUST_VERSION="${1:?Usage: alpine-build.sh <rust-version>}"
+SCRIPT_DIR="$(dirname "$0")"
 
 # Install dependencies
 apk add --no-cache curl bash gcc musl-dev file
@@ -13,23 +14,8 @@ apk add --no-cache curl bash gcc musl-dev file
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$RUST_VERSION"
 . "$HOME/.cargo/env"
 
-# Install nextest (architecture-aware)
-ARCH=$(uname -m)
-case "$ARCH" in
-x86_64)
-	# Use prebuilt musl binary for x86_64
-	curl -LsSf "https://get.nexte.st/latest/linux-musl" | tar zxf - -C /usr/local/bin
-	;;
-aarch64)
-	# No prebuilt musl binary for ARM, and glibc binary doesn't work with gcompat
-	# (__res_init symbol missing). Build from source instead.
-	# Pin to 0.9.114 for MSRV 1.88 compatibility (0.9.115+ requires 1.89)
-	cargo install cargo-nextest --locked --version 0.9.114
-	;;
-*)
-	echo "Unsupported architecture: $ARCH" && exit 1
-	;;
-esac
+# Install nextest
+"$SCRIPT_DIR/install-nextest-musl.sh"
 
 # Build and archive tests (static linking configured in .cargo/config.toml)
 cargo nextest archive --all-features --archive-file target/nextest-archive.tar.zst
