@@ -190,6 +190,31 @@ runners (not in containers) and benefits from bash features like `pipefail`.
 | Integration tests | `tests/` | Key workflows |
 | Doc tests | Inline | All public APIs |
 
+### Integration Tests with Binaries
+
+When writing integration tests that need to invoke the compiled binary, use this pattern
+to support both regular `cargo test` and nextest archive/run workflows:
+
+```rust
+fn find_binary() -> PathBuf {
+    // Runtime: nextest sets this correctly even for archives
+    if let Ok(path) = std::env::var("NEXTEST_BIN_EXE_<crate-name>") {
+        return PathBuf::from(path);
+    }
+    // Fallback for regular cargo test
+    PathBuf::from(env!("CARGO_BIN_EXE_<crate-name>"))
+}
+```
+
+**Why this pattern?**
+
+- `CARGO_BIN_EXE_<name>` is a compile-time macro that embeds the binary path
+- When using `cargo nextest archive`, the binary is relocated to a different path
+- Nextest sets `NEXTEST_BIN_EXE_<name>` at runtime to point to the correct location
+- The fallback ensures tests still work with regular `cargo test`
+
+Replace `<crate-name>` with your binary crate name (e.g., `onshape-mcp`).
+
 ## Coverage Requirements
 
 - **Tool:** `cargo-llvm-cov`
