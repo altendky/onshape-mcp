@@ -17,10 +17,11 @@ x86_64)
 aarch64)
 	# No prebuilt musl binary for ARM, and glibc binary doesn't work with gcompat
 	# (__res_init symbol missing). Build from source instead.
+	# Pin to 0.9.114 for MSRV 1.88 compatibility (0.9.115+ requires 1.89)
 	apk add --no-cache gcc musl-dev
 	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 	. "$HOME/.cargo/env"
-	cargo install cargo-nextest --locked
+	cargo install cargo-nextest --locked --version 0.9.114
 	;;
 *)
 	echo "Unsupported architecture: $ARCH" && exit 1
