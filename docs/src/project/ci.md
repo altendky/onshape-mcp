@@ -152,17 +152,9 @@ axes:
         arm: ubuntu-24.04-arm
         intel: ubuntu-latest
     - name: macOS
-      matrix: macos
-      emoji: 🍎
-      runs-on:
-        arm: macos-latest
-        intel: macos-15-intel
+      # ...
     - name: Windows
-      matrix: windows
-      emoji: 🪟
-      runs-on:
-        arm: windows-11-arm
-        intel: windows-latest
+      # ...
   arch:
     - name: ARM
       matrix: arm
@@ -170,16 +162,56 @@ axes:
     - name: Intel
       matrix: intel
       emoji: 🌀
+  rust:
+    - name: MSRV
+      matrix: msrv
+      version: "1.89"
+      emoji: ⏬
+    - name: stable
+      matrix: stable
+      version: stable
+      emoji: 🪨
+    - name: beta
+      matrix: beta
+      version: beta
+      emoji: 🔮
+  libc:
+    - name: native
+      matrix: native
+      emoji: 🏠
+    - name: glibc
+      matrix: glibc
+      emoji: 🐃
+    - name: musl
+      matrix: musl
+      emoji: 🦌
 
 exclude:
+  # For jobs without libc axis (coverage, pre-commit, build)
   windows-arm:
-    - os:
-        matrix: windows
-      arch:
-        matrix: arm
+    - os: { matrix: windows }
+      arch: { matrix: arm }
+
+  # For test job with libc axis
+  test:
+    - os: { matrix: windows }
+      arch: { matrix: arm }
+    - os: { matrix: macos }
+      libc: { matrix: glibc }
+    - os: { matrix: macos }
+      libc: { matrix: musl }
+    - os: { matrix: windows }
+      libc: { matrix: glibc }
+    - os: { matrix: windows }
+      libc: { matrix: musl }
+    - os: { matrix: linux }
+      libc: { matrix: native }
 ```
 
 The action parses this YAML and outputs it as JSON for use in workflow matrices.
+
+**Libc axis:** Used by the test job to run Linux tests on both glibc (Ubuntu) and musl (Alpine)
+environments, verifying that statically-linked musl binaries work correctly on glibc systems.
 
 ## Platform Matrix
 
