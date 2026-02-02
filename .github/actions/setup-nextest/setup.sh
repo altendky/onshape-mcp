@@ -17,8 +17,6 @@ x86_64)
 aarch64)
 	# No prebuilt musl binary for ARM, and glibc binary doesn't work with gcompat
 	# (__res_init symbol missing). Build from source instead.
-	# Pin to 0.9.114 for MSRV 1.88 compatibility (0.9.115+ requires 1.89)
-	# See: https://github.com/altendky/onshape-mcp/issues/45
 
 	# Install build dependencies if not present
 	if ! command -v gcc >/dev/null 2>&1; then
@@ -31,7 +29,7 @@ aarch64)
 		. "$HOME/.cargo/env"
 	fi
 
-	cargo install cargo-nextest --locked --version 0.9.114
+	cargo install cargo-nextest --locked
 	;;
 *)
 	echo "Unsupported architecture: $ARCH" && exit 1

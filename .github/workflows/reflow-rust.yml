@@ -22,7 +22,7 @@ jobs:
         id: resolve
         uses: ./.github/actions/resolve-rust-versions
         with:
-          msrv: "1.88"
+          msrv: "1.89"
 
   # Lint job runs separately (doesn't need build/test split)
   lint:

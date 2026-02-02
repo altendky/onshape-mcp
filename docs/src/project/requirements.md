@@ -25,7 +25,7 @@
 | Async Runtime | Tokio | Required by rmcp, best ecosystem support |
 | Configuration | `figment` | Layered config with excellent error provenance, first-class serde/clap integration |
 | CLI | `clap` | Derive macros, env var support, shell completions, integrates with figment |
-| Minimum Rust Version | 1.88+ | Required for Rust 2024 edition and cargo-deny CVSS 4.0 support |
+| Minimum Rust Version | 1.89+ | Required for Rust 2024 edition and cargo-deny CVSS 4.0 support |
 | License | MIT OR Apache-2.0 | Standard dual license for Rust projects |
 
 ## Toolchain
@@ -36,7 +36,7 @@
 
 **Configuration:**
 
-- **Channel:** MSRV (`1.88`)
+- **Channel:** MSRV (`1.89`)
 - **Components:** `rustfmt`, `clippy`, `llvm-tools-preview`
 
 Pinning to MSRV ensures developers default to the minimum supported version.

@@ -28,7 +28,7 @@ axes:
   rust:
     - name: MSRV
       matrix: msrv
-      version: "1.88"
+      version: "1.89"
       emoji: ⏬
     - name: stable
       matrix: stable

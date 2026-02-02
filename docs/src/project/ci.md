@@ -195,7 +195,7 @@ The action parses this YAML and outputs it as JSON for use in workflow matrices.
 
 | Toolchain | Required | Notes |
 | ----------- | ---------- | ------- |
-| MSRV (1.88) | Yes | From `rust-toolchain.toml` |
+| MSRV (1.89) | Yes | From `rust-toolchain.toml` |
 | Latest stable | Yes | Primary development target |
 | Beta | No | Allowed to fail |
 
