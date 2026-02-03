@@ -10,7 +10,9 @@ use onshape_mcp::CATCH_PHRASE;
 /// Find the binary path, handling both normal cargo test and nextest archive contexts.
 fn find_binary() -> PathBuf {
     // Runtime: nextest sets this correctly even for archives
-    if let Ok(path) = std::env::var("NEXTEST_BIN_EXE_onshape-mcp") {
+    if let Some(path) = std::env::var_os("NEXTEST_BIN_EXE_onshape-mcp")
+        && !path.is_empty()
+    {
         return PathBuf::from(path);
     }
 
