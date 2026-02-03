@@ -201,8 +201,15 @@ fn find_binary() -> PathBuf {
     if let Ok(path) = std::env::var("NEXTEST_BIN_EXE_<crate-name>") {
         return PathBuf::from(path);
     }
-    // Fallback for regular cargo test
-    PathBuf::from(env!("CARGO_BIN_EXE_<crate-name>"))
+    // Fallback for regular cargo test.
+    // Note: This is a compile-time constant; if the binary doesn't exist
+    // at runtime (e.g., deleted or relocated), we need to fail with a
+    // clear error message.
+    let path = PathBuf::from(env!("CARGO_BIN_EXE_<crate-name>"));
+    assert!(path.exists(), "Binary not found at {}. \
+        If running nextest archives, ensure NEXTEST_BIN_EXE_<crate-name> is set.",
+        path.display());
+    path
 }
 ```
 
@@ -212,6 +219,11 @@ fn find_binary() -> PathBuf {
 - When using `cargo nextest archive`, the binary is relocated to a different path
 - Nextest sets `NEXTEST_BIN_EXE_<name>` at runtime to point to the correct location
 - The fallback ensures tests still work with regular `cargo test`
+
+**Error handling:** The compile-time `env!()` macro guarantees the path exists at build time,
+but the binary could be missing at runtime (e.g., after relocation or deletion). The `assert!`
+provides a clear error message indicating the issue and suggesting to check the nextest
+environment variable when running archived tests.
 
 Replace `<crate-name>` with your binary crate name (e.g., `onshape-mcp`).
 
