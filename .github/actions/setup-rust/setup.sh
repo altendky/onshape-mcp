@@ -28,4 +28,3 @@ if [ -n "$COMPONENTS" ]; then
 		[ -n "$component" ] && rustup component add "$component"
 	done
 fi
-fi
