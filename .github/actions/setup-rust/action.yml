@@ -1,0 +1,34 @@
+name: Setup Rust
+description: Install Rust toolchain, works in both containers and bare runners
+
+inputs:
+  toolchain:
+    description: Rust toolchain version to install
+    required: true
+  components:
+    description: Comma-separated list of components to install (e.g., "rustfmt, clippy")
+    required: false
+    default: ""
+  use-rustup:
+    description: Use rustup script directly instead of setup-rust-toolchain action. Required for Alpine containers.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # Method 1: Use rustup script directly (for containers like Alpine)
+    - name: Install Rust via rustup
+      if: inputs.use-rustup == 'true'
+      shell: sh
+      run: |
+        "${{ github.action_path }}/setup.sh" "${{ inputs.toolchain }}" "${{ inputs.components }}"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+    # Method 2: Use setup-rust-toolchain action (for bare runners)
+    - name: Install Rust toolchain
+      if: inputs.use-rustup != 'true'
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}

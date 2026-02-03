@@ -2,15 +2,44 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+use std::path::PathBuf;
 use std::process::Command;
 
 use onshape_mcp::CATCH_PHRASE;
 
+/// Find the binary path, handling both normal cargo test and nextest archive contexts.
+///
+/// # Panics
+///
+/// Panics if the binary does not exist at the resolved path.
+fn find_binary() -> PathBuf {
+    // Runtime: nextest sets this correctly even for archives
+    if let Some(path) = std::env::var_os("NEXTEST_BIN_EXE_onshape-mcp")
+        && !path.is_empty()
+    {
+        return PathBuf::from(path);
+    }
+
+    // Fallback for regular cargo test.
+    // Note: This is a compile-time constant; if the binary doesn't exist
+    // at runtime (e.g., deleted or relocated), we need to fail with a
+    // clear error message.
+    let path = PathBuf::from(env!("CARGO_BIN_EXE_onshape-mcp"));
+    assert!(
+        path.exists(),
+        "Binary not found at {}. \
+        If running nextest archives, ensure NEXTEST_BIN_EXE_onshape-mcp is set.",
+        path.display()
+    );
+    path
+}
+
 #[test]
 fn binary_runs_successfully() {
-    let output = Command::new(env!("CARGO_BIN_EXE_onshape-mcp"))
+    let binary_path = find_binary();
+    let output = Command::new(&binary_path)
         .output()
-        .expect("failed to execute binary");
+        .unwrap_or_else(|e| panic!("failed to execute binary at {binary_path:?}: {e}"));
 
     assert!(output.status.success());
 

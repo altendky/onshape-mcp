@@ -28,7 +28,7 @@ axes:
   rust:
     - name: MSRV
       matrix: msrv
-      version: "1.88"
+      version: "1.89"
       emoji: ⏬
     - name: stable
       matrix: stable
@@ -38,10 +38,58 @@ axes:
       matrix: beta
       version: beta
       emoji: 🔮
+  libc:
+    - name: native
+      matrix: native
+      emoji: 🏠
+      # No container - runs directly on runner
+    - name: glibc
+      matrix: glibc
+      emoji: 🐃
+      # Runs on Ubuntu runner (glibc-based), no container needed
+    - name: musl
+      matrix: musl
+      emoji: 🦌
+      # Uses Docker container action (alpine:latest) in workflow
 
 exclude:
+  # For jobs without libc axis (coverage, pre-commit, build)
   windows-arm:
     - os:
         matrix: windows
       arch:
         matrix: arm
+
+  # For test job with libc axis
+  test:
+    # Windows ARM runners not available
+    - os:
+        matrix: windows
+      arch:
+        matrix: arm
+
+    # macOS only uses native (no glibc/musl concept)
+    - os:
+        matrix: macos
+      libc:
+        matrix: glibc
+    - os:
+        matrix: macos
+      libc:
+        matrix: musl
+
+    # Windows only uses native (no glibc/musl concept)
+    - os:
+        matrix: windows
+      libc:
+        matrix: glibc
+    - os:
+        matrix: windows
+      libc:
+        matrix: musl
+
+    # Linux excludes native (uses glibc + musl for testing)
+    - os:
+        matrix: linux
+      libc:
+        matrix: native
