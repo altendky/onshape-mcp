@@ -15,6 +15,7 @@ apk add --no-cache curl bash tar gzip
 
 # Source cargo env if it was installed (ARM case where nextest is built from source)
 if [ -f "$HOME/.cargo/env" ]; then
+	# shellcheck source=/dev/null
 	. "$HOME/.cargo/env"
 fi
 
