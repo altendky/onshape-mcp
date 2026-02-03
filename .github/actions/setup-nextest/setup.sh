@@ -18,10 +18,8 @@ aarch64)
 	# No prebuilt musl binary for ARM, and glibc binary doesn't work with gcompat
 	# (__res_init symbol missing). Build from source instead.
 
-	# Install build dependencies if not present
-	if ! command -v gcc >/dev/null 2>&1; then
-		apk add --no-cache gcc musl-dev
-	fi
+	# Install build dependencies (apk add is idempotent with --no-cache)
+	apk add --no-cache gcc musl-dev
 
 	# Install Rust if not present (minimal profile for faster install)
 	if ! command -v cargo >/dev/null 2>&1; then
