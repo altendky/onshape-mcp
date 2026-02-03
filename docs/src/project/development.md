@@ -9,12 +9,139 @@ cargo fmt
 # Lint
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Test
-cargo test
+# Test (using nextest for faster, more reliable test runs)
+cargo nextest run --all-features
 
 # Coverage
 cargo llvm-cov --all-features --workspace
 ```
+
+### Installing Development Tools
+
+```bash
+# Install cargo-nextest (next-generation test runner)
+cargo install cargo-nextest --locked
+
+# Install cargo-llvm-cov (coverage)
+cargo install cargo-llvm-cov --locked
+
+# Install cargo-deny (dependency audit)
+cargo install cargo-deny --locked
+```
+
+## Linux Static Linking
+
+Linux binaries are built with musl libc to produce fully static executables.
+This ensures compatibility across all Linux distributions, including:
+
+- glibc-based distributions (Ubuntu, Debian, Fedora, RHEL, etc.)
+- musl-based distributions (Alpine, Void Linux, etc.)
+
+### Why Static Linking?
+
+Dynamic linking against glibc creates binaries that may fail on systems with older glibc versions.
+Static musl linking eliminates this dependency, producing portable binaries that work everywhere.
+
+### Configuration
+
+Static linking for musl targets is configured in `.cargo/config.toml`:
+
+```toml
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+```
+
+This uses explicit target triples (rather than `cfg(target_env = "musl")`) to ensure
+reliable matching even when `rust-toolchain.toml` triggers toolchain switches during
+cargo execution. Applies to both x86_64 and ARM64 architectures.
+
+### Verification
+
+Static linking is verified in CI using the `file` command:
+
+```bash
+# Should report "statically linked" or "static-pie linked"
+file target/debug/<binary-name>
+# Or for release builds:
+# file target/release/<binary-name>
+```
+
+**Note:** We use `file` instead of `ldd` because musl's `ldd` outputs the loader path
+even for static binaries, unlike glibc's `ldd` which says "not a dynamic executable".
+
+### Local musl Builds
+
+To build musl-linked binaries locally:
+
+```bash
+# Option 1: Use rust:alpine image (simplest)
+docker run --rm -v "$PWD":/app -w /app rust:alpine \
+  cargo build --release
+
+# Option 2: Use alpine:latest with rustup (matches CI)
+# Allows testing with specific Rust versions (stable/beta/MSRV)
+docker run --rm -v "$PWD":/app -w /app alpine:latest sh -c "
+  apk add --no-cache curl bash gcc musl-dev
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain beta
+  . \$HOME/.cargo/env
+  cargo build --release
+"
+
+# Option 3: Install musl target natively (Linux only)
+rustup target add x86_64-unknown-linux-musl
+rustup target add aarch64-unknown-linux-musl  # For ARM64
+cargo build --release --target x86_64-unknown-linux-musl
+# Or for ARM64:
+# cargo build --release --target aarch64-unknown-linux-musl
+```
+
+**When to use each approach:**
+
+- **Option 1 (rust:alpine)**: Quick local builds with the latest stable Rust. Simplest approach.
+- **Option 2 (alpine:latest + rustup)**: Matches CI configuration. Use this to test with specific Rust versions including beta releases for early compatibility testing.
+- **Option 3 (native musl target)**: Fastest builds if you're on Linux and have the musl target installed.
+
+## CI Architecture
+
+The CI workflow separates build and test stages:
+
+1. **Build stage**: Compiles tests and creates archives
+   - Linux: Builds in Alpine containers (musl-linked)
+   - macOS/Windows: Builds natively
+
+2. **Test stage**: Runs pre-built tests in multiple environments
+   - Linux tests run on both glibc (Ubuntu) and musl (Alpine)
+   - macOS/Windows tests run natively
+
+This architecture verifies that musl binaries work correctly on glibc systems and vice versa.
+
+### Test Runner
+
+We use [cargo-nextest](https://nexte.st/) for test execution:
+
+- Faster parallel test execution
+- Better CI integration with archiving support
+- Cleaner output and failure reporting
+
+### Shell Scripts
+
+CI scripts use POSIX shell (`sh`) for Alpine container compatibility:
+
+| Convention | Value |
+| ---------- | ----- |
+| Shebang | `#!/usr/bin/env sh` |
+| Error handling | `set -eux` (POSIX: exit on error, undefined vars, trace) |
+| Location | `.github/scripts/` and `.github/actions/*/setup.sh` |
+
+**Why POSIX shell?** Alpine Linux uses BusyBox ash, not bash. Scripts that run in
+Alpine containers must be POSIX-compatible. The `#!/usr/bin/env sh` shebang ensures
+portability across environments.
+
+**Exception:** `resolve.sh` uses `#!/usr/bin/env bash` because it runs on Ubuntu
+runners (not in containers) and benefits from bash features like `pipefail`.
 
 ## Pre-commit Hooks
 
@@ -38,7 +165,7 @@ cargo llvm-cov --all-features --workspace
 | `action-validator` | mpalmer/action-validator | pre-commit | Action/workflow schema |
 | `cargo fmt --check` | local | pre-commit | Formatting |
 | `cargo clippy` | local | pre-commit | Linting |
-| `cargo test` | local | manual | Tests |
+| `cargo nextest run --all-features` | local | manual | Tests |
 | `cargo deny` | local | manual | Dependency audit |
 
 **Stages:**
@@ -62,6 +189,43 @@ cargo llvm-cov --all-features --workspace
 | Unit tests | `crates/*/src/**/*.rs` | 100% with exclusions |
 | Integration tests | `tests/` | Key workflows |
 | Doc tests | Inline | All public APIs |
+
+### Integration Tests with Binaries
+
+When writing integration tests that need to invoke the compiled binary, use this pattern
+to support both regular `cargo test` and nextest archive/run workflows:
+
+```rust
+fn find_binary() -> PathBuf {
+    // Runtime: nextest sets this correctly even for archives
+    if let Ok(path) = std::env::var("NEXTEST_BIN_EXE_<crate-name>") {
+        return PathBuf::from(path);
+    }
+    // Fallback for regular cargo test.
+    // Note: This is a compile-time constant; if the binary doesn't exist
+    // at runtime (e.g., deleted or relocated), we need to fail with a
+    // clear error message.
+    let path = PathBuf::from(env!("CARGO_BIN_EXE_<crate-name>"));
+    assert!(path.exists(), "Binary not found at {}. \
+        If running nextest archives, ensure NEXTEST_BIN_EXE_<crate-name> is set.",
+        path.display());
+    path
+}
+```
+
+**Why this pattern?**
+
+- `CARGO_BIN_EXE_<name>` is a compile-time macro that embeds the binary path
+- When using `cargo nextest archive`, the binary is relocated to a different path
+- Nextest sets `NEXTEST_BIN_EXE_<name>` at runtime to point to the correct location
+- The fallback ensures tests still work with regular `cargo test`
+
+**Error handling:** The compile-time `env!()` macro guarantees the path exists at build time,
+but the binary could be missing at runtime (e.g., after relocation or deletion). The `assert!`
+provides a clear error message indicating the issue and suggesting to check the nextest
+environment variable when running archived tests.
+
+Replace `<crate-name>` with your binary crate name (e.g., `onshape-mcp`).
 
 ## Coverage Requirements
 
