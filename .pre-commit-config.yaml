@@ -40,6 +40,11 @@ repos:
         args: [-v]
         files: ^\.github/(workflows/.*\.ya?ml|actions/.*/action\.ya?ml)$
 
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.11.0
+    hooks:
+      - id: shellcheck
+
   - repo: local
     hooks:
       - id: cargo-fmt
