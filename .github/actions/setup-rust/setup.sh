@@ -22,7 +22,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --defaul
 
 # Install components if specified
 if [ -n "$COMPONENTS" ]; then
-	# Convert comma-separated list to space-separated for rustup
-	COMPONENTS_LIST=$(echo "$COMPONENTS" | tr ',' ' ' | tr -s ' ')
-	rustup component add $COMPONENTS_LIST
+	# Install each component individually
+	echo "$COMPONENTS" | tr ',' '\n' | while read -r component; do
+		component=$(echo "$component" | tr -d ' ')
+		[ -n "$component" ] && rustup component add "$component"
+	done
+fi
 fi
