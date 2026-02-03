@@ -10,6 +10,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Setup Rust
 "$REPO_ROOT/.github/actions/setup-rust/setup.sh" "$RUST_VERSION"
+# shellcheck source=/dev/null
 . "$HOME/.cargo/env"
 
 # Setup nextest
