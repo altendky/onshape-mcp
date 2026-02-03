@@ -18,6 +18,7 @@ apk add --no-cache curl bash gcc musl-dev
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$TOOLCHAIN"
 
 # Source cargo env for this script
+# shellcheck source=/dev/null
 . "$HOME/.cargo/env"
 
 # Install components if specified
