@@ -60,3 +60,18 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+
+      - id: cargo-nextest
+        name: cargo nextest
+        entry: cargo nextest run --all-features
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [manual]
+
+      - id: cargo-deny
+        name: cargo deny
+        entry: cargo deny check
+        language: system
+        pass_filenames: false
+        stages: [manual]

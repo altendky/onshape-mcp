@@ -8,9 +8,55 @@ jobs:
     name: Generate library
     uses: ./.github/workflows/reflow-library.yml
 
-  check:
-    name: 🦀 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }}
-    needs: library
+  resolve-versions:
+    name: Resolve Rust versions
+    runs-on: ubuntu-latest
+    outputs:
+      msrv: ${{ steps.resolve.outputs.msrv }}
+      stable: ${{ steps.resolve.outputs.stable }}
+      beta: ${{ steps.resolve.outputs.beta }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve versions
+        id: resolve
+        uses: ./.github/actions/resolve-rust-versions
+        with:
+          msrv: "1.89"
+
+  # Lint job runs separately (doesn't need build/test split)
+  lint:
+    name: Lint
+    needs: [library, resolve-versions]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: ${{ needs.resolve-versions.outputs.stable }}
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Check dependencies
+        run: cargo deny check
+
+  # Build job: builds and archives tests
+  # Linux builds use Alpine containers for musl static linking
+  build:
+    name: 🔨 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }}
+    needs: [library, resolve-versions]
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
     continue-on-error: ${{ matrix.rust.matrix == 'beta' }}
     strategy:
@@ -23,25 +69,83 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      # Determine the Rust version to use
+      - name: Determine Rust version
+        id: rust-version
+        shell: bash
+        run: |
+          case "${{ matrix.rust.matrix }}" in
+            msrv) echo "version=${{ needs.resolve-versions.outputs.msrv }}" >> "$GITHUB_OUTPUT" ;;
+            stable) echo "version=${{ needs.resolve-versions.outputs.stable }}" >> "$GITHUB_OUTPUT" ;;
+            beta) echo "version=${{ needs.resolve-versions.outputs.beta }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # Linux: Build in Alpine container for musl static linking
+      - name: Build in Alpine container (Linux)
+        if: matrix.os.matrix == 'linux'
+        uses: docker://alpine:latest
         with:
-          toolchain: ${{ matrix.rust.version }}
-          components: rustfmt, clippy
+          entrypoint: /bin/sh
+          args: .github/scripts/alpine-build.sh ${{ steps.rust-version.outputs.version }}
 
-      - name: Check formatting
-        run: cargo fmt --all --check
+      # Non-Linux: Native build
+      - name: Setup Rust
+        if: matrix.os.matrix != 'linux'
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: ${{ steps.rust-version.outputs.version }}
 
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Setup nextest
+        if: matrix.os.matrix != 'linux'
+        uses: ./.github/actions/setup-nextest
+
+      - name: Build and archive tests
+        if: matrix.os.matrix != 'linux'
+        run: cargo nextest archive --all-features --archive-file target/nextest-archive.tar.zst
+
+      - name: Upload test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive-${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}-${{ matrix.rust.matrix }}
+          path: target/nextest-archive.tar.zst
+          retention-days: 1
+
+  # Test job: runs archived tests in different environments
+  # Linux tests run in both glibc (Ubuntu) and musl (Alpine) environments
+  test:
+    name: 🧪 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.libc.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }} ${{ matrix.libc.name }}
+    needs: [library, resolve-versions, build]
+    runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
+    continue-on-error: ${{ matrix.rust.matrix == 'beta' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.library.outputs.matrix).axes.os }}
+        arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
+        rust: ${{ fromJSON(needs.library.outputs.matrix).axes.rust }}
+        libc: ${{ fromJSON(needs.library.outputs.matrix).axes.libc }}
+        exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.test }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: nextest-archive-${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}-${{ matrix.rust.matrix }}
+
+      # Musl: Run tests in Alpine container
+      - name: Run tests in Alpine (musl)
+        if: matrix.libc.matrix == 'musl'
+        uses: docker://alpine:latest
+        with:
+          entrypoint: /bin/sh
+          args: .github/scripts/alpine-test.sh
+
+      # Non-musl: Run tests natively
+      - name: Setup nextest
+        if: matrix.libc.matrix != 'musl'
+        uses: ./.github/actions/setup-nextest
 
       - name: Run tests
-        run: cargo test --all-features
-
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny
-
-      - name: Check dependencies
-        run: cargo deny check
+        if: matrix.libc.matrix != 'musl'
+        run: cargo-nextest nextest run --archive-file nextest-archive.tar.zst --workspace-remap .

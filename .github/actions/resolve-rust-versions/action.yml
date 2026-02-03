@@ -1,0 +1,35 @@
+name: Resolve Rust Versions
+description: Resolves Rust versions ensuring consistency between rustup and Docker Hub
+
+inputs:
+  msrv:
+    description: Minimum Supported Rust Version
+    required: true
+  grace-period-hours:
+    description: Grace period in hours for version lag between sources
+    required: false
+    default: "24"
+
+outputs:
+  msrv:
+    description: MSRV version (passthrough)
+    value: ${{ inputs.msrv }}
+  stable:
+    description: Resolved stable Rust version
+    value: ${{ steps.resolve.outputs.stable }}
+  beta:
+    description: Resolved beta Rust version
+    value: ${{ steps.resolve.outputs.beta }}
+  stable-docker-available:
+    description: Whether stable version is available on Docker Hub
+    value: ${{ steps.resolve.outputs.stable-docker-available }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Rust versions
+      id: resolve
+      shell: bash
+      env:
+        GRACE_PERIOD_HOURS: ${{ inputs.grace-period-hours }}
+      run: ${{ github.action_path }}/resolve.sh
