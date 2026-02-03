@@ -60,3 +60,19 @@ description: Process a GitHub PR review comment
      ```
 
    - Push to the remote branch
+
+10. **Reply to the comment:**
+    - Get the commit URL:
+      - `COMMIT_SHA=$(git rev-parse HEAD)`
+      - `REPO=$(gh repo view --json owner,name --jq '.owner.login + "/" + .name')`
+      - Commit URL: `https://github.com/${REPO}/commit/${COMMIT_SHA}`
+    - Draft a brief, conversational reply explaining what changes were made to address the feedback, including a link to the commit
+    - Show the draft reply to the user and ask for confirmation before posting
+    - If approved, post the reply:
+
+      ```bash
+      gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies \
+        -f body="<reply text>"
+      ```
+
+    - If not approved, skip posting (the commit is already pushed; user can reply manually if desired)
