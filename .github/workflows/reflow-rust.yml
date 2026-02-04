@@ -59,7 +59,7 @@ jobs:
         run: cargo deny check
 
   # Build job: builds and archives tests
-  # Linux builds use Alpine containers for musl static linking
+  # Linux builds target musl for static linking (Rust provides built-in support)
   build:
     name: 🔨 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }}
     needs: [library, resolve-versions]
@@ -86,32 +86,38 @@ jobs:
             beta) echo "version=${{ needs.resolve-versions.outputs.beta }}" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      # Linux: Build in Alpine container for musl static linking
-      - name: Build in Alpine container (Linux)
-        if: matrix.os.matrix == 'linux'
-        uses: docker://alpine:latest
-        with:
-          entrypoint: /bin/sh
-          args: .github/scripts/alpine-build.sh ${{ steps.rust-version.outputs.version }}
-
-      # Non-Linux: Native build
       - name: Setup Rust
-        if: matrix.os.matrix != 'linux'
         uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ steps.rust-version.outputs.version }}
 
+      # Linux: Add musl target for static linking
+      - name: Add musl target (Linux)
+        if: matrix.os.matrix == 'linux'
+        run: rustup target add ${{ matrix.arch.matrix == 'arm' && 'aarch64' || 'x86_64' }}-unknown-linux-musl
+
       - name: Setup nextest
-        if: matrix.os.matrix != 'linux'
         uses: ./.github/actions/setup-nextest
 
       - name: Verify Rust version
-        if: matrix.os.matrix != 'linux'
         run: |
           echo "=== Rust version verification ==="
           rustc --version
           echo "================================="
 
+      # Linux: Build and archive tests with musl target for static linking
+      - name: Build and archive tests (Linux)
+        if: matrix.os.matrix == 'linux'
+        run: |
+          TARGET="${{ matrix.arch.matrix == 'arm' && 'aarch64' || 'x86_64' }}-unknown-linux-musl"
+          cargo nextest archive --target "$TARGET" --all-features --archive-file target/nextest-archive.tar.zst
+
+      # Linux: Verify binaries are statically linked
+      - name: Verify static linking (Linux)
+        if: matrix.os.matrix == 'linux'
+        run: .github/scripts/verify-static-linking.sh
+
+      # Non-Linux: Native build
       - name: Build and archive tests
         if: matrix.os.matrix != 'linux'
         run: cargo nextest archive --all-features --archive-file target/nextest-archive.tar.zst

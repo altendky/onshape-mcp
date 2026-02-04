@@ -108,7 +108,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    lint: 1 job (fmt, clippy, deny on stable)                │
 │    build: 15 jobs (3 rust × 5 platforms)                    │
 │      - Builds and archives tests with cargo-nextest         │
-│      - Linux builds in Alpine containers (musl)             │
+│      - Linux builds target musl for static linking          │
 │    test: 21 jobs (3 rust × 7 platform/libc combinations)    │
 │      - Runs archived tests                                  │
 │      - Linux tests on both glibc and musl                   │
@@ -288,8 +288,9 @@ The Rust workflow is split into lint, build, and test stages:
 | Build | Compile + archive | `cargo nextest archive` | 15 jobs (3 rust × 5 platforms) |
 | Test | Run tests | `cargo-nextest run` | 21 jobs (3 rust × 7 platform/libc) |
 
-**Build/Test split rationale:** Linux binaries are built with musl in Alpine containers,
-then tested on both glibc (Ubuntu) and musl (Alpine) environments to verify portability.
+**Build/Test split rationale:** Linux binaries are built targeting musl (Rust provides
+built-in support with self-contained linking), then tested on both glibc (Ubuntu) and
+musl (Alpine) environments to verify portability.
 
 ### Coverage
 
