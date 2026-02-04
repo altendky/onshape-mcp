@@ -25,7 +25,7 @@ description: Process a GitHub PR review comment
      - Collect the root comment and all comments where `in_reply_to_id` equals the root's `id`
    - Display the full thread in chronological order using markdown separators:
 
-     ```
+     ```text
      ---
      **@username** (2024-01-15 10:30 UTC): <- linked comment
 
