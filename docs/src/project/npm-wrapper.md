@@ -211,6 +211,20 @@ This runs on every PR to catch version drift before merge.
 - Smoke test on native platform runners (Linux x64, Linux ARM64, macOS x64, macOS ARM64, Windows x64)
 - ARM testing uses actual ARM runners, not emulation
 
+### Coverage
+
+The JS shim (`bin.js`) has coverage monitoring using `c8` (V8 native coverage):
+
+```bash
+# Run tests with coverage
+npm run test:coverage
+
+# Run tests without coverage
+npm test
+```
+
+Coverage runs on all 5 platforms in CI and uploads to Codecov with the `npm` flag. See [CI > Coverage](ci.md#coverage) for details.
+
 ### End-to-end Testing
 
 - Test `npx onshape-mcp` against an MCP client
@@ -231,3 +245,58 @@ Or install globally:
 npm install -g onshape-mcp
 onshape-mcp
 ```
+
+## Local Development
+
+To test the npm wrapper with a locally-built Rust binary:
+
+1. **Build the Rust binary:**
+
+   ```bash
+   cargo build          # Debug build
+   cargo build --release  # Release build
+   ```
+
+2. **Run the npm wrapper:**
+
+   ```bash
+   node npm/onshape-mcp/bin.js --help
+   ```
+
+3. **Or enable in opencode:**
+   Set `"enabled": true` for `onshape-npm-debug` or `onshape-npm-release` in `opencode.json`.
+
+### Repository Detection
+
+When running from the repository, the JS shim (`bin.js`) automatically detects the local development environment by checking for `Cargo.toml` at the repository root.
+It then looks for the binary in `target/debug/` first, falling back to `target/release/`.
+
+### Environment Variables
+
+| Variable | Description |
+| -------- | ----------- |
+| `ONSHAPE_MCP_NPM_COMMAND` | Override the binary command (shell-quoted). Bypasses auto-detection. |
+
+#### Examples
+
+```bash
+# Use a specific binary path
+ONSHAPE_MCP_NPM_COMMAND="/path/to/onshape-mcp"
+
+# Use a path with spaces
+ONSHAPE_MCP_NPM_COMMAND='"/path with spaces/onshape-mcp"'
+
+# Use a release build explicitly
+ONSHAPE_MCP_NPM_COMMAND="./target/release/onshape-mcp"
+
+# Run via another interpreter (for testing)
+ONSHAPE_MCP_NPM_COMMAND="node /path/to/mock-binary.js"
+
+# Add prefix arguments
+ONSHAPE_MCP_NPM_COMMAND="strace -f /path/to/onshape-mcp"
+```
+
+The command is parsed using shell quoting rules (via the `shell-quote` package), so paths with spaces must be quoted.
+Shell operators like pipes (`|`), redirects (`>`), and background (`&`) are not supported and will produce an error.
+
+The `opencode.json` entries for `onshape-npm-debug` and `onshape-npm-release` use this variable to select the appropriate build.

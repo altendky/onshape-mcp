@@ -17,3 +17,26 @@ comment:
   layout: "header, diff, flags, components"
   behavior: default
   require_changes: true
+
+# Flags distinguish coverage from different sources
+flags:
+  rust:
+    paths:
+      - crates/
+    carryforward: true
+  npm:
+    paths:
+      - npm/onshape-mcp/
+    carryforward: true
+
+# Components for PR comment breakdown
+component_management:
+  individual_components:
+    - component_id: rust
+      name: Rust
+      paths:
+        - crates/**
+    - component_id: npm
+      name: npm wrapper
+      paths:
+        - npm/onshape-mcp/**

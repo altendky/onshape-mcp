@@ -1,4 +1,4 @@
-name: Coverage
+name: npm
 
 on:
   workflow_call:
@@ -8,8 +8,8 @@ jobs:
     name: Generate library
     uses: ./.github/workflows/reflow-library.yml
 
-  check:
-    name: ☂️ ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }}
+  coverage:
+    name: ☂️ ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} npm ${{ matrix.os.name }} ${{ matrix.arch.name }}
     needs: library
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
     permissions:
@@ -23,24 +23,23 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          toolchain: stable
-          components: llvm-tools-preview
+          node-version: "22"
 
-      - name: Install cargo-llvm-cov and cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov,cargo-nextest
+      - name: Install dependencies
+        run: npm ci
+        working-directory: npm/onshape-mcp
 
       - name: Generate coverage
-        run: cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info
+        run: npm run test:coverage
+        working-directory: npm/onshape-mcp
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           use_oidc: true
-          files: lcov.info
-          flags: rust
+          files: npm/onshape-mcp/coverage/lcov.info
+          flags: npm
           fail_ci_if_error: true
