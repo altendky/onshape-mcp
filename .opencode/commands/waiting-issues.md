@@ -11,9 +11,9 @@ description: Review GitHub issues labeled 'waiting' to check if blocking conditi
 1. **Fetch issues:**
    - If an issue number was provided, fetch that specific issue:
      `gh issue view <number> --json number,title,body,labels`
+     - Verify this issue has the "waiting" label; skip if it doesn't
    - If no issue number provided, fetch all issues with the "waiting" label:
      `gh issue list --label waiting --json number,title,body,labels`
-   - Verify each issue has the "waiting" label; skip any that don't
 
 2. **For each issue, identify the blocking condition:**
    - Parse the issue body to find:
