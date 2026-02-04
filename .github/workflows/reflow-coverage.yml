@@ -21,7 +21,7 @@ jobs:
         arch: ${{ fromJSON(needs.library.outputs.matrix).axes.arch }}
         exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
