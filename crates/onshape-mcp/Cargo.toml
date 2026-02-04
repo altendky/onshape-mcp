@@ -11,6 +11,11 @@ keywords = ["mcp", "onshape", "cad", "modelcontextprotocol", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
+onshape-mcp-io.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "onshape-mcp-io"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "I/O layer for Onshape MCP server (transport, async runtime)"
+keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
+categories = ["development-tools"]
+
+[dependencies]
+onshape-mcp-core.workspace = true
+rmcp = { workspace = true, features = ["server", "transport-io"] }
+tokio.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "onshape-mcp-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Pure MCP protocol logic for Onshape integration (sans-IO)"
+keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
+categories = ["development-tools"]
+
+[dependencies]
+# Note: Using default features (base64, macros, server) for full type support.
+# This pulls in tokio as a transitive dep, but core doesn't perform any I/O.
+rmcp.workspace = true
+
+[lints]
+workspace = true

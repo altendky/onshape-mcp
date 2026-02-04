@@ -2,10 +2,9 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::Command;
-
-use onshape_mcp::CATCH_PHRASE;
+use std::process::{Command, Stdio};
 
 /// Find the binary path, handling both normal cargo test and nextest archive contexts.
 ///
@@ -35,14 +34,87 @@ fn find_binary() -> PathBuf {
 }
 
 #[test]
-fn binary_runs_successfully() {
+fn mcp_initialization_returns_server_info() {
     let binary_path = find_binary();
-    let output = Command::new(&binary_path)
-        .output()
-        .unwrap_or_else(|e| panic!("failed to execute binary at {binary_path:?}: {e}"));
 
-    assert!(output.status.success());
+    // Spawn the MCP server with stdin/stdout pipes
+    let mut child = Command::new(&binary_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to spawn binary at {binary_path:?}: {e}"));
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), CATCH_PHRASE);
+    let mut stdin = child.stdin.take().expect("failed to open stdin");
+    let stdout = child.stdout.take().expect("failed to open stdout");
+    let mut reader = BufReader::new(stdout);
+
+    // Send MCP initialize request (JSON-RPC over stdio)
+    let init_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "test-client",
+                "version": "0.0.1"
+            }
+        }
+    });
+
+    let request_str = serde_json::to_string(&init_request).unwrap();
+    writeln!(stdin, "{request_str}").expect("failed to write to stdin");
+    stdin.flush().expect("failed to flush stdin");
+
+    // Read the response (one line of JSON)
+    let mut response_line = String::new();
+    reader
+        .read_line(&mut response_line)
+        .expect("failed to read response");
+
+    // Parse and verify the response
+    let response: serde_json::Value =
+        serde_json::from_str(&response_line).expect("failed to parse JSON response");
+
+    // Verify JSON-RPC structure
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 1);
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+
+    // Verify server info in result
+    let result = &response["result"];
+    assert_eq!(
+        result["serverInfo"]["name"], "onshape-mcp",
+        "unexpected server name"
+    );
+    assert!(
+        result["serverInfo"]["version"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty()),
+        "server version should be non-empty"
+    );
+
+    // Verify tools capability is enabled
+    assert!(
+        result["capabilities"]["tools"].is_object(),
+        "tools capability should be enabled"
+    );
+
+    // Send the initialized notification (required by MCP protocol)
+    let initialized_notification = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    });
+    let notification_str = serde_json::to_string(&initialized_notification).unwrap();
+    writeln!(stdin, "{notification_str}").expect("failed to write initialized notification");
+    stdin.flush().expect("failed to flush stdin");
+
+    // Close stdin to signal shutdown
+    drop(stdin);
+
+    // Wait for the process to exit
+    let status = child.wait().expect("failed to wait for child");
+    assert!(status.success(), "process exited with error: {status}");
 }
