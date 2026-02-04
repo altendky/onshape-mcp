@@ -129,7 +129,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Download test archive
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: nextest-archive-${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}-${{ matrix.rust.matrix }}
 
