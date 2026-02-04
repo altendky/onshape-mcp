@@ -1,29 +1,16 @@
 # Static linking configuration for musl targets
 # This ensures Linux binaries are fully portable across distributions
 #
-# We configure Zig as the linker for musl targets. Zig provides:
-#   - A complete musl libc implementation
-#   - Cross-compilation support (e.g., x86_64 host building for aarch64)
-#   - Consistent static linking behavior
-#
-# The wrapper scripts in this directory invoke `zig cc -target <triple>`.
-# This configuration ensures ANY cargo command (build, test, nextest, etc.)
-# uses Zig for linking, not just cargo-zigbuild.
-#
-# The +crt-static flag is technically redundant with Zig (which always
-# statically links musl), but we keep it to document intent and ensure
-# correct behavior if someone builds without the Zig linker configured.
+# Rust provides built-in musl support with self-contained linking.
+# No external linker (Zig, musl-gcc, etc.) is needed - Rust bundles
+# everything required for musl targets including libc and CRT files.
 #
 # We use explicit target triples instead of cfg(target_env = "musl") because
 # cfg-based matching can be unreliable when rust-toolchain.toml triggers a
 # toolchain switch during cargo execution.
 
 [target.x86_64-unknown-linux-musl]
-linker = ".cargo/zig-cc-x86_64-linux-musl"
-# -C link-self-contained=no: Don't use Rust's bundled musl CRT; Zig provides its own
-# -C target-feature=+crt-static: Statically link the C runtime (redundant with Zig but documents intent)
-rustflags = ["-C", "link-self-contained=no", "-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static"]
 
 [target.aarch64-unknown-linux-musl]
-linker = ".cargo/zig-cc-aarch64-linux-musl"
-rustflags = ["-C", "link-self-contained=no", "-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static"]
