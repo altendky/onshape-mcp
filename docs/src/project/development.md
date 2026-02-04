@@ -109,7 +109,7 @@ cargo build --release --target x86_64-unknown-linux-musl
 The CI workflow separates build and test stages:
 
 1. **Build stage**: Compiles tests and creates archives
-   - Linux: Builds in Alpine containers (musl-linked)
+   - Linux: Builds with musl target (Rust provides built-in support)
    - macOS/Windows: Builds natively
 
 2. **Test stage**: Runs pre-built tests in multiple environments

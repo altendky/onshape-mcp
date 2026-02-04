@@ -108,7 +108,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    lint: 1 job (fmt, clippy, deny on stable)                │
 │    build: 15 jobs (3 rust × 5 platforms)                    │
 │      - Builds and archives tests with cargo-nextest         │
-│      - Linux builds use cargo-zigbuild for musl linking     │
+│      - Linux builds target musl for static linking          │
 │    test: 21 jobs (3 rust × 7 platform/libc combinations)    │
 │      - Runs archived tests                                  │
 │      - Linux tests on both glibc and musl                   │
@@ -259,9 +259,7 @@ environments, verifying that statically-linked musl binaries work correctly on g
 | [pre-commit/action](https://github.com/pre-commit/action) | Runs pre-commit hooks in CI |
 | [re-actors/alls-green](https://github.com/re-actors/alls-green) | Aggregate job status |
 | [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust toolchain installation |
-| [mlugg/setup-zig](https://github.com/mlugg/setup-zig) | Zig toolchain installation (for Linux musl builds) |
-| [taiki-e/install-action](https://github.com/taiki-e/install-action) | Install cargo tools (cargo-deny, cargo-llvm-cov, cargo-nextest, cargo-zigbuild) |
-| [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) | Cross-compile Rust with Zig as linker (for musl static linking) |
+| [taiki-e/install-action](https://github.com/taiki-e/install-action) | Install cargo tools (cargo-deny, cargo-llvm-cov, cargo-nextest) |
 | [cargo-nextest](https://nexte.st/) | Next-generation test runner with archiving support |
 | [codecov/codecov-action](https://github.com/codecov/codecov-action) | Upload coverage to Codecov |
 
@@ -290,9 +288,9 @@ The Rust workflow is split into lint, build, and test stages:
 | Build | Compile + archive | `cargo nextest archive` | 15 jobs (3 rust × 5 platforms) |
 | Test | Run tests | `cargo-nextest run` | 21 jobs (3 rust × 7 platform/libc) |
 
-**Build/Test split rationale:** Linux binaries are built with musl using cargo-zigbuild
-(which uses Zig's bundled musl libc), then tested on both glibc (Ubuntu) and musl (Alpine)
-environments to verify portability.
+**Build/Test split rationale:** Linux binaries are built targeting musl (Rust provides
+built-in support with self-contained linking), then tested on both glibc (Ubuntu) and
+musl (Alpine) environments to verify portability.
 
 ### Coverage
 

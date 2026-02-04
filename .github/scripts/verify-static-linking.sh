@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Verify that binaries are statically linked
 #
-# Runs on Ubuntu build runners with cargo-zigbuild.
+# Runs on Ubuntu build runners after building with musl target.
 # Uses 'file' command which correctly identifies static vs dynamic linking.
 #
 # Note: We use 'file' instead of 'ldd' because musl's ldd is a simple wrapper
