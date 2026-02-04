@@ -1,0 +1,10 @@
+name: Setup Zig
+description: Install Zig toolchain for cargo-zigbuild
+
+runs:
+  using: composite
+  steps:
+    - name: Install Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: "0.14.0"
