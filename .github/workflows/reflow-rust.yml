@@ -104,7 +104,7 @@ jobs:
         run: cargo nextest archive --all-features --archive-file target/nextest-archive.tar.zst
 
       - name: Upload test archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: nextest-archive-${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}-${{ matrix.rust.matrix }}
           path: target/nextest-archive.tar.zst
