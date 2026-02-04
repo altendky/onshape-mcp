@@ -14,8 +14,8 @@ categories = ["development-tools", "api-bindings"]
 
 [workspace.dependencies]
 # Internal crates
-onshape-mcp-core = { path = "crates/onshape-mcp-core" }
-onshape-mcp-io = { path = "crates/onshape-mcp-io" }
+onshape-mcp-core = { path = "crates/onshape-mcp-core", version = "0.1.0" }
+onshape-mcp-io = { path = "crates/onshape-mcp-io", version = "0.1.0" }
 
 # External dependencies
 rmcp = "0.14"
