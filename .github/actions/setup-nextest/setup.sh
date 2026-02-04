@@ -15,20 +15,8 @@ x86_64)
 	curl -LsSf "https://get.nexte.st/latest/linux-musl" | tar zxf - -C /usr/local/bin
 	;;
 aarch64)
-	# No prebuilt musl binary for ARM, and glibc binary doesn't work with gcompat
-	# (__res_init symbol missing). Build from source instead.
-
-	# Install build dependencies (apk add is idempotent with --no-cache)
-	apk add --no-cache gcc musl-dev
-
-	# Install Rust if not present (minimal profile for faster install)
-	if ! command -v cargo >/dev/null 2>&1; then
-		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-		# shellcheck source=/dev/null
-		. "$HOME/.cargo/env"
-	fi
-
-	cargo install cargo-nextest --locked
+	# Use prebuilt musl binary for aarch64 (available since nextest 0.9.125)
+	curl -LsSf "https://get.nexte.st/latest/linux-arm-musl" | tar zxf - -C /usr/local/bin
 	;;
 *)
 	echo "Unsupported architecture: $ARCH" && exit 1
