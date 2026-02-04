@@ -1,7 +1,6 @@
 //! Onshape MCP Server library.
 //!
 //! A Model Context Protocol server for Onshape CAD integration.
-
-/// The iconic Onshape regeneration success message.
-pub const CATCH_PHRASE: &str =
-    "Model regeneration complete. No rebuild errors. All features resolved.";
+//!
+//! This crate provides the binary entry point. For the core logic, see
+//! [`onshape_mcp_core`]. For the I/O layer, see [`onshape_mcp_io`].

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "onshape-release": {
+      "type": "local",
+      "command": ["./target/release/onshape-mcp"],
+      "enabled": false
+    },
+    "onshape-debug": {
+      "type": "local",
+      "command": ["./target/debug/onshape-mcp"],
+      "enabled": false
+    }
+  }
+}
