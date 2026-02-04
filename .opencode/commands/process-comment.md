@@ -97,8 +97,9 @@ description: Process a GitHub PR review comment
     - If approved, post the reply:
 
       ```bash
-      gh api repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies \
-        -f body="<reply text>"
+      gh api repos/{owner}/{repo}/pulls/{pull_number}/comments \
+        -f body="<reply text>" \
+        -F in_reply_to={comment_id}
       ```
 
     - If not approved, skip posting (the commit is already pushed; user can reply manually if desired)
