@@ -13,6 +13,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=/dev/null
 . "$HOME/.cargo/env"
 
+# Override rust-toolchain.toml to use the requested version
+# This is required because proc-macro support on musl requires newer toolchains
+# than the MSRV specified in rust-toolchain.toml
+export RUSTUP_TOOLCHAIN="$RUST_VERSION"
+
 # Setup nextest
 "$REPO_ROOT/.github/actions/setup-nextest/setup.sh"
 
