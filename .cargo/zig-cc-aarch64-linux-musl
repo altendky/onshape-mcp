@@ -1,0 +1,4 @@
+#!/bin/sh
+# Zig linker wrapper for aarch64-unknown-linux-musl target
+# Used by Cargo to link with Zig's musl libc for portable static binaries
+exec zig cc -target aarch64-linux-musl "$@"

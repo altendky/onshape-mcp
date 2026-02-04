@@ -59,7 +59,7 @@ jobs:
         run: cargo deny check
 
   # Build job: builds and archives tests
-  # Linux builds use cargo-zigbuild for musl static linking
+  # Linux builds use Zig linker (configured in .cargo/config.toml) for musl static linking
   build:
     name: 🔨 ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} ${{ matrix.rust.emoji }} ${{ matrix.os.name }} ${{ matrix.arch.name }} ${{ matrix.rust.name }}
     needs: [library, resolve-versions]
@@ -101,13 +101,6 @@ jobs:
         if: matrix.os.matrix == 'linux'
         uses: ./.github/actions/setup-zig
 
-      # Linux: Install cargo-zigbuild
-      - name: Install cargo-zigbuild (Linux)
-        if: matrix.os.matrix == 'linux'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
-
       - name: Setup nextest
         uses: ./.github/actions/setup-nextest
 
@@ -117,12 +110,12 @@ jobs:
           rustc --version
           echo "================================="
 
-      # Linux: Build with cargo-zigbuild for musl static linking
+      # Linux: Build and archive tests with musl target
+      # Zig linker is configured in .cargo/config.toml for static linking
       - name: Build and archive tests (Linux)
         if: matrix.os.matrix == 'linux'
         run: |
           TARGET="${{ matrix.arch.matrix == 'arm' && 'aarch64' || 'x86_64' }}-unknown-linux-musl"
-          cargo zigbuild --target "$TARGET" --all-features
           cargo nextest archive --target "$TARGET" --all-features --archive-file target/nextest-archive.tar.zst
 
       # Linux: Verify binaries are statically linked
