@@ -25,8 +25,8 @@ description: Review GitHub issues labeled 'waiting' to check if blocking conditi
 
 3. **Check if blocking conditions are resolved:**
    - For upstream PRs: `gh pr view <url> --json state,merged` to check if merged
-   - For releases: `gh release list -R <org>/<repo> --limit 10` to find new releases
-   - For commits in releases: Check if a release tag includes the required commit
+   - For releases: identify the exact tag to check (prefer explicit tag from the issue body)
+   - For commits in releases: `gh api repos/<org>/<repo>/compare/<tag>...<commit>` → if status is "behind" or "identical", the commit is included in that release
    - Follow any explicit "How to check" instructions from the issue body
 
 4. **Report status for each issue:**
@@ -53,3 +53,7 @@ description: Review GitHub issues labeled 'waiting' to check if blocking conditi
 ```
 
 If all issues are ready, note that. If all are still waiting, note that too.
+
+## Notes
+
+- This command assumes issues reference GitHub-hosted repositories. Support for other Git hosting platforms (GitLab, Bitbucket, etc.) may be needed in the future.
