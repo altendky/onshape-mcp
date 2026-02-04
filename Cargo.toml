@@ -12,6 +12,16 @@ description = "A Rust-based MCP (Model Context Protocol) server for Onshape inte
 keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
 categories = ["development-tools", "api-bindings"]
 
+[workspace.dependencies]
+# Internal crates
+onshape-mcp-core = { path = "crates/onshape-mcp-core", version = "0.1.0" }
+onshape-mcp-io = { path = "crates/onshape-mcp-io", version = "0.1.0" }
+
+# External dependencies
+rmcp = "0.14"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 
