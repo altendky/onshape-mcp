@@ -7,7 +7,16 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const BIN_JS = path.join(__dirname, "..", "bin.js");
+const LIB_JS = path.join(__dirname, "..", "lib.js");
 const MOCK_BINARY = path.join(__dirname, "fixtures", "mock-binary.js");
+
+// Import exported functions for unit testing
+const {
+  PLATFORMS,
+  getPlatformPackage,
+  getBinaryPath,
+  parseCommand,
+} = require("../lib.js");
 
 // Check if a local development binary exists (same logic as bin.js)
 function localBinaryExists() {
@@ -65,15 +74,215 @@ describe("bin.js", () => {
         "win32-x64",
       ];
 
-      // Read the bin.js file and verify PLATFORMS object contains all expected keys
-      const binContent = fs.readFileSync(BIN_JS, "utf8");
+      // Read the lib.js file and verify PLATFORMS object contains all expected keys
+      const libContent = fs.readFileSync(LIB_JS, "utf8");
 
       for (const platform of expectedPlatforms) {
         assert.ok(
-          binContent.includes(`"${platform}"`),
+          libContent.includes(`"${platform}"`),
           `Platform ${platform} should be defined in PLATFORMS`
         );
       }
+    });
+  });
+
+  describe("getPlatformPackage()", () => {
+    it("should return package name for current platform if supported", () => {
+      const key = `${process.platform}-${process.arch}`;
+      const result = getPlatformPackage();
+
+      if (PLATFORMS[key]) {
+        assert.strictEqual(result, PLATFORMS[key]);
+      } else {
+        assert.strictEqual(result, null);
+      }
+    });
+
+    it("should have correct package names in PLATFORMS map", () => {
+      assert.strictEqual(PLATFORMS["linux-x64"], "@onshape-mcp/linux-x64");
+      assert.strictEqual(PLATFORMS["linux-arm64"], "@onshape-mcp/linux-arm64");
+      assert.strictEqual(PLATFORMS["darwin-x64"], "@onshape-mcp/darwin-x64");
+      assert.strictEqual(PLATFORMS["darwin-arm64"], "@onshape-mcp/darwin-arm64");
+      assert.strictEqual(PLATFORMS["win32-x64"], "@onshape-mcp/win32-x64");
+    });
+
+    it("should not have mapping for unsupported platforms", () => {
+      // These platform/arch combinations are not supported
+      assert.strictEqual(PLATFORMS["freebsd-x64"], undefined);
+      assert.strictEqual(PLATFORMS["linux-arm"], undefined);
+      assert.strictEqual(PLATFORMS["win32-arm64"], undefined);
+    });
+  });
+
+  describe("getBinaryPath()", () => {
+    it("should return a string or null", () => {
+      const result = getBinaryPath();
+
+      assert.ok(
+        result === null || typeof result === "string",
+        `Expected null or string, got ${typeof result}`
+      );
+    });
+
+    it("should return existing file path when binary is found", () => {
+      const result = getBinaryPath();
+
+      if (result !== null) {
+        assert.ok(
+          fs.existsSync(result),
+          `Binary path should exist: ${result}`
+        );
+      }
+    });
+
+    it("should return path with correct binary name", () => {
+      const result = getBinaryPath();
+
+      if (result !== null) {
+        const expectedExt = process.platform === "win32" ? ".exe" : "";
+        const expectedName = `onshape-mcp${expectedExt}`;
+        assert.ok(
+          result.endsWith(expectedName),
+          `Binary path should end with ${expectedName}, got: ${result}`
+        );
+      }
+    });
+
+    it("should check local development paths when in repo root", () => {
+      const result = getBinaryPath();
+      const repoRoot = path.join(__dirname, "..", "..", "..");
+
+      // If we're in a repo with Cargo.toml, binary should be from target/
+      if (fs.existsSync(path.join(repoRoot, "Cargo.toml")) && result !== null) {
+        assert.ok(
+          result.includes("target"),
+          `In dev environment, binary should be from target/, got: ${result}`
+        );
+      }
+    });
+
+    it("should prefer debug binary over release in development", () => {
+      const result = getBinaryPath();
+      const repoRoot = path.join(__dirname, "..", "..", "..");
+      const ext = process.platform === "win32" ? ".exe" : "";
+      const binName = `onshape-mcp${ext}`;
+      const debugBin = path.join(repoRoot, "target", "debug", binName);
+      const releaseBin = path.join(repoRoot, "target", "release", binName);
+
+      // If both debug and release exist, should return debug
+      if (fs.existsSync(debugBin) && fs.existsSync(releaseBin)) {
+        assert.strictEqual(result, debugBin, "Should prefer debug over release");
+      }
+    });
+
+    it("should fall back to release binary when debug not available", () => {
+      const repoRoot = path.join(__dirname, "..", "..", "..");
+      const ext = process.platform === "win32" ? ".exe" : "";
+      const binName = `onshape-mcp${ext}`;
+      const debugBin = path.join(repoRoot, "target", "debug", binName);
+      const releaseBin = path.join(repoRoot, "target", "release", binName);
+
+      // This test documents the expected behavior
+      // If only release exists (debug doesn't), should return release
+      if (!fs.existsSync(debugBin) && fs.existsSync(releaseBin)) {
+        const result = getBinaryPath();
+        assert.strictEqual(result, releaseBin, "Should use release when debug unavailable");
+      }
+    });
+  });
+
+  describe("parseCommand()", () => {
+    it("should parse simple command", () => {
+      const result = parseCommand("/path/to/binary");
+      assert.deepStrictEqual(result, ["/path/to/binary"]);
+    });
+
+    it("should parse command with arguments", () => {
+      const result = parseCommand("/path/to/binary --arg1 --arg2");
+      assert.deepStrictEqual(result, ["/path/to/binary", "--arg1", "--arg2"]);
+    });
+
+    it("should parse command with quoted path", () => {
+      const result = parseCommand('"/path with spaces/binary"');
+      assert.deepStrictEqual(result, ["/path with spaces/binary"]);
+    });
+
+    it("should parse command with quoted arguments", () => {
+      const result = parseCommand('cmd "arg with spaces" --flag');
+      assert.deepStrictEqual(result, ["cmd", "arg with spaces", "--flag"]);
+    });
+
+    it("should throw on empty command", () => {
+      assert.throws(
+        () => parseCommand(""),
+        /Command is empty after parsing/
+      );
+    });
+
+    it("should throw on whitespace-only command", () => {
+      assert.throws(
+        () => parseCommand("   "),
+        /Command is empty after parsing/
+      );
+    });
+
+    it("should throw on pipe operator", () => {
+      assert.throws(
+        () => parseCommand("cmd1 | cmd2"),
+        /Unsupported shell operator/
+      );
+    });
+
+    it("should throw on redirect operator", () => {
+      assert.throws(
+        () => parseCommand("cmd > file.txt"),
+        /Unsupported shell operator/
+      );
+    });
+
+    it("should throw on background operator", () => {
+      assert.throws(
+        () => parseCommand("cmd &"),
+        /Unsupported shell operator/
+      );
+    });
+
+    it("should throw on semicolon operator", () => {
+      assert.throws(
+        () => parseCommand("cmd1 ; cmd2"),
+        /Unsupported shell operator/
+      );
+    });
+
+    it("should throw on && operator", () => {
+      assert.throws(
+        () => parseCommand("cmd1 && cmd2"),
+        /Unsupported shell operator/
+      );
+    });
+
+    it("should throw on || operator", () => {
+      assert.throws(
+        () => parseCommand("cmd1 || cmd2"),
+        /Unsupported shell operator/
+      );
+    });
+  });
+
+  describe("binary detection", () => {
+    // Test that bin.js can find and run the actual binary (when it exists)
+    const skip = !localBinaryExists();
+
+    it("should find and run local binary without ONSHAPE_MCP_NPM_COMMAND", { skip }, () => {
+      // Run bin.js without env var - should find local binary and show help
+      const result = runBin(["--help"]);
+
+      // Should succeed (or at least not fail with "unsupported platform")
+      const stderr = result.stderr || "";
+      assert.ok(
+        !stderr.includes("Unsupported platform"),
+        `Should find local binary, got stderr: ${stderr}`
+      );
     });
   });
 
