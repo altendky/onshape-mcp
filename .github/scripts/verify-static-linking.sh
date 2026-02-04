@@ -1,9 +1,8 @@
 #!/usr/bin/env sh
 # Verify that binaries are statically linked
 #
-# Works on both Ubuntu (with cargo-zigbuild) and Alpine environments.
-# Uses 'file' command which correctly identifies static vs dynamic linking
-# on both glibc and musl systems.
+# Runs on Ubuntu build runners with cargo-zigbuild.
+# Uses 'file' command which correctly identifies static vs dynamic linking.
 #
 # Note: We use 'file' instead of 'ldd' because musl's ldd is a simple wrapper
 # that outputs the loader path even for static binaries, unlike glibc's ldd
@@ -13,10 +12,11 @@ set -eux
 
 # Install file command if not present
 if ! command -v file >/dev/null 2>&1; then
-	if command -v apk >/dev/null 2>&1; then
-		apk add --no-cache file
-	elif command -v apt-get >/dev/null 2>&1; then
+	if command -v apt-get >/dev/null 2>&1; then
 		sudo apt-get update && sudo apt-get install -y file
+	else
+		echo "ERROR: 'file' not available and no supported package manager found" >&2
+		exit 1
 	fi
 fi
 
