@@ -38,6 +38,12 @@ jobs:
           toolchain: ${{ needs.resolve-versions.outputs.stable }}
           components: rustfmt, clippy
 
+      - name: Verify Rust version
+        run: |
+          echo "=== Rust version verification ==="
+          rustc --version
+          echo "================================="
+
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -98,6 +104,13 @@ jobs:
       - name: Setup nextest
         if: matrix.os.matrix != 'linux'
         uses: ./.github/actions/setup-nextest
+
+      - name: Verify Rust version
+        if: matrix.os.matrix != 'linux'
+        run: |
+          echo "=== Rust version verification ==="
+          rustc --version
+          echo "================================="
 
       - name: Build and archive tests
         if: matrix.os.matrix != 'linux'
