@@ -16,7 +16,7 @@ jobs:
       stable: ${{ steps.resolve.outputs.stable }}
       beta: ${{ steps.resolve.outputs.beta }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Resolve versions
         id: resolve
@@ -30,7 +30,7 @@ jobs:
     needs: [library, resolve-versions]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -67,7 +67,7 @@ jobs:
         rust: ${{ fromJSON(needs.library.outputs.matrix).axes.rust }}
         exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Determine the Rust version to use
       - name: Determine Rust version
@@ -126,7 +126,7 @@ jobs:
         libc: ${{ fromJSON(needs.library.outputs.matrix).axes.libc }}
         exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download test archive
         uses: actions/download-artifact@v4
