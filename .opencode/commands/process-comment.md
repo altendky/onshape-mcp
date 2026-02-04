@@ -14,21 +14,47 @@ description: Process a GitHub PR review comment
    - If given a URL like `https://github.com/owner/repo/pull/123#discussion_r1234567890` or `https://github.com/owner/repo/pull/123/files#r1234567890`, extract the comment ID (the number after `r`)
    - If given just a comment ID number, use it directly
 
-2. **Fetch the comment using gh api:**
+2. **Fetch the comment and full thread:**
    - Determine the repository owner/repo from the URL or from `gh repo view --json owner,name`
-   - Fetch comment details: `gh api repos/{owner}/{repo}/pulls/comments/{comment_id}`
-   - This returns the comment body, file path, line numbers, and diff context
+   - Fetch the linked comment: `gh api repos/{owner}/{repo}/pulls/comments/{comment_id}`
+   - Extract the PR number from the comment's `pull_request_url` field
+   - Fetch all review comments for the PR: `gh api repos/{owner}/{repo}/pulls/{pull_number}/comments --paginate`
+   - Build the thread:
+     - If the linked comment has an `in_reply_to_id`, that value is the root comment's ID
+     - If the linked comment has no `in_reply_to_id`, it is the root
+     - Collect the root comment and all comments where `in_reply_to_id` equals the root's `id`
+   - Display the full thread in chronological order using markdown separators:
+
+     ```
+     ---
+     **@username** (2024-01-15 10:30 UTC): <- linked comment
+
+     <comment body>
+
+     ---
+     **@another_user** (2024-01-15 11:45 UTC):
+
+     <reply body>
+
+     ---
+     ```
+
+   - Mark the specifically linked comment with `<- linked comment` so it's identifiable
 
 3. **Verify branch:**
-   - Extract `PR_NUMBER` from the comment's `pull_request_url` field (e.g., `echo "$pull_request_url" | grep -oP '(?<=pull/)\d+'`)
-   - Get the PR's head branch: `HEAD_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')`
+   - Get the PR's head branch using the PR number from step 2: `HEAD_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')`
    - Get current local branch: `CURRENT_BRANCH=$(git branch --show-current)`
    - Compare `HEAD_BRANCH` and `CURRENT_BRANCH`; if they don't match, inform the user and **stop**
 
 4. **Understand the feedback:**
-   - Read the comment body carefully
-   - Note the file path and line range from the `path`, `line`, and `start_line` fields
-   - Many review comments (especially from CodeRabbit) include a "Prompt for AI Agents" section with specific instructions
+   - Read the entire thread to understand the full context of the discussion
+   - Pay special attention to the specifically linked comment—it may indicate:
+     - The most recent or relevant feedback to address
+     - A specific decision or direction the user wants implemented
+     - A follow-up request after earlier discussion
+   - If the thread contains back-and-forth discussion, identify the current consensus or latest request
+   - Note the file path and line range from the root comment's `path`, `line`, and `start_line` fields
+   - Many review comments (especially from CodeRabbit) include a "Prompt for AI Agents" section—check all comments in the thread for such prompts
 
 5. **Research the context:**
    - Read the relevant file(s) mentioned in the comment
