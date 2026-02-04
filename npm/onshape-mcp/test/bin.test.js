@@ -7,7 +7,6 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const BIN_JS = path.join(__dirname, "..", "bin.js");
-const LIB_JS = path.join(__dirname, "..", "lib.js");
 const MOCK_BINARY = path.join(__dirname, "fixtures", "mock-binary.js");
 
 // Import exported functions for unit testing
@@ -74,12 +73,9 @@ describe("bin.js", () => {
         "win32-x64",
       ];
 
-      // Read the lib.js file and verify PLATFORMS object contains all expected keys
-      const libContent = fs.readFileSync(LIB_JS, "utf8");
-
       for (const platform of expectedPlatforms) {
         assert.ok(
-          libContent.includes(`"${platform}"`),
+          Object.hasOwn(PLATFORMS, platform),
           `Platform ${platform} should be defined in PLATFORMS`
         );
       }
