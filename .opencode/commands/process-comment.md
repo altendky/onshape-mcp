@@ -23,23 +23,6 @@ description: Process a GitHub PR review comment
      - If the linked comment has an `in_reply_to_id`, that value is the root comment's ID
      - If the linked comment has no `in_reply_to_id`, it is the root
      - Collect the root comment and all comments where `in_reply_to_id` equals the root's `id`
-   - Display the full thread in chronological order using markdown separators:
-
-     ```text
-     ---
-     **@username** (2024-01-15 10:30 UTC): <- linked comment
-
-     <comment body>
-
-     ---
-     **@another_user** (2024-01-15 11:45 UTC):
-
-     <reply body>
-
-     ---
-     ```
-
-   - Mark the specifically linked comment with `<- linked comment` so it's identifiable
 
 3. **Verify branch:**
    - Get the PR's head branch using the PR number from step 2: `HEAD_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')`
@@ -61,19 +44,25 @@ description: Process a GitHub PR review comment
    - Understand the surrounding code and its purpose
    - Check if the feedback is valid and applicable
 
-6. **Implement the fix:**
+6. **Present summary and confirm approach:**
+   - Summarize the feedback: provide a concise synthesis of what the comment thread is about (e.g., "The reviewer requests that the error message include the file path for easier debugging")
+   - Describe the intended resolution: explain the planned changes (e.g., "I will modify the `handle_error` function in `src/lib.rs` to include `path` in the formatted error string")
+   - Provide the original comment URL for easy access to full context
+   - **Pause and ask the user** if they would like to proceed, discuss the approach, or redirect
+
+7. **Implement the fix:**
    - Make the requested changes following the comment's guidance
    - Ensure changes are consistent with the codebase style and conventions
 
-7. **Summarize:**
+8. **Summarize:**
    - Briefly describe what changes were made to address the comment
 
-8. **Confirm with user:**
+9. **Confirm with user:**
    - Show the changes made: run `git diff` to display all modifications
    - Ask if they are satisfied with the changes and would like to commit and push
    - If no, stop without committing (the changes remain in the working directory for manual review or further editing)
 
-9. **Commit and push:**
+10. **Commit and push:**
    - Stage the changed files
    - Commit with message format:
 
@@ -87,7 +76,7 @@ description: Process a GitHub PR review comment
 
    - Push to the remote branch
 
-10. **Reply to the comment:**
+11. **Reply to the comment:**
     - Get the commit URL:
       - `COMMIT_SHA=$(git rev-parse HEAD)`
       - `REPO=$(gh repo view --json owner,name --jq '.owner.login + "/" + .name')`
