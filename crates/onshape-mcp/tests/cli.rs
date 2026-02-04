@@ -5,6 +5,8 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 /// Find the binary path, handling both normal cargo test and nextest archive contexts.
 ///
@@ -68,10 +70,16 @@ fn mcp_initialization_returns_server_info() {
     writeln!(stdin, "{request_str}").expect("failed to write to stdin");
     stdin.flush().expect("failed to flush stdin");
 
-    // Read the response (one line of JSON)
-    let mut response_line = String::new();
-    reader
-        .read_line(&mut response_line)
+    // Read the response (one line of JSON) with timeout
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut response_line = String::new();
+        let res = reader.read_line(&mut response_line).map(|_| response_line);
+        let _ = tx.send(res);
+    });
+    let response_line = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("timeout waiting for response")
         .expect("failed to read response");
 
     // Parse and verify the response
@@ -114,7 +122,17 @@ fn mcp_initialization_returns_server_info() {
     // Close stdin to signal shutdown
     drop(stdin);
 
-    // Wait for the process to exit
-    let status = child.wait().expect("failed to wait for child");
+    // Wait for the process to exit with timeout
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("failed to wait for child") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("timed out waiting for MCP server to exit");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
     assert!(status.success(), "process exited with error: {status}");
 }
