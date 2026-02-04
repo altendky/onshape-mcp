@@ -63,18 +63,19 @@ description: Process a GitHub PR review comment
    - If no, stop without committing (the changes remain in the working directory for manual review or further editing)
 
 10. **Commit and push:**
-   - Stage the changed files
-   - Commit with message format:
 
-     ```text
-     review comment: <brief summary>
+    - Stage the changed files
+    - Commit with message format:
 
-     <description of changes made to address the feedback>
+      ```text
+      review comment: <brief summary>
 
-     <comment-url>
-     ```
+      <description of changes made to address the feedback>
 
-   - Push to the remote branch
+      <comment-url>
+      ```
+
+    - Push to the remote branch
 
 11. **Reply to the comment:**
     - Get the commit URL:
