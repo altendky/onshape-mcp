@@ -1,8 +1,12 @@
 # Static linking configuration for musl targets
 # This ensures Linux binaries are fully portable across distributions
 #
-# Note: +crt-static is already the default for musl targets, but we specify
-# it explicitly here to document the intent and guard against future changes.
+# CI builds use cargo-zigbuild, which uses Zig's bundled musl libc and handles
+# static linking automatically. The +crt-static flag below is redundant when
+# using Zig, but we keep it for two reasons:
+#   1. Documents the intent that musl builds should be statically linked
+#   2. Ensures correct behavior if someone builds without cargo-zigbuild
+#
 # We use explicit target triples instead of cfg(target_env = "musl") because
 # cfg-based matching can be unreliable when rust-toolchain.toml triggers a
 # toolchain switch during cargo execution.
