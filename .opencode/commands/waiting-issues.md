@@ -39,7 +39,7 @@ description: Review GitHub issues labeled 'waiting' to check if blocking conditi
 
 ## Output format
 
-```
+```markdown
 ## Waiting Issues Status
 
 ### Ready to Process
