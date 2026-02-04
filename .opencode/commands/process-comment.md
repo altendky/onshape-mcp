@@ -50,7 +50,7 @@ description: Process a GitHub PR review comment
    - Read the entire thread to understand the full context of the discussion
    - Pay special attention to the specifically linked comment—it may indicate:
      - The most recent or relevant feedback to address
-     - A specific decision or direction the user wants implemented
+     - A specific decision or direction the user wants to be implemented
      - A follow-up request after earlier discussion
    - If the thread contains back-and-forth discussion, identify the current consensus or latest request
    - Note the file path and line range from the root comment's `path`, `line`, and `start_line` fields
