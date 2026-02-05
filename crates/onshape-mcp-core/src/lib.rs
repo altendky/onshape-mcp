@@ -5,6 +5,7 @@
 
 pub mod tools;
 
+use chrono::{DateTime, Utc};
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,8 +29,8 @@ pub enum AuthStatus {
 pub struct AuthStatusResult {
     /// Current authentication status.
     pub status: AuthStatus,
-    /// ISO 8601 timestamp of the last authentication check, if any.
-    pub last_check: Option<String>,
+    /// Timestamp of the last authentication check, if any.
+    pub last_check: Option<DateTime<Utc>>,
     /// Human-readable message explaining the status.
     pub message: Option<String>,
 }
