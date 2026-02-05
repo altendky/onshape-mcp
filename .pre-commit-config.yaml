@@ -75,3 +75,10 @@ repos:
         language: system
         pass_filenames: false
         stages: [manual]
+
+      - id: sync-npm-versions
+        name: sync npm versions
+        entry: node scripts/sync-npm-versions.js
+        language: system
+        files: ^(crates/onshape-mcp/Cargo\.toml|npm/.*/package\.json)$
+        pass_filenames: false

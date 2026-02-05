@@ -1,0 +1,46 @@
+{
+  "name": "onshape-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Onshape CAD integration",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/altendky/onshape-mcp.git"
+  },
+  "homepage": "https://github.com/altendky/onshape-mcp",
+  "bugs": {
+    "url": "https://github.com/altendky/onshape-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "onshape",
+    "cad",
+    "modelcontextprotocol"
+  ],
+  "bin": {
+    "onshape-mcp": "bin.js"
+  },
+  "files": [
+    "bin.js"
+  ],
+  "scripts": {
+    "test": "node --test 'test/**/*.test.js'",
+    "test:coverage": "c8 --reporter=lcov --reporter=text node --test 'test/**/*.test.js'"
+  },
+  "dependencies": {
+    "shell-quote": "^1.8.2"
+  },
+  "devDependencies": {
+    "c8": "^10.1.3"
+  },
+  "optionalDependencies": {
+    "@onshape-mcp/linux-x64": "0.1.0",
+    "@onshape-mcp/linux-arm64": "0.1.0",
+    "@onshape-mcp/darwin-x64": "0.1.0",
+    "@onshape-mcp/darwin-arm64": "0.1.0",
+    "@onshape-mcp/win32-x64": "0.1.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

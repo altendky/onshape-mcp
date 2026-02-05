@@ -1,3 +1,9 @@
 /.opencode/*
 !/.opencode/commands/
 /target/
+
+# npm artifacts
+npm/*/bin/
+npm/*/node_modules/
+npm/*/coverage/
+npm/*/*.tgz

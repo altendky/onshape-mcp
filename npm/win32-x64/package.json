@@ -1,0 +1,16 @@
+{
+  "name": "@onshape-mcp/win32-x64",
+  "version": "0.1.0",
+  "description": "Windows x64 binary for onshape-mcp",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/altendky/onshape-mcp.git"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ]
+}

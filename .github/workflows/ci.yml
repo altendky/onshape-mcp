@@ -22,10 +22,16 @@ jobs:
     permissions:
       id-token: write
 
+  npm:
+    name: npm
+    uses: ./.github/workflows/reflow-npm.yml
+    permissions:
+      id-token: write
+
   all:
     name: all
     if: always()
-    needs: [pre-commit, rust, coverage]
+    needs: [pre-commit, rust, coverage, npm]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@release/v1

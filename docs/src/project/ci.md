@@ -65,7 +65,8 @@ Store credentials in repository secrets:
 | `.github/workflows/reflow-library.yml` | Reusable workflow that outputs matrix configuration |
 | `.github/workflows/reflow-pre-commit.yml` | Reusable workflow for pre-commit checks (5 platform jobs) |
 | `.github/workflows/reflow-rust.yml` | Reusable workflow for Rust lint, build, and test jobs |
-| `.github/workflows/reflow-coverage.yml` | Reusable workflow for coverage generation (5 platform jobs) |
+| `.github/workflows/reflow-coverage.yml` | Reusable workflow for Rust coverage generation (5 platform jobs) |
+| `.github/workflows/reflow-npm.yml` | Reusable workflow for npm checks and coverage (1 + 5 platform jobs) |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
 
 ## CI Architecture
@@ -86,8 +87,11 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    coverage:                                                 │
 │      uses: ./.github/workflows/reflow-coverage.yml          │
 │                                                              │
+│    npm:                                                      │
+│      uses: ./.github/workflows/reflow-npm.yml               │
+│                                                              │
 │    all:                                                      │
-│      needs: [pre-commit, rust, coverage]                    │
+│      needs: [pre-commit, rust, coverage, npm]               │
 │      uses: re-actors/alls-green                             │
 └─────────────────────────────────────────────────────────────┘
 
@@ -123,6 +127,15 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
+│            reflow-npm.yml (reusable workflow)                │
+├─────────────────────────────────────────────────────────────┤
+│  jobs:                                                       │
+│    check: 1 job (version sync, smoke tests)                 │
+│    library: uses reflow-library.yml                         │
+│    coverage: 5 platform jobs (c8 coverage)                  │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
 │           reflow-library.yml (reusable workflow)             │
 ├─────────────────────────────────────────────────────────────┤
 │  jobs:                                                       │
@@ -132,7 +145,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Note:** Each reusable workflow calls `reflow-library.yml` internally to get the matrix configuration. This results in the library job running 3 times per CI run (once per reusable workflow), but the overhead is minimal.
+**Note:** Each reusable workflow calls `reflow-library.yml` internally to get the matrix configuration. This results in the library job running 4 times per CI run (once per reusable workflow that needs platform matrices), but the overhead is minimal.
 
 ## Library Action
 
@@ -237,10 +250,11 @@ environments, verifying that statically-linked musl binaries work correctly on g
 | -------- | ---- |
 | Pre-commit | 5 (1 per platform) |
 | Rust | 38 (1 lint + 15 build + 21 test + 1 resolve-versions) |
-| Coverage | 5 (stable only × 5 platforms) |
-| Library | 3 (called by each reusable workflow) |
+| Coverage | 5 (Rust, stable only × 5 platforms) |
+| npm | 6 (1 check + 5 coverage) |
+| Library | 4 (called by each reusable workflow needing platform matrix) |
 | All | 1 |
-| **Total** | **52 jobs** |
+| **Total** | **59 jobs** |
 
 **Rust job breakdown:**
 
@@ -261,6 +275,7 @@ environments, verifying that statically-linked musl binaries work correctly on g
 | [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust toolchain installation |
 | [taiki-e/install-action](https://github.com/taiki-e/install-action) | Install cargo tools (cargo-deny, cargo-llvm-cov, cargo-nextest) |
 | [cargo-nextest](https://nexte.st/) | Next-generation test runner with archiving support |
+| [c8](https://github.com/bcoe/c8) | V8 native coverage for Node.js (npm wrapper) |
 | [codecov/codecov-action](https://github.com/codecov/codecov-action) | Upload coverage to Codecov |
 
 **GitHub branch protection:** Only the `all` job is required.
@@ -294,10 +309,21 @@ musl (Alpine) environments to verify portability.
 
 ### Coverage
 
+#### Rust Coverage
+
 | Check | Tool | Run On |
 | ------- | ------ | -------- |
 | Coverage | `cargo-llvm-cov` | Stable only, all 5 platforms |
-| Upload | `codecov/codecov-action` | With OIDC authentication |
+| Upload | `codecov/codecov-action` | With OIDC authentication, `rust` flag |
+
+#### npm Coverage
+
+| Check | Tool | Run On |
+| ------- | ------ | -------- |
+| Coverage | `c8` (V8 native coverage) | Node.js 22, all 5 platforms |
+| Upload | `codecov/codecov-action` | With OIDC authentication, `npm` flag |
+
+Both Rust and npm coverage use Codecov flags to separate the coverage data. The `codecov.yml` configuration defines components for each, enabling per-component coverage tracking in PR comments.
 
 ## PR Title Enforcement
 
