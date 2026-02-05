@@ -309,7 +309,11 @@ dependencies = [
 name = "onshape-mcp-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
