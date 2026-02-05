@@ -63,10 +63,15 @@ pub fn call_tool(
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EmptyInput {}
 
+#[allow(clippy::expect_used)] // Schema generation for EmptyInput should never fail
 fn tool_auth_status_def() -> Tool {
     let schema = schemars::schema_for!(EmptyInput);
-    let input_schema: Value = serde_json::to_value(schema).unwrap_or_default();
-    let input_schema = input_schema.as_object().cloned().unwrap_or_default();
+    let input_schema: Value =
+        serde_json::to_value(schema).expect("EmptyInput schema serialization should never fail");
+    let input_schema = input_schema
+        .as_object()
+        .cloned()
+        .expect("Schema should be a JSON object");
 
     Tool::new(
         "onshape_mcp_auth_status",
