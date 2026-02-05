@@ -14,6 +14,9 @@ categories = ["development-tools"]
 # Note: Using default features (base64, macros, server) for full type support.
 # This pulls in tokio as a transitive dep, but core doesn't perform any I/O.
 rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

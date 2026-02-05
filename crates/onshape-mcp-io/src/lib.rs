@@ -1,9 +1,18 @@
 //! I/O layer for the Onshape MCP server.
 //!
 //! This crate provides the async runtime integration and MCP transport handling.
-//! It delegates business logic to `onshape-mcp-core`.
+//! It delegates all tool logic to `onshape-mcp-core`.
 
-use rmcp::{ServerHandler, ServiceExt, model::ServerInfo, transport::stdio};
+use rmcp::{
+    ErrorData as McpError, ServerHandler, ServiceExt,
+    model::{
+        CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, ServerInfo,
+    },
+    service::{RequestContext, RoleServer},
+    transport::stdio,
+};
+
+use onshape_mcp_core::tools;
 
 /// The MCP server handler for Onshape integration.
 #[derive(Clone)]
@@ -24,6 +33,28 @@ impl OnshapeMcpServer {
 impl ServerHandler for OnshapeMcpServer {
     fn get_info(&self) -> ServerInfo {
         self.info.clone()
+    }
+
+    fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
+        // Core returns Vec<Tool> directly - no conversion needed
+        std::future::ready(Ok(ListToolsResult {
+            tools: tools::list_tools(),
+            next_cursor: None,
+            meta: None,
+        }))
+    }
+
+    fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
+        // Core returns Result<CallToolResult, ErrorData> directly - no conversion needed
+        std::future::ready(tools::call_tool(&request.name, request.arguments.as_ref()))
     }
 }
 

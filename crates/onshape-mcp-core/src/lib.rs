@@ -3,7 +3,48 @@
 //! This crate contains sans-IO business logic with no async runtime dependencies.
 //! All I/O operations are handled by the `onshape-mcp-io` crate.
 
+pub mod tools;
+
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// Authentication status for the Onshape API connection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthStatus {
+    /// Credentials are valid and working.
+    Valid,
+    /// Credentials are invalid (wrong key/secret).
+    Invalid,
+    /// Credentials have expired.
+    Expired,
+    /// No credentials have been configured.
+    NotConfigured,
+}
+
+/// Result of checking authentication status.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AuthStatusResult {
+    /// Current authentication status.
+    pub status: AuthStatus,
+    /// ISO 8601 timestamp of the last authentication check, if any.
+    pub last_check: Option<String>,
+    /// Human-readable message explaining the status.
+    pub message: Option<String>,
+}
+
+impl AuthStatusResult {
+    /// Returns a result indicating no credentials are configured.
+    #[must_use]
+    pub fn not_configured() -> Self {
+        Self {
+            status: AuthStatus::NotConfigured,
+            last_check: None,
+            message: Some("No credentials configured".into()),
+        }
+    }
+}
 
 /// The iconic Onshape regeneration success message.
 pub const CATCH_PHRASE: &str =
@@ -58,5 +99,22 @@ mod tests {
         let instructions = info.instructions.expect("instructions should be set");
         assert!(instructions.contains("Onshape MCP server"));
         assert!(instructions.contains(CATCH_PHRASE));
+    }
+
+    #[test]
+    fn auth_status_result_not_configured() {
+        let result = AuthStatusResult::not_configured();
+
+        assert_eq!(result.status, AuthStatus::NotConfigured);
+        assert!(result.last_check.is_none());
+        assert_eq!(result.message.as_deref(), Some("No credentials configured"));
+    }
+
+    #[test]
+    fn auth_status_serializes_to_snake_case() {
+        let result = AuthStatusResult::not_configured();
+        let json = serde_json::to_string(&result).expect("should serialize");
+
+        assert!(json.contains("\"status\":\"not_configured\""));
     }
 }
