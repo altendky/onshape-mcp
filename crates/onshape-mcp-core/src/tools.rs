@@ -32,10 +32,21 @@ pub fn list_tools() -> Vec<Tool> {
 /// Returns an error if the tool is not found or execution fails.
 pub fn call_tool(
     name: &str,
-    _arguments: Option<&Map<String, Value>>,
+    arguments: Option<&Map<String, Value>>,
 ) -> Result<CallToolResult, ErrorData> {
     match name {
-        "onshape_mcp_auth_status" => call_auth_status(),
+        "onshape_mcp_auth_status" => {
+            if let Some(args) = arguments
+                && !args.is_empty()
+            {
+                return Err(ErrorData::new(
+                    ErrorCode::INVALID_PARAMS,
+                    "onshape_mcp_auth_status expects no arguments",
+                    None,
+                ));
+            }
+            call_auth_status()
+        }
         _ => Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
             format!("Unknown tool: {name}"),
@@ -110,6 +121,14 @@ mod tests {
         let err = call_tool("unknown_tool", None).expect_err("should fail");
         assert_eq!(err.code, ErrorCode::METHOD_NOT_FOUND);
         assert!(err.message.contains("unknown_tool"));
+    }
+
+    #[test]
+    fn call_tool_auth_status_rejects_unexpected_arguments() {
+        let mut args = Map::new();
+        args.insert("unexpected".to_string(), Value::String("value".to_string()));
+        let err = call_tool("onshape_mcp_auth_status", Some(&args)).expect_err("should fail");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
     #[test]
