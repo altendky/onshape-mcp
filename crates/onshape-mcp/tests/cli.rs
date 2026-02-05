@@ -73,19 +73,44 @@ impl McpTestClient {
         writeln!(self.stdin, "{request_str}").expect("failed to write request");
         self.stdin.flush().expect("failed to flush stdin");
 
-        let response_line = self
-            .response_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("timeout waiting for response")
-            .expect("failed to read response");
+        // Loop until we find a response with matching id, handling notifications
+        // and out-of-order responses gracefully
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "timeout waiting for response with id {id}"
+            );
 
-        let response: serde_json::Value =
-            serde_json::from_str(&response_line).expect("failed to parse JSON response");
+            let response_line = match self.response_rx.recv_timeout(remaining) {
+                Ok(Ok(line)) => line,
+                Ok(Err(e)) => panic!("failed to read response: {e}"),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("timeout waiting for response with id {id}");
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    panic!("reader thread disconnected while waiting for response");
+                }
+            };
 
-        assert_eq!(response["jsonrpc"], "2.0");
-        assert_eq!(response["id"], id);
+            // Continue on parse errors (malformed messages)
+            let response: serde_json::Value = match serde_json::from_str(&response_line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
 
-        response
+            // Check if this is a response with matching id
+            // Messages without an "id" field are notifications - skip them
+            // Messages with non-matching id are responses to other requests - skip them
+            if let Some(response_id) = response.get("id")
+                && response_id == id
+            {
+                assert_eq!(response["jsonrpc"], "2.0");
+                return response;
+            }
+            // Not our response (notification or different id), keep waiting
+        }
     }
 
     fn send_notification(&mut self, method: &str) {
