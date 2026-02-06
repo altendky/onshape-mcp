@@ -19,11 +19,17 @@ onshape-mcp-io = { path = "crates/onshape-mcp-io", version = "0.1.0" }
 
 # External dependencies
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+figment = { version = "0.10", features = ["toml", "env"] }
 rmcp = "0.14"
 schemars = "1"
+secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+toml = "0.8"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

@@ -11,8 +11,12 @@ keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
 categories = ["development-tools"]
 
 [dependencies]
+dirs.workspace = true
+figment.workspace = true
 onshape-mcp-core.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-io"] }
+secrecy.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 
 [lints]

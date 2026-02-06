@@ -16,8 +16,13 @@ chrono.workspace = true
 # This pulls in tokio as a transitive dep, but core doesn't perform any I/O.
 rmcp.workspace = true
 schemars.workspace = true
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
 
 [lints]
 workspace = true

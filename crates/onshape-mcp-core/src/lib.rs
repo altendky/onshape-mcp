@@ -3,6 +3,7 @@
 //! This crate contains sans-IO business logic with no async runtime dependencies.
 //! All I/O operations are handled by the `onshape-mcp-io` crate.
 
+pub mod config;
 pub mod tools;
 
 use chrono::{DateTime, Utc};
@@ -22,6 +23,8 @@ pub enum AuthStatus {
     Expired,
     /// No credentials have been configured.
     NotConfigured,
+    /// Credentials are configured but have not been validated against the API.
+    NotValidated,
 }
 
 /// Result of checking authentication status.
@@ -43,6 +46,30 @@ impl AuthStatusResult {
             status: AuthStatus::NotConfigured,
             last_check: None,
             message: Some("No credentials configured".into()),
+        }
+    }
+
+    /// Returns a result indicating credentials are configured but not yet validated.
+    #[must_use]
+    pub fn not_validated() -> Self {
+        Self {
+            status: AuthStatus::NotValidated,
+            last_check: None,
+            message: Some(
+                "Credentials configured but not yet validated against Onshape API".into(),
+            ),
+        }
+    }
+
+    /// Returns a result indicating only partial credentials are configured.
+    #[must_use]
+    pub fn partial_credentials(missing_field: &str) -> Self {
+        Self {
+            status: AuthStatus::NotConfigured,
+            last_check: None,
+            message: Some(format!(
+                "Incomplete credentials: {missing_field} is not configured"
+            )),
         }
     }
 }
@@ -117,5 +144,40 @@ mod tests {
         let json = serde_json::to_string(&result).expect("should serialize");
 
         assert!(json.contains("\"status\":\"not_configured\""));
+    }
+
+    #[test]
+    fn auth_status_not_validated() {
+        let result = AuthStatusResult::not_validated();
+
+        assert_eq!(result.status, AuthStatus::NotValidated);
+        assert!(result.last_check.is_none());
+        assert!(
+            result
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("not yet validated"))
+        );
+    }
+
+    #[test]
+    fn auth_status_not_validated_serializes() {
+        let result = AuthStatusResult::not_validated();
+        let json = serde_json::to_string(&result).expect("should serialize");
+
+        assert!(json.contains("\"status\":\"not_validated\""));
+    }
+
+    #[test]
+    fn auth_status_partial_credentials() {
+        let result = AuthStatusResult::partial_credentials("secret_key");
+
+        assert_eq!(result.status, AuthStatus::NotConfigured);
+        assert!(
+            result
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("secret_key"))
+        );
     }
 }
