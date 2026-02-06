@@ -606,20 +606,25 @@ fn auth_method_basic_via_config_file() {
 #[test]
 fn server_rejects_invalid_auth_method_via_cli_flag() {
     let binary_path = find_binary();
-    let output = Command::new(&binary_path)
-        .args([
-            "--access-key",
-            "ak",
-            "--secret-key",
-            "sk",
-            "--auth-method",
-            "nonsense",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("should run binary");
+    let mut cmd = Command::new(&binary_path);
+    cmd.args([
+        "--access-key",
+        "ak",
+        "--secret-key",
+        "sk",
+        "--auth-method",
+        "nonsense",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+    // Clear all ONSHAPE_MCP_ env vars to isolate the test
+    for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with(ENV_PREFIX)) {
+        cmd.env_remove(&key);
+    }
+
+    let output = cmd.output().expect("should run binary");
 
     assert!(
         !output.status.success(),
@@ -685,13 +690,18 @@ fn server_rejects_invalid_auth_method_via_config_file() {
 
     let config_arg = format!("--config={}", config_path.display());
     let binary_path = find_binary();
-    let output = Command::new(&binary_path)
-        .arg(&config_arg)
+    let mut cmd = Command::new(&binary_path);
+    cmd.arg(&config_arg)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("should run binary");
+        .stderr(Stdio::piped());
+
+    // Clear all ONSHAPE_MCP_ env vars to isolate the test
+    for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with(ENV_PREFIX)) {
+        cmd.env_remove(&key);
+    }
+
+    let output = cmd.output().expect("should run binary");
 
     assert!(
         !output.status.success(),
