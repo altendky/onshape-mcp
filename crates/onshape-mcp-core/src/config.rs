@@ -170,7 +170,9 @@ fn parse_duration_str(s: &str) -> Result<Duration, String> {
         .parse()
         .map_err(|_| format!("invalid duration \"{s}\": numeric part is not a valid integer"))?;
 
-    Ok(Duration::from_secs(num * multiplier))
+    num.checked_mul(multiplier)
+        .map(Duration::from_secs)
+        .ok_or_else(|| format!("invalid duration \"{s}\": value overflows"))
 }
 
 // ============================================================================
@@ -283,6 +285,12 @@ mod tests {
     #[test]
     fn parse_duration_not_a_number_fails() {
         assert!(parse_duration_str("abcm").is_err());
+    }
+
+    #[test]
+    fn parse_duration_overflow_fails() {
+        // A value that parses as a valid u64 but overflows when multiplied by 3600
+        assert!(parse_duration_str("5124095576030432h").is_err());
     }
 
     #[test]
