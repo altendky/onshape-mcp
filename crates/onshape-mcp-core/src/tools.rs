@@ -130,6 +130,14 @@ mod tests {
         }
     }
 
+    fn partial_creds_missing_access() -> AuthConfig {
+        AuthConfig {
+            access_key: None,
+            secret_key: Some(SecretString::from("sk")),
+            ..AuthConfig::default()
+        }
+    }
+
     #[test]
     fn list_tools_includes_auth_status() {
         let tools = list_tools();
@@ -175,6 +183,23 @@ mod tests {
             value["message"]
                 .as_str()
                 .is_some_and(|m| m.contains("secret_key"))
+        );
+    }
+
+    #[test]
+    fn call_tool_auth_status_returns_partial_with_missing_access_key() {
+        let config = partial_creds_missing_access();
+        let result = call_tool("onshape_mcp_auth_status", None, &config).expect("should succeed");
+        assert_eq!(result.is_error, Some(false));
+
+        let content = &result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_configured");
+        assert!(
+            value["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("access_key"))
         );
     }
 
