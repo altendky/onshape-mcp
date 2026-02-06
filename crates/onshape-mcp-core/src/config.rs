@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use onshape_client_core::auth::AuthMethod;
 use secrecy::SecretString;
 use serde::Deserialize;
 
@@ -23,7 +24,7 @@ pub const MIN_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Authentication configuration.
 ///
-/// Contains optional credentials and check interval settings.
+/// Contains optional credentials, auth method, and check interval settings.
 /// Credentials are wrapped in [`SecretString`] to prevent accidental logging.
 #[derive(Deserialize)]
 pub struct AuthConfig {
@@ -33,6 +34,9 @@ pub struct AuthConfig {
     /// Onshape API secret key.
     #[serde(default)]
     pub secret_key: Option<SecretString>,
+    /// Authentication method to use for Onshape API requests.
+    #[serde(default = "default_auth_method")]
+    pub method: AuthMethod,
     /// Interval for periodic credential validation (default: 5 minutes).
     #[serde(
         default = "default_check_interval",
@@ -107,6 +111,7 @@ impl Default for AuthConfig {
         Self {
             access_key: None,
             secret_key: None,
+            method: default_auth_method(),
             check_interval: DEFAULT_CHECK_INTERVAL,
         }
     }
@@ -115,6 +120,11 @@ impl Default for AuthConfig {
 // ============================================================================
 // Serde Helpers
 // ============================================================================
+
+/// Default auth method for serde deserialization.
+const fn default_auth_method() -> AuthMethod {
+    AuthMethod::Basic
+}
 
 /// Default check interval for serde deserialization.
 const fn default_check_interval() -> Duration {
@@ -212,7 +222,7 @@ mod tests {
         let config = AuthConfig {
             access_key: Some(SecretString::from("ak")),
             secret_key: Some(SecretString::from("sk")),
-            check_interval: DEFAULT_CHECK_INTERVAL,
+            ..AuthConfig::default()
         };
         assert_eq!(config.credential_status(), CredentialStatus::BothPresent);
     }
@@ -228,7 +238,7 @@ mod tests {
         let config = AuthConfig {
             access_key: Some(SecretString::from("ak")),
             secret_key: None,
-            check_interval: DEFAULT_CHECK_INTERVAL,
+            ..AuthConfig::default()
         };
         assert_eq!(
             config.credential_status(),
@@ -243,7 +253,7 @@ mod tests {
         let config = AuthConfig {
             access_key: None,
             secret_key: Some(SecretString::from("sk")),
-            check_interval: DEFAULT_CHECK_INTERVAL,
+            ..AuthConfig::default()
         };
         assert_eq!(
             config.credential_status(),
@@ -258,6 +268,7 @@ mod tests {
         let config = AuthConfig::default();
         assert!(config.access_key.is_none());
         assert!(config.secret_key.is_none());
+        assert_eq!(config.method, AuthMethod::Basic);
         assert_eq!(config.check_interval, Duration::from_secs(300));
     }
 
@@ -373,7 +384,28 @@ mod tests {
         let config: AuthConfig = toml::from_str(toml_str).expect("should deserialize");
         assert!(config.access_key.is_none());
         assert!(config.secret_key.is_none());
+        assert_eq!(config.method, AuthMethod::Basic);
         assert_eq!(config.check_interval, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn deserialize_auth_config_method_basic() {
+        let toml_str = r#"
+            method = "basic"
+        "#;
+
+        let config: AuthConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.method, AuthMethod::Basic);
+    }
+
+    #[test]
+    fn deserialize_auth_config_invalid_method_fails() {
+        let toml_str = r#"
+            method = "unknown_method"
+        "#;
+
+        let result: Result<AuthConfig, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
     }
 
     #[test]

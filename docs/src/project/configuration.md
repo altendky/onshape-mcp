@@ -42,6 +42,7 @@ Example config file:
 [auth]
 access_key = "..."
 secret_key = "..."
+method = "basic"
 check_interval = "5m"
 
 [mode]
@@ -56,11 +57,12 @@ All environment variables use the `ONSHAPE_MCP_` prefix.
 
 ## All Settings Reference
 
-| Setting | Type | Default | Env Var | Config Key | Description |
-| --------- | ------ | --------- | --------- | ------------ | ------------- |
-| Access Key | `string` | — | `ONSHAPE_MCP_ACCESS_KEY` | `auth.access_key` | Onshape API access key |
-| Secret Key | `string` | — | `ONSHAPE_MCP_SECRET_KEY` | `auth.secret_key` | Onshape API secret key |
-| Max Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_MAX_MODE` | `mode.max` | Upper limit for permission mode |
-| Initial Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_INITIAL_MODE` | `mode.initial` | Starting permission mode (must be ≤ max_mode) |
-| Allow Mode Escalation | `bool` | `false` | `ONSHAPE_MCP_ALLOW_ESCALATION` | `mode.allow_escalation` | Can AI change mode at runtime? |
-| Auth Check Interval | `duration` | `5m` | `ONSHAPE_MCP_AUTH_CHECK_INTERVAL` | `auth.check_interval` | Periodic credential validation interval (minimum: 15s) |
+| Setting | Type | Default | Env Var | Config Key | CLI Flag | Description |
+| --------- | ------ | --------- | --------- | ------------ | ---------- | ------------- |
+| Access Key | `string` | — | `ONSHAPE_MCP_AUTH__ACCESS_KEY` | `auth.access_key` | `--access-key` | Onshape API access key |
+| Secret Key | `string` | — | `ONSHAPE_MCP_AUTH__SECRET_KEY` | `auth.secret_key` | `--secret-key` | Onshape API secret key |
+| Auth Method | `string` | `basic` | `ONSHAPE_MCP_AUTH__METHOD` | `auth.method` | `--auth-method` | Authentication method (`basic`; HMAC planned) |
+| Auth Check Interval | `duration` | `5m` | `ONSHAPE_MCP_AUTH__CHECK_INTERVAL` | `auth.check_interval` | — | Periodic credential validation interval (minimum: 15s) |
+| Max Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_MAX_MODE` | `mode.max` | — | Upper limit for permission mode |
+| Initial Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_INITIAL_MODE` | `mode.initial` | — | Starting permission mode (must be ≤ max_mode) |
+| Allow Mode Escalation | `bool` | `false` | `ONSHAPE_MCP_ALLOW_ESCALATION` | `mode.allow_escalation` | — | Can AI change mode at runtime? |

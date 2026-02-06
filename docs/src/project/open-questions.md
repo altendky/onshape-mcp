@@ -25,6 +25,7 @@ Items to address later in the project:
 
 ### Authentication Enhancements
 
+- [ ] HMAC-SHA256 request signing — Per-request signatures with nonce and timestamp for replay protection; secret key never sent over the wire (see [Authentication](authentication.md) and [Onshape API key docs](https://onshape-public.github.io/docs/auth/apikeys/#request-signature))
 - [ ] OAuth 2.0 authentication — Multi-user apps, team access (see [Authentication](authentication.md))
 
 ### Features

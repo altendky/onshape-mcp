@@ -14,10 +14,12 @@ categories = ["development-tools", "api-bindings"]
 
 [workspace.dependencies]
 # Internal crates
+onshape-client-core = { path = "crates/onshape-client-core", version = "0.1.0" }
 onshape-mcp-core = { path = "crates/onshape-mcp-core", version = "0.1.0" }
 onshape-mcp-io = { path = "crates/onshape-mcp-io", version = "0.1.0" }
 
 # External dependencies
+base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
