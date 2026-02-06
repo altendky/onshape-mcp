@@ -62,12 +62,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config =
         onshape_mcp_io::config::load_config_with_overrides(args.config.as_deref(), cli_overrides)
             .map_err(|e| {
-            if args.auth_method.is_some() {
-                clap::Error::raw(
-                    clap::error::ErrorKind::InvalidValue,
-                    format!("invalid value for '--auth-method': {e}\n"),
-                )
-                .exit();
+            if args.auth_method.is_some()
+                && let onshape_mcp_io::config::ConfigLoadError::Figment(ref figment_err) = e
+            {
+                let auth_method_path = &["auth", "method"];
+                let is_auth_method_error = figment_err.clone().into_iter().any(|err| {
+                    err.path.len() >= auth_method_path.len()
+                        && err.path[..auth_method_path.len()]
+                            .iter()
+                            .zip(auth_method_path)
+                            .all(|(a, b)| a == b)
+                });
+                if is_auth_method_error {
+                    clap::Error::raw(
+                        clap::error::ErrorKind::InvalidValue,
+                        format!("invalid value for '--auth-method': {e}\n"),
+                    )
+                    .exit();
+                }
             }
             e
         })?;
