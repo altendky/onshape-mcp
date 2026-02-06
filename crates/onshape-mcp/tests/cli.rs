@@ -600,6 +600,116 @@ fn auth_method_basic_via_config_file() {
 }
 
 // ============================================================================
+// Invalid Auth Method Tests
+// ============================================================================
+
+#[test]
+fn server_rejects_invalid_auth_method_via_cli_flag() {
+    let binary_path = find_binary();
+    let output = Command::new(&binary_path)
+        .args([
+            "--access-key",
+            "ak",
+            "--secret-key",
+            "sk",
+            "--auth-method",
+            "nonsense",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("should run binary");
+
+    assert!(
+        !output.status.success(),
+        "server should reject invalid auth method"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown variant")
+            || stderr.contains("nonsense")
+            || stderr.contains("auth")
+            || stderr.contains("method"),
+        "error should mention the invalid auth method, got: {stderr}"
+    );
+}
+
+#[test]
+fn server_rejects_invalid_auth_method_via_env_var() {
+    let binary_path = find_binary();
+    let mut cmd = Command::new(&binary_path);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // Clear all ONSHAPE_MCP_ env vars to isolate the test
+    for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with(ENV_PREFIX)) {
+        cmd.env_remove(&key);
+    }
+    cmd.env("ONSHAPE_MCP_AUTH__ACCESS_KEY", "ak");
+    cmd.env("ONSHAPE_MCP_AUTH__SECRET_KEY", "sk");
+    cmd.env("ONSHAPE_MCP_AUTH__METHOD", "nonsense");
+
+    let output = cmd.output().expect("should run binary");
+
+    assert!(
+        !output.status.success(),
+        "server should reject invalid auth method from env var"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown variant")
+            || stderr.contains("nonsense")
+            || stderr.contains("auth")
+            || stderr.contains("method"),
+        "error should mention the invalid auth method, got: {stderr}"
+    );
+}
+
+#[test]
+fn server_rejects_invalid_auth_method_via_config_file() {
+    let dir = tempfile::tempdir().expect("should create temp dir");
+    let config_path = dir.path().join("config.toml");
+
+    std::fs::write(
+        &config_path,
+        "[auth]\naccess_key = \"file-ak\"\nsecret_key = \"file-sk\"\nmethod = \"nonsense\"\n",
+    )
+    .expect("should write config file");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600))
+            .expect("should set permissions");
+    }
+
+    let config_arg = format!("--config={}", config_path.display());
+    let binary_path = find_binary();
+    let output = Command::new(&binary_path)
+        .arg(&config_arg)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("should run binary");
+
+    assert!(
+        !output.status.success(),
+        "server should reject invalid auth method from config file"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown variant")
+            || stderr.contains("nonsense")
+            || stderr.contains("auth")
+            || stderr.contains("method"),
+        "error should mention the invalid auth method, got: {stderr}"
+    );
+}
+
+// ============================================================================
 // Config Override Tests
 // ============================================================================
 
