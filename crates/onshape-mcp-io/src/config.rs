@@ -75,30 +75,29 @@ impl From<figment::Error> for ConfigLoadError {
 ///
 /// Returns `ConfigLoadError::InsecurePermissions` if the file permissions are too open.
 /// Returns `ConfigLoadError::MetadataError` if file metadata cannot be read.
+#[cfg(unix)]
 pub fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::PermissionsExt;
 
-        let metadata =
-            std::fs::metadata(path).map_err(|source| ConfigLoadError::MetadataError {
-                path: path.display().to_string(),
-                source,
-            })?;
+    let metadata = std::fs::metadata(path).map_err(|source| ConfigLoadError::MetadataError {
+        path: path.display().to_string(),
+        source,
+    })?;
 
-        let mode = metadata.permissions().mode() & 0o777;
-        if mode != 0o600 {
-            return Err(ConfigLoadError::InsecurePermissions {
-                path: path.display().to_string(),
-                mode,
-            });
-        }
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode != 0o600 {
+        return Err(ConfigLoadError::InsecurePermissions {
+            path: path.display().to_string(),
+            mode,
+        });
     }
 
-    #[cfg(not(unix))]
-    {
-        let _ = path; // suppress unused warning
-    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub const fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
+    let _ = path; // suppress unused warning
 
     Ok(())
 }
