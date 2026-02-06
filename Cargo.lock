@@ -588,6 +588,7 @@ dependencies = [
  "secrecy",
  "thiserror",
  "tokio",
+ "toml",
 ]
 
 [[package]]

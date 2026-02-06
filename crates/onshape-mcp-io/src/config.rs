@@ -216,8 +216,22 @@ pub fn load_config_with_overrides(
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use std::path::Path;
+    use std::time::Duration;
+
+    use onshape_mcp_core::config::AppConfig;
 
     use super::*;
+
+    #[test]
+    fn defaults_toml_deserializes_into_app_config() {
+        let config: AppConfig =
+            toml::from_str(DEFAULTS_TOML).expect("DEFAULTS_TOML should deserialize into AppConfig");
+        assert_eq!(
+            config.auth.check_interval,
+            Duration::from_secs(300),
+            "DEFAULTS_TOML should set check_interval to 300s"
+        );
+    }
 
     #[test]
     fn explicit_config_path_missing_returns_error() {
