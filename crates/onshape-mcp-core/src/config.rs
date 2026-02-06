@@ -11,6 +11,12 @@ use serde::Deserialize;
 /// Default interval for periodic credential validation checks.
 pub const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 
+/// Minimum allowable interval for periodic credential validation checks.
+///
+/// Values below this threshold are clamped up during config loading
+/// to prevent overly aggressive polling.
+pub const MIN_CHECK_INTERVAL: Duration = Duration::from_secs(15);
+
 // ============================================================================
 // Configuration Types
 // ============================================================================
@@ -77,6 +83,21 @@ impl AuthConfig {
             (None, Some(_)) => CredentialStatus::Partial {
                 missing: "access_key",
             },
+        }
+    }
+
+    /// Clamps `check_interval` to at least [`MIN_CHECK_INTERVAL`].
+    ///
+    /// Returns `Some(original)` if the value was below the minimum and was
+    /// clamped up, or `None` if no change was needed. Callers should use
+    /// the returned original value to emit a warning.
+    pub fn clamp_check_interval(&mut self) -> Option<Duration> {
+        if self.check_interval < MIN_CHECK_INTERVAL {
+            let original = self.check_interval;
+            self.check_interval = MIN_CHECK_INTERVAL;
+            Some(original)
+        } else {
+            None
         }
     }
 }
@@ -367,5 +388,49 @@ mod tests {
             config.auth.credential_status(),
             CredentialStatus::NonePresent
         );
+    }
+
+    #[test]
+    fn clamp_check_interval_below_minimum() {
+        let mut config = AuthConfig {
+            check_interval: Duration::from_secs(0),
+            ..AuthConfig::default()
+        };
+        let original = config.clamp_check_interval();
+        assert_eq!(original, Some(Duration::from_secs(0)));
+        assert_eq!(config.check_interval, MIN_CHECK_INTERVAL);
+    }
+
+    #[test]
+    fn clamp_check_interval_just_below_minimum() {
+        let mut config = AuthConfig {
+            check_interval: Duration::from_secs(14),
+            ..AuthConfig::default()
+        };
+        let original = config.clamp_check_interval();
+        assert_eq!(original, Some(Duration::from_secs(14)));
+        assert_eq!(config.check_interval, MIN_CHECK_INTERVAL);
+    }
+
+    #[test]
+    fn clamp_check_interval_at_minimum_unchanged() {
+        let mut config = AuthConfig {
+            check_interval: MIN_CHECK_INTERVAL,
+            ..AuthConfig::default()
+        };
+        let original = config.clamp_check_interval();
+        assert_eq!(original, None);
+        assert_eq!(config.check_interval, MIN_CHECK_INTERVAL);
+    }
+
+    #[test]
+    fn clamp_check_interval_above_minimum_unchanged() {
+        let mut config = AuthConfig {
+            check_interval: Duration::from_secs(300),
+            ..AuthConfig::default()
+        };
+        let original = config.clamp_check_interval();
+        assert_eq!(original, None);
+        assert_eq!(config.check_interval, Duration::from_secs(300));
     }
 }

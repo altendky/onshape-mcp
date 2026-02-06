@@ -586,6 +586,7 @@ dependencies = [
  "onshape-mcp-core",
  "rmcp",
  "secrecy",
+ "tempfile",
  "thiserror",
  "tokio",
  "toml",

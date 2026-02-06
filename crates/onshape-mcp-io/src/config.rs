@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
-use onshape_mcp_core::config::AppConfig;
+use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
 
 /// The environment variable prefix used for all configuration.
 ///
@@ -180,7 +180,14 @@ fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLo
 /// if configuration parsing fails.
 pub fn load_config(config_path_override: Option<&Path>) -> Result<AppConfig, ConfigLoadError> {
     let figment = base_figment(config_path_override)?;
-    let config: AppConfig = figment.extract()?;
+    let mut config: AppConfig = figment.extract()?;
+    if let Some(original) = config.auth.clamp_check_interval() {
+        // TODO: replace eprintln! with tracing::warn! once tracing is available
+        // See: https://github.com/altendky/onshape-mcp/issues/73
+        eprintln!(
+            "Warning: auth.check_interval ({original:?}) is below the minimum of {MIN_CHECK_INTERVAL:?}, using {MIN_CHECK_INTERVAL:?}",
+        );
+    }
     Ok(config)
 }
 
@@ -208,7 +215,14 @@ pub fn load_config_with_overrides(
         figment = figment.merge(Serialized::defaults(cli_overrides));
     }
 
-    let config: AppConfig = figment.extract()?;
+    let mut config: AppConfig = figment.extract()?;
+    if let Some(original) = config.auth.clamp_check_interval() {
+        // TODO: replace eprintln! with tracing::warn! once tracing is available
+        // See: https://github.com/altendky/onshape-mcp/issues/73
+        eprintln!(
+            "Warning: auth.check_interval ({original:?}) is below the minimum of {MIN_CHECK_INTERVAL:?}, using {MIN_CHECK_INTERVAL:?}",
+        );
+    }
     Ok(config)
 }
 
@@ -218,7 +232,7 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
 
-    use onshape_mcp_core::config::AppConfig;
+    use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
 
     use super::*;
 
@@ -257,5 +271,37 @@ mod tests {
         if let Err(err) = load_config(None) {
             panic!("loading config with no explicit path should succeed, got: {err:?}");
         }
+    }
+
+    #[test]
+    fn load_config_clamps_below_minimum_check_interval() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut file = NamedTempFile::new().expect("should create temp file");
+
+        // Set permissions before writing content (Unix only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(file.path(), perms)
+                .expect("should set permissions on temp file");
+        }
+
+        write!(
+            file,
+            r"
+            [auth]
+            check_interval = 5
+            "
+        )
+        .expect("should write config");
+
+        let config = load_config(Some(file.path())).expect("should load config");
+        assert_eq!(
+            config.auth.check_interval, MIN_CHECK_INTERVAL,
+            "check_interval of 5s should be clamped to minimum of {MIN_CHECK_INTERVAL:?}"
+        );
     }
 }
