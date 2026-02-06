@@ -33,6 +33,13 @@ pub fn default_config_path() -> Option<PathBuf> {
 /// Errors that can occur during configuration loading.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigLoadError {
+    /// Explicitly specified config file was not found.
+    #[error("Config file not found: {path}")]
+    ConfigFileNotFound {
+        /// Path to the missing config file.
+        path: String,
+    },
+
     /// Config file has permissions that are too open.
     #[error(
         "Config file {path} has insecure permissions (mode {mode:04o}). \
@@ -120,17 +127,23 @@ check_interval = 300
 
 /// Builds the base figment with defaults, optional config file, and env vars.
 fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLoadError> {
-    let config_path = config_path_override
-        .map(Path::to_path_buf)
-        .or_else(default_config_path);
-
     // Start with hardcoded defaults
     let mut figment = Figment::from(Toml::string(DEFAULTS_TOML));
 
-    // Layer in config file if it exists
-    if let Some(ref path) = config_path
+    // Layer in config file
+    if let Some(path) = config_path_override {
+        // Explicit override: file MUST exist
+        if !path.exists() {
+            return Err(ConfigLoadError::ConfigFileNotFound {
+                path: path.display().to_string(),
+            });
+        }
+        check_file_permissions(path)?;
+        figment = figment.merge(Toml::file(path));
+    } else if let Some(ref path) = default_config_path()
         && path.exists()
     {
+        // Default path: silently skip if not present
         check_file_permissions(path)?;
         figment = figment.merge(Toml::file(path));
     }
@@ -190,4 +203,38 @@ pub fn load_config_with_overrides(
 
     let config: AppConfig = figment.extract()?;
     Ok(config)
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn explicit_config_path_missing_returns_error() {
+        let path = Path::new("/tmp/onshape-mcp-nonexistent-config-8f3a2b.toml");
+        assert!(!path.exists(), "test precondition: file must not exist");
+
+        match load_config(Some(path)) {
+            Err(ConfigLoadError::ConfigFileNotFound { path: p }) => {
+                assert!(
+                    p.contains("onshape-mcp-nonexistent-config"),
+                    "error path should contain the file name, got: {p}",
+                );
+            }
+            Err(other) => panic!("expected ConfigFileNotFound, got: {other:?}"),
+            Ok(_) => panic!("expected error for nonexistent explicit config path"),
+        }
+    }
+
+    #[test]
+    fn no_config_path_uses_defaults_without_error() {
+        // When no explicit path is provided and the default config file
+        // doesn't exist, loading should succeed with defaults.
+        if let Err(err) = load_config(None) {
+            panic!("loading config with no explicit path should succeed, got: {err:?}");
+        }
+    }
 }
