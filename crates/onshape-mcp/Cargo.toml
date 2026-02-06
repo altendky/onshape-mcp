@@ -18,7 +18,6 @@ onshape-mcp-io.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-onshape-mcp-io.workspace = true
 secrecy.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
