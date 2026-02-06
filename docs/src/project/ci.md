@@ -69,6 +69,18 @@ Store credentials in repository secrets:
 | `.github/workflows/reflow-npm.yml` | Reusable workflow for npm checks and coverage (1 + 5 platform jobs) |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
 
+## Concurrency
+
+The top-level `ci.yml` workflow uses a concurrency group to cancel redundant PR runs. When a new commit is pushed to a PR, any in-progress CI run for that same PR is automatically cancelled.
+
+| Event | Group key | Behavior |
+| ----- | --------- | -------- |
+| `pull_request` | `workflow_ref` + PR number | New push cancels previous run |
+| `push` (main) | `run_id` (unique) | Runs are never cancelled |
+| `merge_group` | `run_id` (unique) | Runs are never cancelled |
+
+The concurrency group is only set on `ci.yml`. Reusable workflows (`reflow-*.yml`) inherit cancellation from the caller — when `ci.yml` is cancelled, all its called workflows are cancelled along with it.
+
 ## CI Architecture
 
 The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Each reusable workflow appears as a collapsible group containing its matrix jobs.
