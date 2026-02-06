@@ -36,8 +36,8 @@ pub enum ConfigLoadError {
     /// Config file has permissions that are too open.
     #[error(
         "Config file {path} has insecure permissions (mode {mode:04o}). \
-         Expected 0600 (owner read/write only). \
-         Fix with: chmod 600 {path}"
+         Group and other permissions must be unset (no access for non-owner). \
+         Fix with: chmod go= {path}"
     )]
     InsecurePermissions {
         /// Path to the config file.
@@ -68,7 +68,8 @@ impl From<figment::Error> for ConfigLoadError {
 
 /// Checks that a config file has secure permissions (Unix only).
 ///
-/// On Unix, the file must have mode `0600` (owner read/write only).
+/// On Unix, the file must not grant any group or other permissions
+/// (i.e., `mode & 0o077 == 0`). Owner permissions may be any combination.
 /// On other platforms, this is a no-op that always succeeds.
 ///
 /// # Errors
@@ -88,7 +89,7 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
             })?;
 
         let mode = metadata.permissions().mode() & 0o777;
-        if mode != 0o600 {
+        if mode & 0o077 != 0 {
             return Err(ConfigLoadError::InsecurePermissions {
                 path: path.display().to_string(),
                 mode,
