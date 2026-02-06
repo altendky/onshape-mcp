@@ -7,6 +7,10 @@ on:
     branches: ["**"]
   merge_group:
 
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   pre-commit:
     name: Pre-commit
