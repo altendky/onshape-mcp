@@ -9,6 +9,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use onshape_mcp_io::config::ENV_PREFIX;
+
 /// Helper for MCP protocol communication in tests.
 struct McpTestClient {
     child: Child,
@@ -35,11 +37,11 @@ impl McpTestClient {
         let mut cmd = Command::new(&binary_path);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            // Clear all ONSHAPE_MCP_ env vars to isolate tests
-            .env_remove("ONSHAPE_MCP_AUTH__ACCESS_KEY")
-            .env_remove("ONSHAPE_MCP_AUTH__SECRET_KEY")
-            .env_remove("ONSHAPE_MCP_AUTH__CHECK_INTERVAL");
+            .stderr(Stdio::inherit());
+        // Clear all ONSHAPE_MCP_ env vars to isolate tests
+        for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with(ENV_PREFIX)) {
+            cmd.env_remove(&key);
+        }
         for (key, value) in env {
             cmd.env(key, value);
         }

@@ -11,6 +11,13 @@ use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
 use onshape_mcp_core::config::AppConfig;
 
+/// The environment variable prefix used for all configuration.
+///
+/// Environment variables matching `ONSHAPE_MCP_*` are loaded by `figment`
+/// with double-underscore (`__`) as the nesting separator.
+/// For example, `ONSHAPE_MCP_AUTH__ACCESS_KEY` maps to `auth.access_key`.
+pub const ENV_PREFIX: &str = "ONSHAPE_MCP_";
+
 // ============================================================================
 // Config File Path
 // ============================================================================
@@ -150,7 +157,7 @@ fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLo
 
     // Layer in environment variables
     // ONSHAPE_MCP_AUTH__ACCESS_KEY -> auth.access_key (double underscore = nesting)
-    figment = figment.merge(Env::prefixed("ONSHAPE_MCP_").split("__"));
+    figment = figment.merge(Env::prefixed(ENV_PREFIX).split("__"));
 
     Ok(figment)
 }
