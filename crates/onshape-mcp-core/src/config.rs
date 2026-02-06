@@ -315,6 +315,18 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_negative_integer_interval_fails() {
+        let toml_str = r#"
+            access_key = "ak"
+            secret_key = "sk"
+            check_interval = -5
+        "#;
+
+        let result: Result<AuthConfig, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn deserialize_auth_config_from_toml() {
         let toml_str = r#"
             access_key = "my-access-key"
