@@ -629,8 +629,7 @@ fn server_rejects_invalid_auth_method_via_cli_flag() {
     assert!(
         stderr.contains("unknown variant")
             || stderr.contains("nonsense")
-            || stderr.contains("auth")
-            || stderr.contains("method"),
+            || (stderr.contains("auth") && stderr.contains("method")),
         "error should mention the invalid auth method, got: {stderr}"
     );
 }
@@ -661,8 +660,7 @@ fn server_rejects_invalid_auth_method_via_env_var() {
     assert!(
         stderr.contains("unknown variant")
             || stderr.contains("nonsense")
-            || stderr.contains("auth")
-            || stderr.contains("method"),
+            || (stderr.contains("auth") && stderr.contains("method")),
         "error should mention the invalid auth method, got: {stderr}"
     );
 }
@@ -703,8 +701,7 @@ fn server_rejects_invalid_auth_method_via_config_file() {
     assert!(
         stderr.contains("unknown variant")
             || stderr.contains("nonsense")
-            || stderr.contains("auth")
-            || stderr.contains("method"),
+            || (stderr.contains("auth") && stderr.contains("method")),
         "error should mention the invalid auth method, got: {stderr}"
     );
 }
