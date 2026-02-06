@@ -515,6 +515,94 @@ fn server_rejects_insecure_config_file() {
     );
 }
 
+// ============================================================================
+// Auth Method Configuration Tests
+// ============================================================================
+
+#[test]
+fn auth_status_includes_auth_method_basic_by_default() {
+    let mut env = HashMap::new();
+    env.insert("ONSHAPE_MCP_AUTH__ACCESS_KEY", "test-access-key");
+    env.insert("ONSHAPE_MCP_AUTH__SECRET_KEY", "test-secret-key");
+
+    let mut client = McpTestClient::spawn_with_env(&env);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(
+        auth_result["auth_method"], "basic",
+        "default auth method should be basic"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn auth_method_basic_via_env_var() {
+    let mut env = HashMap::new();
+    env.insert("ONSHAPE_MCP_AUTH__ACCESS_KEY", "test-access-key");
+    env.insert("ONSHAPE_MCP_AUTH__SECRET_KEY", "test-secret-key");
+    env.insert("ONSHAPE_MCP_AUTH__METHOD", "basic");
+
+    let mut client = McpTestClient::spawn_with_env(&env);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["auth_method"], "basic");
+
+    client.shutdown();
+}
+
+#[test]
+fn auth_method_basic_via_cli_flag() {
+    let mut client = McpTestClient::spawn_with_args(&[
+        "--access-key",
+        "cli-access-key",
+        "--secret-key",
+        "cli-secret-key",
+        "--auth-method",
+        "basic",
+    ]);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["auth_method"], "basic");
+
+    client.shutdown();
+}
+
+#[test]
+fn auth_method_basic_via_config_file() {
+    let dir = tempfile::tempdir().expect("should create temp dir");
+    let config_path = dir.path().join("config.toml");
+
+    std::fs::write(
+        &config_path,
+        "[auth]\naccess_key = \"file-ak\"\nsecret_key = \"file-sk\"\nmethod = \"basic\"\n",
+    )
+    .expect("should write config file");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600))
+            .expect("should set permissions");
+    }
+
+    let config_arg = format!("--config={}", config_path.display());
+    let mut client = McpTestClient::spawn_with_args(&[&config_arg]);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["auth_method"], "basic");
+
+    client.shutdown();
+}
+
+// ============================================================================
+// Config Override Tests
+// ============================================================================
+
 #[test]
 fn cli_flags_override_env_vars() {
     // Set env vars with one set of keys, CLI flags with another

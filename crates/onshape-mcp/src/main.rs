@@ -19,6 +19,10 @@ struct Args {
     #[arg(long)]
     secret_key: Option<String>,
 
+    /// Authentication method for Onshape API requests (overrides config file and environment variable).
+    #[arg(long)]
+    auth_method: Option<String>,
+
     /// Path to config file (default: ~/.config/onshape-mcp/config.toml).
     #[arg(long)]
     config: Option<std::path::PathBuf>,
@@ -41,6 +45,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         auth_overrides.insert(
             "secret_key".into(),
             figment::value::Value::from(secret_key.clone()),
+        );
+    }
+    if let Some(ref auth_method) = args.auth_method {
+        auth_overrides.insert(
+            "method".into(),
+            figment::value::Value::from(auth_method.clone()),
         );
     }
 
