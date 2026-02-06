@@ -90,7 +90,7 @@ impl From<figment::Error> for ConfigLoadError {
 ///
 /// Returns `ConfigLoadError::InsecurePermissions` if the file permissions are too open.
 /// Returns `ConfigLoadError::MetadataError` if file metadata cannot be read.
-#[cfg_attr(not(unix), expect(clippy::missing-const-for-fn))]
+#[cfg_attr(not(unix), expect(clippy::missing_const_for_fn))]
 pub fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
     #[cfg(unix)]
     {
