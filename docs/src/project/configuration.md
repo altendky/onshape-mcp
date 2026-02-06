@@ -63,4 +63,4 @@ All environment variables use the `ONSHAPE_MCP_` prefix.
 | Max Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_MAX_MODE` | `mode.max` | Upper limit for permission mode |
 | Initial Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_INITIAL_MODE` | `mode.initial` | Starting permission mode (must be ≤ max_mode) |
 | Allow Mode Escalation | `bool` | `false` | `ONSHAPE_MCP_ALLOW_ESCALATION` | `mode.allow_escalation` | Can AI change mode at runtime? |
-| Auth Check Interval | `duration` | `5m` | `ONSHAPE_MCP_AUTH_CHECK_INTERVAL` | `auth.check_interval` | Periodic credential validation interval |
+| Auth Check Interval | `duration` | `5m` | `ONSHAPE_MCP_AUTH_CHECK_INTERVAL` | `auth.check_interval` | Periodic credential validation interval (minimum: 15s) |

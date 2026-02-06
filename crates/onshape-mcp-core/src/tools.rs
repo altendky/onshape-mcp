@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::AuthStatusResult;
+use crate::config::{AuthConfig, CredentialStatus};
 
 // ============================================================================
 // Tool Registry
@@ -33,6 +34,7 @@ pub fn list_tools() -> Vec<Tool> {
 pub fn call_tool(
     name: &str,
     arguments: Option<&Map<String, Value>>,
+    auth_config: &AuthConfig,
 ) -> Result<CallToolResult, ErrorData> {
     match name {
         "onshape_mcp_auth_status" => {
@@ -45,7 +47,7 @@ pub fn call_tool(
                     None,
                 ));
             }
-            call_auth_status()
+            call_auth_status(auth_config)
         }
         _ => Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
@@ -82,8 +84,12 @@ fn tool_auth_status_def() -> Tool {
     .annotate(ToolAnnotations::new().read_only(true).destructive(false))
 }
 
-fn call_auth_status() -> Result<CallToolResult, ErrorData> {
-    let result = AuthStatusResult::not_configured();
+fn call_auth_status(auth_config: &AuthConfig) -> Result<CallToolResult, ErrorData> {
+    let result = match auth_config.credential_status() {
+        CredentialStatus::NonePresent => AuthStatusResult::not_configured(),
+        CredentialStatus::BothPresent => AuthStatusResult::not_validated(),
+        CredentialStatus::Partial { missing } => AuthStatusResult::partial_credentials(missing),
+    };
     let content = Content::json(&result)?;
     Ok(CallToolResult {
         content: vec![content],
@@ -100,7 +106,37 @@ fn call_auth_status() -> Result<CallToolResult, ErrorData> {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
+    use secrecy::SecretString;
+
     use super::*;
+
+    fn no_creds() -> AuthConfig {
+        AuthConfig::default()
+    }
+
+    fn both_creds() -> AuthConfig {
+        AuthConfig {
+            access_key: Some(SecretString::from("ak")),
+            secret_key: Some(SecretString::from("sk")),
+            ..AuthConfig::default()
+        }
+    }
+
+    fn partial_creds_missing_secret() -> AuthConfig {
+        AuthConfig {
+            access_key: Some(SecretString::from("ak")),
+            secret_key: None,
+            ..AuthConfig::default()
+        }
+    }
+
+    fn partial_creds_missing_access() -> AuthConfig {
+        AuthConfig {
+            access_key: None,
+            secret_key: Some(SecretString::from("sk")),
+            ..AuthConfig::default()
+        }
+    }
 
     #[test]
     fn list_tools_includes_auth_status() {
@@ -110,11 +146,11 @@ mod tests {
 
     #[test]
     fn call_tool_auth_status_returns_not_configured() {
-        let result = call_tool("onshape_mcp_auth_status", None).expect("should succeed");
+        let config = no_creds();
+        let result = call_tool("onshape_mcp_auth_status", None, &config).expect("should succeed");
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
 
-        // Content is text containing JSON
         let content = &result.content[0];
         let text = content.raw.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
@@ -122,17 +158,66 @@ mod tests {
     }
 
     #[test]
+    fn call_tool_auth_status_returns_not_validated_with_creds() {
+        let config = both_creds();
+        let result = call_tool("onshape_mcp_auth_status", None, &config).expect("should succeed");
+        assert_eq!(result.is_error, Some(false));
+
+        let content = &result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_validated");
+    }
+
+    #[test]
+    fn call_tool_auth_status_returns_partial_with_missing_key() {
+        let config = partial_creds_missing_secret();
+        let result = call_tool("onshape_mcp_auth_status", None, &config).expect("should succeed");
+        assert_eq!(result.is_error, Some(false));
+
+        let content = &result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_configured");
+        assert!(
+            value["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("secret_key"))
+        );
+    }
+
+    #[test]
+    fn call_tool_auth_status_returns_partial_with_missing_access_key() {
+        let config = partial_creds_missing_access();
+        let result = call_tool("onshape_mcp_auth_status", None, &config).expect("should succeed");
+        assert_eq!(result.is_error, Some(false));
+
+        let content = &result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_configured");
+        assert!(
+            value["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("access_key"))
+        );
+    }
+
+    #[test]
     fn call_tool_unknown_returns_not_found() {
-        let err = call_tool("unknown_tool", None).expect_err("should fail");
+        let config = no_creds();
+        let err = call_tool("unknown_tool", None, &config).expect_err("should fail");
         assert_eq!(err.code, ErrorCode::METHOD_NOT_FOUND);
         assert!(err.message.contains("unknown_tool"));
     }
 
     #[test]
     fn call_tool_auth_status_rejects_unexpected_arguments() {
+        let config = no_creds();
         let mut args = Map::new();
         args.insert("unexpected".to_string(), Value::String("value".to_string()));
-        let err = call_tool("onshape_mcp_auth_status", Some(&args)).expect_err("should fail");
+        let err =
+            call_tool("onshape_mcp_auth_status", Some(&args), &config).expect_err("should fail");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 
