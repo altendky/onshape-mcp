@@ -112,19 +112,19 @@ release:
     archive-format: tar.gz
   - name: darwin-x64
     runner: macos-15-intel
-    rust-target: ""
+    rust-target: x86_64-apple-darwin
     npm-platform: darwin-x64
     binary-name: onshape-mcp
     archive-format: tar.gz
   - name: darwin-arm64
     runner: macos-latest
-    rust-target: ""
+    rust-target: aarch64-apple-darwin
     npm-platform: darwin-arm64
     binary-name: onshape-mcp
     archive-format: tar.gz
   - name: win32-x64
     runner: windows-latest
-    rust-target: ""
+    rust-target: x86_64-pc-windows-msvc
     npm-platform: win32-x64
     binary-name: onshape-mcp.exe
     archive-format: zip

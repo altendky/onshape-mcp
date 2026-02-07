@@ -94,17 +94,11 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Add musl target (Linux)
-        if: matrix.platform.rust-target != ''
+      - name: Add Rust target
         run: rustup target add ${{ matrix.platform.rust-target }}
 
-      - name: Build release binary (cross-target)
-        if: matrix.platform.rust-target != ''
+      - name: Build release binary
         run: cargo build --release --target ${{ matrix.platform.rust-target }}
-
-      - name: Build release binary (native)
-        if: matrix.platform.rust-target == ''
-        run: cargo build --release
 
       - name: Verify static linking (Linux)
         if: contains(matrix.platform.rust-target, 'linux-musl')
@@ -123,11 +117,7 @@ jobs:
       - name: Smoke test binary
         shell: bash
         run: |
-          if [[ -n "${{ matrix.platform.rust-target }}" ]]; then
-            binary="target/${{ matrix.platform.rust-target }}/release/${{ matrix.platform.binary-name }}"
-          else
-            binary="target/release/${{ matrix.platform.binary-name }}"
-          fi
+          binary="target/${{ matrix.platform.rust-target }}/release/${{ matrix.platform.binary-name }}"
           echo "Running: $binary --version"
           "$binary" --version
 
@@ -135,8 +125,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: binary-${{ matrix.platform.npm-platform }}
-          path: |
-            ${{ matrix.platform.rust-target != '' && format('target/{0}/release/{1}', matrix.platform.rust-target, matrix.platform.binary-name) || format('target/release/{0}', matrix.platform.binary-name) }}
+          path: target/${{ matrix.platform.rust-target }}/release/${{ matrix.platform.binary-name }}
           retention-days: 3
 
   package-npm:
