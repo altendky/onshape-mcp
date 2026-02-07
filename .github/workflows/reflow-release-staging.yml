@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: |
           staging_version=$(.github/scripts/compute-staging-version.sh \
-            crates/onshape-mcp/Cargo.toml \
+            "${{ steps.version.outputs.version }}" \
             "${{ github.ref_name }}" \
             "${{ github.sha }}" \
             "${{ github.run_id }}")

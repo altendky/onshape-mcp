@@ -4,29 +4,26 @@ set -euo pipefail
 # Computes a staging version for npm pre-release publishes.
 #
 # Usage:
-#   compute-staging-version.sh <cargo-toml-path> <git-ref> <commit-sha> <run-id>
+#   compute-staging-version.sh <version> <git-ref> <commit-sha> <run-id>
 #
 # Output (on stdout):
-#   {version}-staging-{sanitized_ref}-{short_sha}-{run_id}
+#   <version>-staging-{sanitized_ref}-{short_sha}-{run_id}
 #
 # The git ref is sanitized for semver pre-release identifier compatibility:
 # only [0-9A-Za-z-] is allowed; all other characters are replaced with '-'.
 
 if [[ $# -ne 4 ]]; then
-	echo "Usage: $0 <cargo-toml-path> <git-ref> <commit-sha> <run-id>" >&2
+	echo "Usage: $0 <version> <git-ref> <commit-sha> <run-id>" >&2
 	exit 1
 fi
 
-cargo_toml="$1"
+version="$1"
 git_ref="$2"
 commit_sha="$3"
 run_id="$4"
 
-# Extract version from Cargo.toml via cargo metadata
-version=$(cargo metadata --format-version 1 --no-deps --manifest-path "$cargo_toml" |
-	jq -r '.packages[] | select(.name == "onshape-mcp") | .version')
 if [[ -z "$version" ]]; then
-	echo "ERROR: Could not extract version from $cargo_toml" >&2
+	echo "ERROR: version argument must not be empty" >&2
 	exit 1
 fi
 
