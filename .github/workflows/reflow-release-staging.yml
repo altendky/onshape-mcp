@@ -326,3 +326,133 @@ jobs:
             echo "ERROR: Expected version $version in output: $output" >&2
             exit 1
           fi
+
+  publish-npm-staging:
+    name: Publish npm staging
+    needs: [library, verify, package-npm, test-npm-tarballs]
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check npm publish credentials
+        id: check-auth
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # npm CLI >= 11.5.1 auto-detects OIDC via ACTIONS_ID_TOKEN_REQUEST_URL.
+          # When called from release.yml (id-token: write), OIDC is used.
+          # When called from ci.yml (no id-token), NPM_TOKEN is used as fallback.
+          has_oidc="false"
+          has_token="false"
+
+          if [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+            echo "OIDC available (id-token: write granted by caller)"
+            has_oidc="true"
+          fi
+
+          if [[ -n "$NPM_TOKEN" ]]; then
+            echo "NPM_TOKEN available"
+            has_token="true"
+          fi
+
+          if [[ "$has_oidc" == "false" && "$has_token" == "false" ]]; then
+            echo "No npm credentials available (fork PR?) — skipping publish"
+            echo "can-publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "can-publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "has-oidc=$has_oidc" >> "$GITHUB_OUTPUT"
+          echo "has-token=$has_token" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        if: steps.check-auth.outputs.can-publish == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download staging tarballs
+        if: steps.check-auth.outputs.can-publish == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: npm-staging-tarballs
+          path: staging-tarballs
+
+      - name: Configure npm token fallback
+        if: steps.check-auth.outputs.can-publish == 'true' && steps.check-auth.outputs.has-token == 'true'
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Set token in npmrc as fallback for when OIDC is unavailable
+          # (e.g., called from ci.yml without id-token: write).
+          # npm CLI tries OIDC first, falls back to this token.
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+
+      - name: Publish platform packages
+        if: steps.check-auth.outputs.can-publish == 'true'
+        shell: bash
+        run: |
+          platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
+          echo "$platforms" | jq -c '.[]' | while read -r entry; do
+            npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
+            tarball=$(ls "staging-tarballs/onshape-mcp-${npm_platform}-"*)
+            echo "Publishing $tarball..."
+            npm publish "$tarball" --tag staging --access public
+          done
+
+      - name: Publish main package
+        if: steps.check-auth.outputs.can-publish == 'true'
+        shell: bash
+        run: |
+          tarball=$(ls staging-tarballs/onshape-mcp-[0-9]*)
+          echo "Publishing $tarball..."
+          npm publish "$tarball" --tag staging --access public
+
+      - name: Clean up npmrc
+        if: always() && steps.check-auth.outputs.has-token == 'true'
+        shell: bash
+        run: rm -f ~/.npmrc
+
+    outputs:
+      published: ${{ steps.check-auth.outputs.can-publish }}
+
+  test-npm-published:
+    name: "Test npm published (${{ matrix.platform.name }})"
+    needs: [library, verify, publish-npm-staging]
+    if: ${{ needs.publish-npm-staging.outputs.published == 'true' }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install from registry
+        shell: bash
+        run: |
+          staging_version="${{ needs.verify.outputs.staging-version }}"
+          mkdir test-registry-install
+          cd test-registry-install
+          npm init -y
+          echo "Installing onshape-mcp@${staging_version} from registry..."
+          npm install "onshape-mcp@${staging_version}"
+
+      - name: Verify binary version
+        shell: bash
+        run: |
+          cd test-registry-install
+          version="${{ needs.verify.outputs.version }}"
+          output=$(npx onshape-mcp --version 2>&1)
+          echo "Binary output: $output"
+          if echo "$output" | grep -q "$version"; then
+            echo "OK: Version matches ($version)"
+          else
+            echo "ERROR: Expected version $version in output: $output" >&2
+            exit 1
+          fi

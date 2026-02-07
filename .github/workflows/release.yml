@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       dry-run:
@@ -20,6 +23,11 @@ jobs:
   staging:
     name: Staging
     uses: ./.github/workflows/reflow-release-staging.yml
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
     with:
-      dry-run: ${{ inputs.dry-run }}
-      skip-cleanup: ${{ inputs.skip-cleanup }}
+      git-tag: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      dry-run: ${{ inputs.dry-run || false }}
+      skip-cleanup: ${{ inputs.skip-cleanup || false }}

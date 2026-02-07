@@ -1,0 +1,115 @@
+name: Cleanup npm staging
+
+on:
+  schedule:
+    # Every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    name: Cleanup staging packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for NPM_TOKEN
+        id: check-token
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [[ -z "$NPM_TOKEN" ]]; then
+            echo "NPM_TOKEN not available — skipping cleanup"
+            echo "has-token=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-token=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.check-token.outputs.has-token == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure npm authentication
+        if: steps.check-token.outputs.has-token == 'true'
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+
+      - name: Unpublish stale staging versions
+        if: steps.check-token.outputs.has-token == 'true'
+        shell: bash
+        run: |
+          # Max age in seconds: 2.2 days = 52.8 hours = 190080 seconds
+          MAX_AGE_SECONDS=190080
+          now=$(date +%s)
+
+          # All packages to check (main package + platform packages)
+          packages=(
+            "onshape-mcp"
+            "@onshape-mcp/linux-x64"
+            "@onshape-mcp/linux-arm64"
+            "@onshape-mcp/darwin-x64"
+            "@onshape-mcp/darwin-arm64"
+            "@onshape-mcp/win32-x64"
+          )
+
+          # Collect stale versions into temp files, grouped by package.
+          # Unpublish main package first (reverse of publish order),
+          # so dependency resolution isn't broken during cleanup.
+
+          for pkg in "${packages[@]}"; do
+            echo "Checking $pkg for staging versions..."
+
+            # Get all versions with their publish times
+            # npm view returns JSON with time object containing version -> timestamp mappings
+            times_json=$(npm view "$pkg" time --json 2>/dev/null || echo "{}")
+
+            if [[ "$times_json" == "{}" ]]; then
+              echo "  No versions found (package may not exist yet)"
+              continue
+            fi
+
+            # Extract staging versions and check age
+            echo "$times_json" | jq -r 'to_entries[] | select(.key | test("-staging-")) | "\(.key) \(.value)"' | while read -r version timestamp; do
+              publish_epoch=$(date -d "$timestamp" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "$timestamp" +%s 2>/dev/null || echo "0")
+              age=$((now - publish_epoch))
+
+              if [[ $age -gt $MAX_AGE_SECONDS ]]; then
+                age_hours=$((age / 3600))
+                echo "  STALE: $version (${age_hours}h old)"
+                echo "$version" >> "/tmp/stale-${pkg//\//-}"
+              else
+                age_hours=$((age / 3600))
+                echo "  OK: $version (${age_hours}h old)"
+              fi
+            done
+          done
+
+          # Unpublish main package first (reverse of publish order)
+          unpublished=0
+          for pkg in "${packages[@]}"; do
+            stale_file="/tmp/stale-${pkg//\//-}"
+            if [[ ! -f "$stale_file" ]]; then
+              continue
+            fi
+
+            while read -r version; do
+              echo "Unpublishing ${pkg}@${version}..."
+              if npm unpublish "${pkg}@${version}" 2>&1; then
+                echo "  OK"
+                unpublished=$((unpublished + 1))
+              else
+                echo "  FAILED (may already be unpublished or past 72h deadline)"
+              fi
+            done < "$stale_file"
+          done
+
+          echo "Cleanup complete: unpublished $unpublished package versions"
+
+      - name: Clean up npmrc
+        if: always() && steps.check-token.outputs.has-token == 'true'
+        shell: bash
+        run: rm -f ~/.npmrc

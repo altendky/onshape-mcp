@@ -100,10 +100,7 @@ verify ──► build (5 platforms) ──► package-npm ──► test-npm-ta
                                        │                     │
                                        │                     ▼
                                        │          publish-npm-staging ──► test-npm-published (5 platforms)
-                                       │                                          │
-                                       │                                          ▼
-                                       │                               cleanup-npm-staging
-                                       │                                   (if: always)
+                                       │
                                        ▼
                               [artifacts for finalize]
 ```
@@ -306,14 +303,31 @@ It is created in the staging workflow alongside the release artifacts.
 
 | Secret | Used by | Purpose |
 | ------ | ------- | ------- |
-| `NPM_TOKEN` | staging + finalize | npm publish |
+| `NPM_TOKEN` | staging (CI fallback) + cleanup | npm publish (CI), npm unpublish (cleanup) |
 | `CARGO_REGISTRY_TOKEN` | finalize | crates.io publish |
 | `GITHUB_TOKEN` | finalize | GitHub release (automatic, not a manual secret) |
 
 | Permission | Workflow | Purpose |
 | ---------- | -------- | ------- |
-| `id-token: write` | staging + finalize | npm provenance (future) |
+| `id-token: write` | `release.yml` (staging + finalize) | npm OIDC trusted publishing, provenance |
 | `contents: write` | finalize | GitHub release creation |
+
+### npm Authentication Strategy
+
+npm publish uses a hybrid OIDC + token approach:
+
+| Caller | Auth method | Mechanism |
+| ------ | ----------- | --------- |
+| `release.yml` | OIDC trusted publishing | `id-token: write` grants OIDC; npm CLI auto-detects |
+| `ci.yml` | `NPM_TOKEN` secret | Token in `~/.npmrc`; OIDC unavailable (no `id-token: write`) |
+| `cleanup-npm-staging.yml` | `NPM_TOKEN` secret | `npm unpublish` does not support OIDC |
+
+npm's trusted publishing allows only **one workflow filename per package**.
+The trusted publisher is configured for `release.yml` on npmjs.com.
+When called from `ci.yml`, the npm CLI falls back to the `NPM_TOKEN` in `~/.npmrc`.
+The publish job detects which credentials are available (`ACTIONS_ID_TOKEN_REQUEST_URL` for OIDC, `NPM_TOKEN` for token) and skips if neither is present (fork PRs).
+
+Provenance attestations are generated automatically when publishing via OIDC trusted publishing (no `--provenance` flag needed).
 
 ## Open Items
 
@@ -332,7 +346,7 @@ Items requiring further discussion before or during implementation.
 
 ### npm
 
-- [x] Auth: ~~traditional token or OIDC~~ Resolved: use `NPM_TOKEN` (required regardless — npm does not support OIDC as a token replacement). npm provenance (`--provenance`, OIDC-signed build attestation) deferred
+- [x] Auth: ~~traditional token or OIDC~~ Resolved: hybrid OIDC + token. npm now supports OIDC trusted publishing (eliminates tokens for publish), but only allows one workflow filename per package. `release.yml` is configured as the trusted publisher on npmjs.com (OIDC). `ci.yml` and `cleanup-npm-staging.yml` use `NPM_TOKEN` as fallback. Provenance attestations are generated automatically via OIDC. See [npm Authentication Strategy](#npm-authentication-strategy)
 - [x] Dist-tag: ~~unique per publish vs single reusable~~ Resolved: use a single `--tag staging` for all staging publishes. Packages are installed by exact version (`npm install onshape-mcp@0.2.0-staging-main-abc1234-12345678`), so the dist-tag is only needed to prevent `latest` from moving. The `staging` tag always points to the most recent staging publish, which is mildly useful for quick testing (`npm install onshape-mcp@staging`)
 - [x] Staging cleanup strategy: ~~per-run vs scheduled~~ Resolved: separate scheduled workflow (`cleanup-npm-staging.yml`) runs every 6 hours, unpublishes staging packages older than 2.2 days (52.8 hours). This preserves staging packages for manual testing of PR builds while staying within npm's 72-hour unpublish window (worst case: 58.8 hours, 13.2-hour buffer). See [Staging Cleanup](#staging-cleanup)
 - [x] Cleanup order: ~~main first or platform packages first~~ Resolved: unpublish main package first, then platform packages (reverse of publish order). The main package has `optionalDependencies` on the platform packages, so removing main first avoids broken dependency resolution during the cleanup window
