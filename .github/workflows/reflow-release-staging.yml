@@ -48,8 +48,10 @@ jobs:
       - name: Verify tag matches Cargo.toml version
         if: inputs.git-tag != ''
         shell: bash
+        env:
+          GIT_TAG: ${{ inputs.git-tag }}
         run: |
-          tag="${{ inputs.git-tag }}"
+          tag="$GIT_TAG"
           tag_version="${tag#v}"
           cargo_version="${{ steps.version.outputs.version }}"
           if [[ "$tag_version" != "$cargo_version" ]]; then
