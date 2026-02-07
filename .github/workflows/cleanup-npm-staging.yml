@@ -82,7 +82,11 @@ jobs:
 
             # Extract staging versions and check age
             echo "$times_json" | jq -r 'to_entries[] | select(.key | test("-staging-")) | "\(.key) \(.value)"' | while read -r version timestamp; do
-              publish_epoch=$(date -d "$timestamp" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "$timestamp" +%s 2>/dev/null || echo "0")
+              publish_epoch=$(date -d "$timestamp" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "$timestamp" +%s 2>/dev/null || echo "")
+              if [[ -z "$publish_epoch" ]]; then
+                echo "  WARN: Could not parse timestamp for $version ($timestamp) — skipping"
+                continue
+              fi
               age=$((now - publish_epoch))
 
               if [[ $age -gt $MAX_AGE_SECONDS ]]; then
