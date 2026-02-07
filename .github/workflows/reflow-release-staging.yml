@@ -236,7 +236,7 @@ jobs:
           mkdir -p dist/checksums
           truncate -s 0 dist/checksums/SHA256SUMS
 
-          for f in dist/release-tarballs/* binaries/binary-*/*; do
+          for f in dist/release-tarballs/* dist/staging-tarballs/* binaries/binary-*/*; do
             hash=$(sha256sum "$f" | cut -d' ' -f1)
             name=$(basename "$f")
             echo "$hash  $name" >> dist/checksums/SHA256SUMS
