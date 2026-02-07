@@ -320,7 +320,7 @@ jobs:
           version="${{ needs.verify.outputs.version }}"
           output=$(npx onshape-mcp --version 2>&1)
           echo "Binary output: $output"
-          if echo "$output" | grep -q "$version"; then
+          if echo "$output" | grep -qF "$version"; then
             echo "OK: Version matches ($version)"
           else
             echo "ERROR: Expected version $version in output: $output" >&2
@@ -475,7 +475,7 @@ jobs:
           version="${{ needs.verify.outputs.version }}"
           output=$(npx onshape-mcp --version 2>&1)
           echo "Binary output: $output"
-          if echo "$output" | grep -q "$version"; then
+          if echo "$output" | grep -qF "$version"; then
             echo "OK: Version matches ($version)"
           else
             echo "ERROR: Expected version $version in output: $output" >&2
