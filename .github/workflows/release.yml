@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Skip npm publish (run full build/test pipeline only)"
+        type: boolean
+        default: false
+      skip-cleanup:
+        description: "Preserve staging packages on npm for manual inspection"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    name: Staging
+    uses: ./.github/workflows/reflow-release-staging.yml
+    with:
+      dry-run: ${{ inputs.dry-run }}
+      skip-cleanup: ${{ inputs.skip-cleanup }}
