@@ -60,9 +60,6 @@ jobs:
           done < <(yq -r '.release[].npm-platform' .github/actions/library/library.yml)
 
           # Collect stale versions into temp files, grouped by package.
-          # Unpublish main package first (reverse of publish order),
-          # so dependency resolution isn't broken during cleanup.
-
           for pkg in "${packages[@]}"; do
             echo "Checking $pkg for staging versions..."
 
