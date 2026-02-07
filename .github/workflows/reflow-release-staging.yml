@@ -362,9 +362,6 @@ jobs:
             echo "can-publish=true" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "has-oidc=$has_oidc" >> "$GITHUB_OUTPUT"
-          echo "has-token=$has_token" >> "$GITHUB_OUTPUT"
-
       - name: Setup Node.js
         if: steps.check-auth.outputs.can-publish == 'true'
         uses: actions/setup-node@v4
@@ -379,20 +376,11 @@ jobs:
           name: npm-staging-tarballs
           path: staging-tarballs
 
-      - name: Configure npm token fallback
-        if: steps.check-auth.outputs.can-publish == 'true' && steps.check-auth.outputs.has-token == 'true'
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          # Set token in npmrc as fallback for when OIDC is unavailable
-          # (e.g., called from ci.yml without id-token: write).
-          # npm CLI tries OIDC first, falls back to this token.
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-
       - name: Publish platform packages
         if: steps.check-auth.outputs.can-publish == 'true'
         shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
           echo "$platforms" | jq -c '.[]' | while read -r entry; do
@@ -405,15 +393,12 @@ jobs:
       - name: Publish main package
         if: steps.check-auth.outputs.can-publish == 'true'
         shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           tarball=$(ls staging-tarballs/onshape-mcp-[0-9]*)
           echo "Publishing $tarball..."
           npm publish "$tarball" --tag staging --access public
-
-      - name: Clean up npmrc
-        if: always() && steps.check-auth.outputs.has-token == 'true'
-        shell: bash
-        run: rm -f ~/.npmrc
 
     outputs:
       published: ${{ steps.check-auth.outputs.can-publish }}
