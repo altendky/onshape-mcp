@@ -385,9 +385,14 @@ jobs:
           platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
           echo "$platforms" | jq -c '.[]' | while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
-            tarball=$(ls "./staging-tarballs/onshape-mcp-${npm_platform}-"*)
-            echo "Publishing $tarball..."
-            npm publish "$tarball" --tag staging --access public
+            shopt -s failglob
+            tarballs=( ./staging-tarballs/onshape-mcp-"${npm_platform}"-* )
+            if [[ ${#tarballs[@]} -ne 1 ]]; then
+              echo "ERROR: Expected exactly 1 tarball for ${npm_platform}, found ${#tarballs[@]}" >&2
+              exit 1
+            fi
+            echo "Publishing ${tarballs[0]}..."
+            npm publish "${tarballs[0]}" --tag staging --access public
           done
 
       - name: Publish main package
@@ -396,9 +401,14 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          tarball=$(ls ./staging-tarballs/onshape-mcp-[0-9]*)
-          echo "Publishing $tarball..."
-          npm publish "$tarball" --tag staging --access public
+          shopt -s failglob
+          tarballs=( ./staging-tarballs/onshape-mcp-[0-9]* )
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "ERROR: Expected exactly 1 main tarball, found ${#tarballs[@]}" >&2
+            exit 1
+          fi
+          echo "Publishing ${tarballs[0]}..."
+          npm publish "${tarballs[0]}" --tag staging --access public
 
     outputs:
       published: ${{ steps.check-auth.outputs.can-publish }}
