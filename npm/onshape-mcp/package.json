@@ -21,7 +21,8 @@
     "onshape-mcp": "bin.js"
   },
   "files": [
-    "bin.js"
+    "bin.js",
+    "lib.js"
   ],
   "scripts": {
     "test": "node --test 'test/**/*.test.js'",
