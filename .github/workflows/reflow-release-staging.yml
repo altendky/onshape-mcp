@@ -425,8 +425,25 @@ jobs:
           mkdir test-registry-install
           cd test-registry-install
           npm init -y
-          echo "Installing onshape-mcp@${staging_version} from registry..."
-          npm install "onshape-mcp@${staging_version}"
+
+          # Retry with exponential backoff to allow for npm registry propagation.
+          # Newly published packages may not be available on all CDN edges immediately.
+          max_attempts=5
+          delay=10
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "Installing onshape-mcp@${staging_version} from registry (attempt ${attempt}/${max_attempts})..."
+            if npm install "onshape-mcp@${staging_version}"; then
+              echo "Install succeeded on attempt ${attempt}"
+              break
+            fi
+            if [[ "$attempt" -eq "$max_attempts" ]]; then
+              echo "ERROR: Install failed after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+            echo "Install failed, retrying in ${delay}s..."
+            sleep "$delay"
+            delay=$((delay * 2))
+          done
 
       - name: Verify binary version
         shell: bash
