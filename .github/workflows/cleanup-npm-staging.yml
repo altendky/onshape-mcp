@@ -24,6 +24,10 @@ jobs:
             echo "has-token=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Checkout
+        if: steps.check-token.outputs.has-token == 'true'
+        uses: actions/checkout@v6
+
       - name: Setup Node.js
         if: steps.check-token.outputs.has-token == 'true'
         uses: actions/setup-node@v4
@@ -46,15 +50,11 @@ jobs:
           MAX_AGE_SECONDS=190080
           now=$(date +%s)
 
-          # All packages to check (main package + platform packages)
-          packages=(
-            "onshape-mcp"
-            "@onshape-mcp/linux-x64"
-            "@onshape-mcp/linux-arm64"
-            "@onshape-mcp/darwin-x64"
-            "@onshape-mcp/darwin-arm64"
-            "@onshape-mcp/win32-x64"
-          )
+          # Derive platform packages from the release matrix in library.yml
+          packages=("onshape-mcp")
+          while IFS= read -r platform; do
+            packages+=("@onshape-mcp/${platform}")
+          done < <(yq -r '.release[].npm-platform' .github/actions/library/library.yml)
 
           # Collect stale versions into temp files, grouped by package.
           # Unpublish main package first (reverse of publish order),
