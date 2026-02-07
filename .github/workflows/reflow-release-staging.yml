@@ -411,12 +411,12 @@ jobs:
           npm publish "${tarballs[0]}" --tag staging --access public
 
     outputs:
-      published: ${{ steps.check-auth.outputs.can-publish }}
+      can-publish: ${{ steps.check-auth.outputs.can-publish }}
 
   test-npm-published:
     name: "Test npm published (${{ matrix.platform.name }})"
     needs: [library, verify, publish-npm-staging]
-    if: ${{ needs.publish-npm-staging.outputs.published == 'true' }}
+    if: ${{ needs.publish-npm-staging.outputs.can-publish == 'true' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
