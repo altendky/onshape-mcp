@@ -72,20 +72,9 @@ jobs:
           echo "staging-version=$staging_version" >> "$GITHUB_OUTPUT"
           echo "Staging version: $staging_version"
 
-      - name: Setup Rust
-        uses: ./.github/actions/setup-rust
-        with:
-          toolchain: stable
-
-      - name: Package crate
-        run: cargo package -p onshape-mcp --no-verify
-
-      - name: Upload .crate artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: crate-package
-          path: target/package/onshape-mcp-${{ steps.version.outputs.version }}.crate
-          retention-days: 3
+      # cargo package is deferred to Phase 3 — workspace dependency crates
+      # (onshape-mcp-core, etc.) must exist on crates.io before cargo package
+      # can resolve them, even with --no-verify.
 
   build:
     name: "Build (${{ matrix.platform.name }})"
@@ -242,19 +231,13 @@ jobs:
           echo "Staging tarballs:"
           ls -la dist/staging-tarballs/
 
-      - name: Download .crate artifact
-        uses: actions/download-artifact@v7
-        with:
-          name: crate-package
-          path: dist/crate
-
       - name: Generate SHA256SUMS
         shell: bash
         run: |
           mkdir -p dist/checksums
           truncate -s 0 dist/checksums/SHA256SUMS
 
-          for f in dist/release-tarballs/* binaries/binary-*/* dist/crate/*.crate; do
+          for f in dist/release-tarballs/* binaries/binary-*/*; do
             hash=$(sha256sum "$f" | cut -d' ' -f1)
             name=$(basename "$f")
             echo "$hash  $name" >> dist/checksums/SHA256SUMS
