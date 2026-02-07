@@ -385,7 +385,7 @@ jobs:
           platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
           echo "$platforms" | jq -c '.[]' | while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
-            tarball=$(ls "staging-tarballs/onshape-mcp-${npm_platform}-"*)
+            tarball=$(ls "./staging-tarballs/onshape-mcp-${npm_platform}-"*)
             echo "Publishing $tarball..."
             npm publish "$tarball" --tag staging --access public
           done
@@ -396,7 +396,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          tarball=$(ls staging-tarballs/onshape-mcp-[0-9]*)
+          tarball=$(ls ./staging-tarballs/onshape-mcp-[0-9]*)
           echo "Publishing $tarball..."
           npm publish "$tarball" --tag staging --access public
 
