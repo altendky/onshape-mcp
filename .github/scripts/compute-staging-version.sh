@@ -22,8 +22,9 @@ git_ref="$2"
 commit_sha="$3"
 run_id="$4"
 
-# Extract version from Cargo.toml
-version=$(grep -m1 '^version\s*=' "$cargo_toml" | sed 's/^version\s*=\s*"\([^"]*\)".*/\1/')
+# Extract version from Cargo.toml via cargo metadata
+version=$(cargo metadata --format-version 1 --no-deps --manifest-path "$cargo_toml" |
+	jq -r '.packages[] | select(.name == "onshape-mcp") | .version')
 if [[ -z "$version" ]]; then
 	echo "ERROR: Could not extract version from $cargo_toml" >&2
 	exit 1
