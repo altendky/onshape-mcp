@@ -50,8 +50,12 @@ jobs:
         if: steps.check-token.outputs.has-token == 'true'
         shell: bash
         run: |
-          # Max age in seconds: 2.2 days = 52.8 hours = 190080 seconds
-          MAX_AGE_SECONDS=190080
+          # Max age: 2 days = 48 hours = 172800 seconds.
+          # npm allows unpublish within 72 hours of publishing. In the worst
+          # case we miss 3 consecutive 6-hour cron runs (18 hours) before
+          # detecting a stale version, so 48 + 18 = 66 hours — still safely
+          # under the 72-hour deadline with 6 hours of margin.
+          MAX_AGE_SECONDS=172800
           now=$(date +%s)
 
           # Derive platform packages from the release matrix in library.yml
