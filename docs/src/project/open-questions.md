@@ -5,7 +5,7 @@
 - [ ] Documentation standards — Rustdoc coverage, README structure, usage examples
 - [ ] Distribution details — cargo install setup, GitHub releases workflow, binary naming
 - [x] npm wrapper package — ~~Evaluate publishing JS wrapper for `npx` installation~~ Resolved: using platform-specific optional deps pattern. See [npm Wrapper](npm-wrapper.md)
-- [ ] Release process — Versioning strategy, changelog, release workflow, crates.io publishing
+- [ ] Release process — Design in progress, see [Release](release.md#open-items) for current state and remaining decisions
 - [ ] Contribution guidelines — CONTRIBUTING.md, PR expectations, code review process
 - [ ] Project files — Standard files not yet documented (.gitignore, .gitattributes, rustfmt.toml, clippy.toml, deny.toml, .editorconfig, codecov.yml, CHANGELOG.md, CODEOWNERS, issue/PR templates). Note: dependabot.yml is now configured, see [CI > Dependency Monitoring](ci.md#dependency-monitoring)
 - [ ] Non-manual repository configuration — Discuss opportunities for automated repo config (Terraform, GitHub API, etc.)
@@ -32,7 +32,23 @@ Items to address later in the project:
 
 - [ ] FeatureScript support — Phase E tools (`onshape_eval_featurescript`, etc.)
 
-### tracing-sansio Enhancements
+### Tracing Crate Naming
+
+The tracing capture crate needs a name for publication to crates.io.
+The crate captures `tracing` spans and events **locally as return values** instead of routing them through the standard global subscriber.
+This avoids global state and I/O side effects, enabling deterministic testing of pure/sans-IO code that emits tracing instrumentation.
+
+Candidates:
+
+- [ ] **`tracing-pure`** — "Pure" in the functional programming sense: no side effects. Accurate on two levels — the crate itself is pure (captures to memory, no I/O), and it preserves purity in code that uses it. The crate's own purity is the mechanism that makes it work: if the tracing layer performed I/O, the code under test would no longer be sans-IO. Simple and immediately understood by anyone familiar with the concept. The term "pure" is somewhat overloaded in Rust ("pure Rust" can mean no FFI/unsafe), but in the context of a crate description the intended meaning should be clear.
+- [ ] **`tracing-reify`** — "Reify" means to make something abstract or implicit into something concrete. Trace events that would normally be implicit side effects flowing to global state are instead reified into data structures you can inspect and assert on. Technically precise about the core transformation the crate performs — effects become values. Memorable, but requires knowing (or looking up) the word.
+- [ ] **`tracing-local`** — Directly contrasts with how `tracing` normally works: global subscriber vs local capture. Immediately communicates that trace capture is scoped to a call site rather than process-wide. The simplest and most approachable option. Downside: "local" describes the mechanism (where capture happens) rather than the motivation (preserving purity / avoiding I/O).
+- [ ] **`tracing-sans-io`** — Says exactly what it is: tracing support for the sans-IO architectural pattern. No ambiguity about purpose for anyone familiar with the term. Downside: "sans-IO" has minimal adoption in Rust crate names (~40k total downloads across all crates using the term). Ties the crate's identity to a specific architectural label rather than describing what it does, which limits appeal to people who use the same pattern but don't use the term.
+
+Both `tracing-pure` and `tracing-reify` are available on crates.io.
+The companion proc-macro crate would follow the same naming pattern (e.g., `tracing-pure-macros`).
+
+### Tracing Crate Enhancements
 
 - [ ] Independent publication — Extract to separate repository and publish to crates.io
 - [ ] Async support — Add `capture_tracing_async()` if needed
