@@ -37,18 +37,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
-      - name: Configure npm authentication
-        if: steps.check-token.outputs.has-token == 'true'
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          registry-url: "https://registry.npmjs.org"
 
       - name: Unpublish stale staging versions
         if: steps.check-token.outputs.has-token == 'true'
         shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           # Max age: 2 days = 48 hours = 172800 seconds.
           # npm allows unpublish within 72 hours of publishing. In the worst
@@ -120,8 +115,3 @@ jobs:
           done
 
           echo "Cleanup complete: unpublished $unpublished package versions"
-
-      - name: Clean up npmrc
-        if: always() && steps.check-token.outputs.has-token == 'true'
-        shell: bash
-        run: rm -f ~/.npmrc
