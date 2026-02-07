@@ -4,7 +4,8 @@
 
 | Method | Status | Notes |
 | -------- | -------- | ------- |
-| API Keys | Initial implementation | Personal use, single user |
+| API Keys (Basic) | Implemented | Base64-encoded credentials over HTTPS; personal use, single user |
+| API Keys (HMAC-SHA256) | Future | Per-request signed headers with nonce/timestamp; replay protection, secret never sent |
 | OAuth 2.0 | Future | Multi-user apps, team access |
 
 ## Credential Sources

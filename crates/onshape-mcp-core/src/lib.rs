@@ -7,6 +7,7 @@ pub mod config;
 pub mod tools;
 
 use chrono::{DateTime, Utc};
+use onshape_client_core::auth::AuthMethod;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,8 @@ pub enum AuthStatus {
 pub struct AuthStatusResult {
     /// Current authentication status.
     pub status: AuthStatus,
+    /// Configured authentication method.
+    pub auth_method: AuthMethod,
     /// Timestamp of the last authentication check, if any.
     pub last_check: Option<DateTime<Utc>>,
     /// Human-readable message explaining the status.
@@ -41,9 +44,10 @@ pub struct AuthStatusResult {
 impl AuthStatusResult {
     /// Returns a result indicating no credentials are configured.
     #[must_use]
-    pub fn not_configured() -> Self {
+    pub fn not_configured(auth_method: AuthMethod) -> Self {
         Self {
             status: AuthStatus::NotConfigured,
+            auth_method,
             last_check: None,
             message: Some("No credentials configured".into()),
         }
@@ -51,9 +55,10 @@ impl AuthStatusResult {
 
     /// Returns a result indicating credentials are configured but not yet validated.
     #[must_use]
-    pub fn not_validated() -> Self {
+    pub fn not_validated(auth_method: AuthMethod) -> Self {
         Self {
             status: AuthStatus::NotValidated,
+            auth_method,
             last_check: None,
             message: Some(
                 "Credentials configured but not yet validated against Onshape API".into(),
@@ -63,9 +68,10 @@ impl AuthStatusResult {
 
     /// Returns a result indicating only partial credentials are configured.
     #[must_use]
-    pub fn partial_credentials(missing_field: &str) -> Self {
+    pub fn partial_credentials(missing_field: &str, auth_method: AuthMethod) -> Self {
         Self {
             status: AuthStatus::NotConfigured,
+            auth_method,
             last_check: None,
             message: Some(format!(
                 "Incomplete credentials: {missing_field} is not configured"
@@ -131,26 +137,29 @@ mod tests {
 
     #[test]
     fn auth_status_result_not_configured() {
-        let result = AuthStatusResult::not_configured();
+        let result = AuthStatusResult::not_configured(AuthMethod::Basic);
 
         assert_eq!(result.status, AuthStatus::NotConfigured);
+        assert_eq!(result.auth_method, AuthMethod::Basic);
         assert!(result.last_check.is_none());
         assert_eq!(result.message.as_deref(), Some("No credentials configured"));
     }
 
     #[test]
     fn auth_status_serializes_to_snake_case() {
-        let result = AuthStatusResult::not_configured();
+        let result = AuthStatusResult::not_configured(AuthMethod::Basic);
         let json = serde_json::to_string(&result).expect("should serialize");
 
         assert!(json.contains("\"status\":\"not_configured\""));
+        assert!(json.contains("\"auth_method\":\"basic\""));
     }
 
     #[test]
     fn auth_status_not_validated() {
-        let result = AuthStatusResult::not_validated();
+        let result = AuthStatusResult::not_validated(AuthMethod::Basic);
 
         assert_eq!(result.status, AuthStatus::NotValidated);
+        assert_eq!(result.auth_method, AuthMethod::Basic);
         assert!(result.last_check.is_none());
         assert!(
             result
@@ -162,7 +171,7 @@ mod tests {
 
     #[test]
     fn auth_status_not_validated_serializes() {
-        let result = AuthStatusResult::not_validated();
+        let result = AuthStatusResult::not_validated(AuthMethod::Basic);
         let json = serde_json::to_string(&result).expect("should serialize");
 
         assert!(json.contains("\"status\":\"not_validated\""));
@@ -170,7 +179,7 @@ mod tests {
 
     #[test]
     fn auth_status_partial_credentials() {
-        let result = AuthStatusResult::partial_credentials("secret_key");
+        let result = AuthStatusResult::partial_credentials("secret_key", AuthMethod::Basic);
 
         assert_eq!(result.status, AuthStatus::NotConfigured);
         assert!(

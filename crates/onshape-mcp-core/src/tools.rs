@@ -85,10 +85,13 @@ fn tool_auth_status_def() -> Tool {
 }
 
 fn call_auth_status(auth_config: &AuthConfig) -> Result<CallToolResult, ErrorData> {
+    let method = auth_config.method;
     let result = match auth_config.credential_status() {
-        CredentialStatus::NonePresent => AuthStatusResult::not_configured(),
-        CredentialStatus::BothPresent => AuthStatusResult::not_validated(),
-        CredentialStatus::Partial { missing } => AuthStatusResult::partial_credentials(missing),
+        CredentialStatus::NonePresent => AuthStatusResult::not_configured(method),
+        CredentialStatus::BothPresent => AuthStatusResult::not_validated(method),
+        CredentialStatus::Partial { missing } => {
+            AuthStatusResult::partial_credentials(missing, method)
+        }
     };
     let content = Content::json(&result)?;
     Ok(CallToolResult {

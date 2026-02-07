@@ -1,0 +1,23 @@
+[package]
+name = "onshape-client-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Pure Onshape API logic and types (sans-IO)"
+keywords = ["onshape", "cad", "api"]
+categories = ["api-bindings"]
+
+[dependencies]
+base64.workspace = true
+schemars.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

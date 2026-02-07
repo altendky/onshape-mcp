@@ -127,10 +127,11 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
 ///
 /// This avoids needing `Serialize` on `AppConfig` (which contains `SecretString`
 /// that intentionally doesn't implement `Serialize`).
-const DEFAULTS_TOML: &str = r"
+const DEFAULTS_TOML: &str = r#"
 [auth]
+method = "basic"
 check_interval = 300
-";
+"#;
 
 /// Builds the base figment with defaults, optional config file, and env vars.
 fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLoadError> {
