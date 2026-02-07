@@ -167,7 +167,7 @@ The binaries inside are identical — only the `package.json` version field diff
 - Run `npx onshape-mcp --version`, verify output
 
 Staging packages are **not** cleaned up by this workflow.
-They remain on npm for up to 2.25 days, allowing manual testing of PR builds.
+They remain on npm for up to 2.2 days (52.8 hours), allowing manual testing of PR builds.
 Cleanup is handled by a separate scheduled workflow — see [Staging Cleanup](#staging-cleanup).
 
 ## Staging Cleanup
@@ -187,7 +187,7 @@ The workflow:
 1. Lists all versions of `onshape-mcp` and each `@onshape-mcp/*` platform package
 2. Filters for staging versions (matching the `*-staging-*` pattern)
 3. Checks publish timestamps for each staging version
-4. Unpublishes any staging version older than 2.25 days
+4. Unpublishes any staging version older than 2.2 days (52.8 hours)
 5. Unpublishes main package before platform packages (reverse of publish order)
 
 Staging versions are identifiable by their format: `{version}-staging-{sanitized_ref}-{commit_sha}-{run_id}`.
@@ -292,7 +292,7 @@ It is created in the staging workflow alongside the release artifacts.
 | `.github/workflows/release.yml` | Entry point for manual dispatch + tag push |
 | `.github/workflows/reflow-release-staging.yml` | Reusable: build, test, staging publish |
 | `.github/workflows/reflow-release-finalize.yml` | Reusable: real publish, crates.io, GitHub release |
-| `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.25 days |
+| `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
 
 ## Modified Files
