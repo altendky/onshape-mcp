@@ -164,13 +164,22 @@ jobs:
             chmod +x "$dst"
           done
 
+      - name: Compute platform directories
+        id: platform-dirs
+        shell: bash
+        run: |
+          platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
+          dirs=$(echo "$platforms" | jq -r '.[]."npm-platform"' | sed 's|^|npm/|' | tr '\n' ' ')
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+          echo "Platform directories: $dirs"
+
       - name: Pack npm tarballs (real version)
         shell: bash
         run: |
           mkdir -p dist/release-tarballs
 
           # Pack platform packages first
-          for dir in npm/linux-x64 npm/linux-arm64 npm/darwin-x64 npm/darwin-arm64 npm/win32-x64; do
+          for dir in ${{ steps.platform-dirs.outputs.dirs }}; do
             echo "Packing $dir (release)..."
             tarball=$(npm pack "./$dir" --pack-destination dist/release-tarballs 2>&1 | tail -1)
             echo "  -> $tarball"
@@ -190,7 +199,7 @@ jobs:
           staging_version="${{ needs.verify.outputs.staging-version }}"
           echo "Updating all package.json to staging version: $staging_version"
 
-          for pkg_dir in npm/onshape-mcp npm/linux-x64 npm/linux-arm64 npm/darwin-x64 npm/darwin-arm64 npm/win32-x64; do
+          for pkg_dir in npm/onshape-mcp ${{ steps.platform-dirs.outputs.dirs }}; do
             pkg_json="$pkg_dir/package.json"
             echo "Updating $pkg_json to $staging_version"
             # Update version field
@@ -207,7 +216,7 @@ jobs:
           mkdir -p dist/staging-tarballs
 
           # Pack platform packages first
-          for dir in npm/linux-x64 npm/linux-arm64 npm/darwin-x64 npm/darwin-arm64 npm/win32-x64; do
+          for dir in ${{ steps.platform-dirs.outputs.dirs }}; do
             echo "Packing $dir (staging)..."
             tarball=$(npm pack "./$dir" --pack-destination dist/staging-tarballs 2>&1 | tail -1)
             echo "  -> $tarball"
