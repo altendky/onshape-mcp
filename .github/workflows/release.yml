@@ -82,9 +82,10 @@ jobs:
           PLATFORMS: ${{ steps.library.outputs.matrix }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
+          set -euo pipefail
           mkdir -p dist/release
 
-          echo "$PLATFORMS" | jq -c '.release[]' | while read -r entry; do
+          while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
             rust_target=$(echo "$entry" | jq -r '.["rust-target"]')
             binary_name=$(echo "$entry" | jq -r '.["binary-name"]')
@@ -105,8 +106,11 @@ jobs:
               tar -czf "dist/release/${archive_name}.tar.gz" -C dist/staging "$archive_name"
             elif [[ "$archive_format" == "zip" ]]; then
               (cd dist/staging && zip -r "../release/${archive_name}.zip" "$archive_name")
+            else
+              echo "ERROR: Unknown archive format '${archive_format}' for ${rust_target}" >&2
+              exit 1
             fi
-          done
+          done < <(echo "$PLATFORMS" | jq -c '.release[]')
 
           echo "Release archives:"
           ls -la dist/release/
