@@ -70,28 +70,32 @@ jobs:
 
       - name: Update package.json files to target version
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          PLATFORM_DIRS: ${{ steps.platform-dirs.outputs.dirs }}
         run: |
-          version="${{ inputs.version }}"
-          echo "Updating all package.json to version: $version"
+          echo "Updating all package.json to version: $VERSION"
 
-          for pkg_dir in npm/onshape-mcp ${{ steps.platform-dirs.outputs.dirs }}; do
+          for pkg_dir in npm/onshape-mcp $PLATFORM_DIRS; do
             pkg_json="$pkg_dir/package.json"
-            echo "Updating $pkg_json to $version"
+            echo "Updating $pkg_json to $VERSION"
             # Update version field
-            jq --arg v "$version" '.version = $v' "$pkg_json" > tmp.json && mv tmp.json "$pkg_json"
+            jq --arg v "$VERSION" '.version = $v' "$pkg_json" > tmp.json && mv tmp.json "$pkg_json"
             # Update optionalDependencies versions if present
             if jq -e '.optionalDependencies' "$pkg_json" > /dev/null 2>&1; then
-              jq --arg v "$version" '.optionalDependencies |= with_entries(if .key | startswith("@onshape-mcp/") then .value = $v else . end)' "$pkg_json" > tmp.json && mv tmp.json "$pkg_json"
+              jq --arg v "$VERSION" '.optionalDependencies |= with_entries(if .key | startswith("@onshape-mcp/") then .value = $v else . end)' "$pkg_json" > tmp.json && mv tmp.json "$pkg_json"
             fi
           done
 
       - name: Pack npm tarballs
         shell: bash
+        env:
+          PLATFORM_DIRS: ${{ steps.platform-dirs.outputs.dirs }}
         run: |
           mkdir -p dist/tarballs
 
           # Pack platform packages first
-          for dir in ${{ steps.platform-dirs.outputs.dirs }}; do
+          for dir in $PLATFORM_DIRS; do
             echo "Packing $dir..."
             tarball=$(npm pack "./$dir" --pack-destination dist/tarballs --json | jq -r '.[0].filename')
             echo "  -> $tarball"
@@ -138,18 +142,18 @@ jobs:
 
       - name: Install from tarballs
         shell: bash
+        env:
+          NPM_PLATFORM: ${{ matrix.platform.npm-platform }}
         run: |
           mkdir test-install
           cd test-install
           npm init -y
 
-          npm_platform="${{ matrix.platform.npm-platform }}"
-
           # Install the platform tarball for this platform
           shopt -s failglob
-          platform_tarballs=( ../tarballs/onshape-mcp-"${npm_platform}"-* )
+          platform_tarballs=( ../tarballs/onshape-mcp-"${NPM_PLATFORM}"-* )
           if [[ ${#platform_tarballs[@]} -ne 1 ]]; then
-            echo "ERROR: Expected exactly 1 tarball for ${npm_platform}, found ${#platform_tarballs[@]}" >&2
+            echo "ERROR: Expected exactly 1 tarball for ${NPM_PLATFORM}, found ${#platform_tarballs[@]}" >&2
             exit 1
           fi
           platform_tarball="${platform_tarballs[0]}"
@@ -168,15 +172,16 @@ jobs:
 
       - name: Verify binary version
         shell: bash
+        env:
+          BINARY_VERSION: ${{ inputs.binary-version }}
         run: |
           cd test-install
-          version="${{ inputs.binary-version }}"
           output=$(npx onshape-mcp --version 2>&1)
           echo "Binary output: $output"
-          if echo "$output" | grep -qF "$version"; then
-            echo "OK: Version matches ($version)"
+          if echo "$output" | grep -qF "$BINARY_VERSION"; then
+            echo "OK: Version matches ($BINARY_VERSION)"
           else
-            echo "ERROR: Expected version $version in output: $output" >&2
+            echo "ERROR: Expected version $BINARY_VERSION in output: $output" >&2
             exit 1
           fi
 
@@ -236,6 +241,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           PLATFORMS: ${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}
+          DIST_TAG: ${{ inputs.dist-tag }}
         run: |
           echo "$PLATFORMS" | jq -c '.[]' | while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
@@ -246,7 +252,7 @@ jobs:
               exit 1
             fi
             echo "Publishing ${tarballs[0]}..."
-            npm publish "${tarballs[0]}" --tag "${{ inputs.dist-tag }}" --access public
+            npm publish "${tarballs[0]}" --tag "$DIST_TAG" --access public
           done
 
       - name: Publish main package
@@ -254,6 +260,7 @@ jobs:
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ inputs.dist-tag }}
         run: |
           shopt -s failglob
           tarballs=( ./tarballs/onshape-mcp-[0-9]* )
@@ -262,7 +269,7 @@ jobs:
             exit 1
           fi
           echo "Publishing ${tarballs[0]}..."
-          npm publish "${tarballs[0]}" --tag "${{ inputs.dist-tag }}" --access public
+          npm publish "${tarballs[0]}" --tag "$DIST_TAG" --access public
 
   test-published:
     name: "Test npm published (${{ matrix.platform.name }})"
@@ -281,9 +288,10 @@ jobs:
 
       - name: Install from registry
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          NPM_PLATFORM: ${{ matrix.platform.npm-platform }}
         run: |
-          version="${{ inputs.version }}"
-          npm_platform="${{ matrix.platform.npm-platform }}"
           mkdir test-registry-install
           cd test-registry-install
           npm init -y
@@ -293,16 +301,16 @@ jobs:
           # because platform packages are optionalDependencies — npm install can
           # succeed even if the platform-specific package hasn't propagated yet.
           bin_name="onshape-mcp"
-          if [[ "$npm_platform" == win32-* ]]; then
+          if [[ "$NPM_PLATFORM" == win32-* ]]; then
             bin_name="onshape-mcp.exe"
           fi
-          expected_bin="node_modules/@onshape-mcp/${npm_platform}/bin/${bin_name}"
+          expected_bin="node_modules/@onshape-mcp/${NPM_PLATFORM}/bin/${bin_name}"
 
           max_attempts=5
           delay=10
           for attempt in $(seq 1 "$max_attempts"); do
-            echo "Attempt ${attempt}/${max_attempts}: installing onshape-mcp@${version}..."
-            if npm install "onshape-mcp@${version}" && [[ -f "$expected_bin" ]]; then
+            echo "Attempt ${attempt}/${max_attempts}: installing onshape-mcp@${VERSION}..."
+            if npm install "onshape-mcp@${VERSION}" && [[ -f "$expected_bin" ]]; then
               echo "Install succeeded and platform binary exists: ${expected_bin}"
               break
             fi
@@ -321,14 +329,15 @@ jobs:
 
       - name: Verify binary version
         shell: bash
+        env:
+          BINARY_VERSION: ${{ inputs.binary-version }}
         run: |
           cd test-registry-install
-          version="${{ inputs.binary-version }}"
           output=$(npx onshape-mcp --version 2>&1)
           echo "Binary output: $output"
-          if echo "$output" | grep -qF "$version"; then
-            echo "OK: Version matches ($version)"
+          if echo "$output" | grep -qF "$BINARY_VERSION"; then
+            echo "OK: Version matches ($BINARY_VERSION)"
           else
-            echo "ERROR: Expected version $version in output: $output" >&2
+            echo "ERROR: Expected version $BINARY_VERSION in output: $output" >&2
             exit 1
           fi
