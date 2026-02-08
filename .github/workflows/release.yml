@@ -5,11 +5,6 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      dry-run:
-        description: "Skip publish steps (run full build/test pipeline only)"
-        type: boolean
-        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -37,12 +32,10 @@ jobs:
       version: ${{ needs.version.outputs.version }}
       binary-version: ${{ needs.version.outputs.version }}
       dist-tag: latest
-      dry-run: ${{ inputs.dry-run || false }}
 
   cargo-publish:
     name: Publish crates
     needs: [version]
-    if: ${{ !(inputs.dry-run || false) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

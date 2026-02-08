@@ -15,10 +15,6 @@ on:
         description: "npm dist-tag for publish (e.g., staging or latest)"
         type: string
         required: true
-      dry-run:
-        description: "Skip npm publish (run package and tarball tests only)"
-        type: boolean
-        default: false
 
 jobs:
   library:
@@ -174,7 +170,6 @@ jobs:
   publish:
     name: Publish npm
     needs: [library, package, test-tarballs]
-    if: ${{ !inputs.dry-run }}
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.check-auth.outputs.can-publish }}
