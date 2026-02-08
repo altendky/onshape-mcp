@@ -235,7 +235,7 @@ jobs:
               exit 1
             fi
             echo "Publishing ${tarballs[0]}..."
-            npm publish "${tarballs[0]}" --tag ${{ inputs.dist-tag }} --access public
+            npm publish "${tarballs[0]}" --tag "${{ inputs.dist-tag }}" --access public
           done
 
       - name: Publish main package
@@ -251,7 +251,7 @@ jobs:
             exit 1
           fi
           echo "Publishing ${tarballs[0]}..."
-          npm publish "${tarballs[0]}" --tag ${{ inputs.dist-tag }} --access public
+          npm publish "${tarballs[0]}" --tag "${{ inputs.dist-tag }}" --access public
 
   test-published:
     name: "Test npm published (${{ matrix.platform.name }})"
