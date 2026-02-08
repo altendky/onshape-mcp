@@ -12,15 +12,27 @@ set -euo pipefail
 # Get workspace package names, their workspace-internal dependencies,
 # and whether they are publishable.
 # Output format: one line per publishable crate, "name dep1 dep2 ..."
-readarray -t crate_info < <(
-	cargo metadata --format-version 1 --no-deps | jq -r '
+#
+# cargo metadata and jq are run separately so that set -e catches
+# failures in either command (process substitution does not propagate
+# exit codes).
+metadata=$(cargo metadata --format-version 1 --no-deps)
+
+crate_lines=$(echo "$metadata" | jq -r '
     .packages | map(.name) as $ws_names |
     .[] |
     select(.publish == null or .publish == []) |
     [.name] + [.dependencies[] | .name | select(. as $n | $ws_names | index($n))] |
     join(" ")
-  '
-)
+  ')
+
+readarray -t crate_info <<<"$crate_lines"
+
+# readarray on an empty string produces a single empty-string element;
+# treat that the same as "no crates found".
+if [[ ${#crate_info[@]} -eq 1 && -z "${crate_info[0]}" ]]; then
+	crate_info=()
+fi
 
 if ((${#crate_info[@]} == 0)); then
 	echo "No publishable workspace crates found"
