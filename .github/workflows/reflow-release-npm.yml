@@ -297,7 +297,7 @@ jobs:
           cd test-registry-install
           npm init -y
 
-          # Retry with exponential backoff to allow for npm registry propagation.
+          # Retry with fixed interval to allow for npm registry propagation.
           # After npm install succeeds we also verify the platform binary exists
           # because platform packages are optionalDependencies — npm install can
           # succeed even if the platform-specific package hasn't propagated yet.
@@ -307,8 +307,8 @@ jobs:
           fi
           expected_bin="node_modules/@onshape-mcp/${NPM_PLATFORM}/bin/${bin_name}"
 
-          max_attempts=5
-          delay=10
+          max_attempts=15
+          delay=30
           for attempt in $(seq 1 "$max_attempts"); do
             echo "Attempt ${attempt}/${max_attempts}: installing onshape-mcp@${VERSION}..."
             install_ok=false
@@ -335,7 +335,6 @@ jobs:
             fi
             rm -rf node_modules package-lock.json
             sleep "$delay"
-            delay=$((delay * 2))
           done
 
       - name: Verify binary version
