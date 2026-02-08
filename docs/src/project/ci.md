@@ -143,7 +143,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    cargo-publish: (needs: version)                           │
 │      cargo publish in dependency order                       │
 │                                                              │
-│    github-release: (needs: build, npm, cargo-publish)        │
+│    github-release: (needs: version, build, npm, cargo-publish) │
 │      Package archives + SHA256SUMS, gh release create        │
 │      (tag push only)                                         │
 └─────────────────────────────────────────────────────────────┘

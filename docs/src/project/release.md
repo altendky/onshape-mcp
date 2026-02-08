@@ -208,7 +208,7 @@ version ──► build ──► npm (version=real, tag=latest)
 
 - `cargo publish` for all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
 
-**github-release** (ubuntu-latest, needs: build + npm + cargo-publish)
+**github-release** (ubuntu-latest, needs: version + build + npm + cargo-publish)
 
 - Download binary artifacts from the build workflow
 - Package release archives (tar.gz for Unix, zip for Windows) with license files
