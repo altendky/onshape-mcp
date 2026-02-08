@@ -231,7 +231,7 @@ Artifacts are shared across workflow runs via GitHub Actions upload/download.
 
 | Artifact | Created by | Consumed by |
 | -------- | ---------- | ----------- |
-| `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `release.yml` github-release |
+| `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `release.yml` `github-release` |
 | `npm-tarballs` (6) | `reflow-release-npm.yml` package job | npm test-tarballs, npm publish, npm test-published |
 
 ## Crate Naming and Publish Order
