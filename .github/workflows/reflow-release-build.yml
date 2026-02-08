@@ -1,0 +1,60 @@
+name: Release Build
+
+on:
+  workflow_call:
+
+jobs:
+  library:
+    name: Generate library
+    uses: ./.github/workflows/reflow-library.yml
+
+  build:
+    name: "Build (${{ matrix.platform.name }})"
+    needs: [library]
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.platform.rust-target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.platform.rust-target }}
+
+      - name: Verify static linking (Linux)
+        if: contains(matrix.platform.rust-target, 'linux-musl')
+        shell: bash
+        run: |
+          binary="target/${{ matrix.platform.rust-target }}/release/${{ matrix.platform.binary-name }}"
+          echo "Checking: $binary"
+          file "$binary"
+          if file "$binary" | grep -qE 'statically linked|static-pie linked'; then
+            echo "OK: Binary is statically linked"
+          else
+            echo "ERROR: Binary is dynamically linked" >&2
+            exit 1
+          fi
+
+      - name: Smoke test binary
+        shell: bash
+        run: |
+          binary="target/${{ matrix.platform.rust-target }}/release/${{ matrix.platform.binary-name }}"
+          echo "Running: $binary --version"
+          "$binary" --version
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: binary-${{ matrix.platform.npm-platform }}
+          path: target/${{ matrix.platform.rust-target }}/release/${{ matrix.platform.binary-name }}
+          retention-days: 3

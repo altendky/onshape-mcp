@@ -67,8 +67,10 @@ Store credentials in repository secrets:
 | `.github/workflows/reflow-rust.yml` | Reusable workflow for Rust lint, build, and test jobs |
 | `.github/workflows/reflow-coverage.yml` | Reusable workflow for Rust coverage generation (5 platform jobs) |
 | `.github/workflows/reflow-npm.yml` | Reusable workflow for npm checks and coverage (1 + 5 platform jobs) |
-| `.github/workflows/reflow-release-staging.yml` | Reusable workflow for release build, test, npm staging publish |
-| `.github/workflows/release.yml` | Entry point for manual dispatch + tag push releases |
+| `.github/workflows/reflow-release-version.yml` | Reusable workflow for version extraction and tag verification |
+| `.github/workflows/reflow-release-build.yml` | Reusable workflow for release binary builds (5 platforms) |
+| `.github/workflows/reflow-release-npm.yml` | Reusable workflow for npm package, publish, and test |
+| `.github/workflows/release.yml` | Entry point for tag push releases |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
 
@@ -105,9 +107,45 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    npm:                                                      │
 │      uses: ./.github/workflows/reflow-npm.yml               │
 │                                                              │
+│    release-version:                                          │
+│      uses: ./.github/workflows/reflow-release-version.yml   │
+│                                                              │
+│    release-build:                                            │
+│      uses: ./.github/workflows/reflow-release-build.yml     │
+│                                                              │
+│    compute-staging-version: (needs: release-version)         │
+│      Computes staging version from ref, sha, run_id          │
+│                                                              │
+│    release-npm: (needs: compute-staging-version, release-build) │
+│      uses: ./.github/workflows/reflow-release-npm.yml       │
+│      (version=staging, dist-tag=staging)                     │
+│                                                              │
 │    all:                                                      │
-│      needs: [pre-commit, rust, coverage, npm]               │
+│      needs: [pre-commit, rust, coverage, npm,               │
+│              release-npm]                                    │
 │      uses: re-actors/alls-green                             │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│              release.yml (entry point)                        │
+├─────────────────────────────────────────────────────────────┤
+│  jobs:                                                       │
+│    version:                                                  │
+│      uses: ./.github/workflows/reflow-release-version.yml   │
+│                                                              │
+│    build:                                                    │
+│      uses: ./.github/workflows/reflow-release-build.yml     │
+│                                                              │
+│    npm: (needs: version, build)                              │
+│      uses: ./.github/workflows/reflow-release-npm.yml       │
+│      (version=real, dist-tag=latest)                         │
+│                                                              │
+│    cargo-publish: (needs: version)                           │
+│      cargo publish in dependency order                       │
+│                                                              │
+│    github-release: (needs: version, build, npm, cargo-publish) │
+│      Package archives + SHA256SUMS, gh release create        │
+│      (tag push only)                                         │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -145,7 +183,6 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │            reflow-npm.yml (reusable workflow)                │
 ├─────────────────────────────────────────────────────────────┤
 │  jobs:                                                       │
-│    check: 1 job (version sync, smoke tests)                 │
 │    library: uses reflow-library.yml                         │
 │    coverage: 5 platform jobs (c8 coverage)                  │
 └─────────────────────────────────────────────────────────────┘
@@ -160,7 +197,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Note:** Each reusable workflow calls `reflow-library.yml` internally to get the matrix configuration. This results in the library job running 4 times per CI run (once per reusable workflow that needs platform matrices), but the overhead is minimal.
+**Note:** Each reusable workflow calls `reflow-library.yml` internally to get the matrix configuration. This results in the library job running 6 times per CI run (once per reusable workflow that needs platform matrices), but the overhead is minimal.
 
 ## Library Action
 
@@ -263,13 +300,16 @@ environments, verifying that statically-linked musl binaries work correctly on g
 
 | Workflow | Jobs |
 | -------- | ---- |
-| Pre-commit | 5 (1 per platform) |
-| Rust | 38 (1 lint + 15 build + 21 test + 1 resolve-versions) |
-| Coverage | 5 (Rust, stable only × 5 platforms) |
-| npm | 6 (1 check + 5 coverage) |
-| Library | 4 (called by each reusable workflow needing platform matrix) |
+| Pre-commit | 6 (1 library + 5 check) |
+| Rust | 39 (1 library + 1 resolve-versions + 1 lint + 15 build + 21 test) |
+| Coverage | 6 (1 library + 5 check) |
+| npm | 6 (1 library + 5 coverage) |
+| Release Version | 1 |
+| Release Build | 6 (1 library + 5 build) |
+| Compute staging version | 1 |
+| Release npm | 13 (1 library + 1 package + 5 test-tarballs + 1 publish + 5 test-published) |
 | All | 1 |
-| **Total** | **59 jobs** |
+| **Total** | **79 jobs** |
 
 **Rust job breakdown:**
 
