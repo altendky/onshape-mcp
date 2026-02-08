@@ -301,7 +301,7 @@ It is generated in the `github-release` job at release time.
 
 | File | Change |
 | ---- | ------ |
-| `.github/workflows/ci.yml` | Add release verify, build, staging-version, and npm jobs; wire into `all` gate |
+| `.github/workflows/ci.yml` | Add release-version, release-build, compute-staging-version, and release-npm jobs; wire into `all` gate |
 | `docs/src/project/ci.md` | Document new workflows and updated job counts |
 
 ## Secrets and Permissions
