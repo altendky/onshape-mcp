@@ -32,6 +32,17 @@ done
 
 if [[ -n "$dry_run" ]]; then
 	echo "Dry-run mode: validating crate packaging without publishing"
+	# In dry-run mode, skip the build-from-packaged-source verification
+	# (--no-verify).  cargo publish --dry-run verifies by building the
+	# crate from the packaged tarball, which requires all dependencies
+	# to be available on crates.io.  Workspace crates that haven't been
+	# published yet (pre-first-release) won't be found, causing spurious
+	# failures.  --no-verify still validates Cargo.toml metadata, package
+	# file inclusion, and version formatting.  The actual build is already
+	# verified by the Rust CI jobs.
+	no_verify="--no-verify"
+else
+	no_verify=""
 fi
 
 # Get workspace package names, their workspace-internal dependencies,
@@ -104,7 +115,7 @@ while ((${#crate_info[@]} > 0)); do
 			max_retries=3
 			retry_delay=15
 			for attempt in $(seq 1 "$max_retries"); do
-				if cargo publish -p "$name" $dry_run; then
+				if cargo publish -p "$name" $dry_run $no_verify; then
 					break
 				fi
 				if [[ "$attempt" -eq "$max_retries" ]]; then
