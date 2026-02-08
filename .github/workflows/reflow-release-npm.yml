@@ -146,12 +146,23 @@ jobs:
           npm_platform="${{ matrix.platform.npm-platform }}"
 
           # Install the platform tarball for this platform
-          platform_tarball=$(ls ../tarballs/onshape-mcp-${npm_platform}-*)
+          shopt -s failglob
+          platform_tarballs=( ../tarballs/onshape-mcp-"${npm_platform}"-* )
+          if [[ ${#platform_tarballs[@]} -ne 1 ]]; then
+            echo "ERROR: Expected exactly 1 tarball for ${npm_platform}, found ${#platform_tarballs[@]}" >&2
+            exit 1
+          fi
+          platform_tarball="${platform_tarballs[0]}"
           echo "Installing platform tarball: $platform_tarball"
           npm install "$platform_tarball"
 
           # Install the main package tarball
-          main_tarball=$(ls ../tarballs/onshape-mcp-[0-9]*)
+          main_tarballs=( ../tarballs/onshape-mcp-[0-9]* )
+          if [[ ${#main_tarballs[@]} -ne 1 ]]; then
+            echo "ERROR: Expected exactly 1 main tarball, found ${#main_tarballs[@]}" >&2
+            exit 1
+          fi
+          main_tarball="${main_tarballs[0]}"
           echo "Installing main tarball: $main_tarball"
           npm install "$main_tarball"
 
