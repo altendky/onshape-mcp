@@ -60,7 +60,20 @@ while ((${#crate_info[@]} > 0)); do
 
 		if $all_met; then
 			echo "Publishing ${name}..."
-			cargo publish -p "$name"
+			max_retries=3
+			retry_delay=15
+			for attempt in $(seq 1 "$max_retries"); do
+				if cargo publish -p "$name"; then
+					break
+				fi
+				if [[ "$attempt" -eq "$max_retries" ]]; then
+					echo "ERROR: cargo publish failed for ${name} after ${max_retries} attempts" >&2
+					exit 1
+				fi
+				echo "Retrying in ${retry_delay}s (attempt ${attempt}/${max_retries})..."
+				sleep "$retry_delay"
+				retry_delay=$((retry_delay * 2))
+			done
 			published+=("$name")
 			progress=true
 
@@ -71,7 +84,7 @@ while ((${#crate_info[@]} > 0)); do
 			# iterations — in this round or the next — may need the index
 			# to reflect what was just published.
 			if ((${#crate_info[@]} > 1)); then
-				sleep 5
+				sleep 15
 			fi
 		else
 			next+=("$entry")
