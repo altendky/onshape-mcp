@@ -64,7 +64,7 @@ jobs:
         env:
           PLATFORMS: ${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}
         run: |
-          dirs=$(echo "$PLATFORMS" | jq -r '.[]."npm-platform"' | sed 's|^|npm/|' | tr '\n' ' ')
+          dirs=$(echo "$PLATFORMS" | jq -r '.[]."npm-platform"' | sed 's|^|npm/|' | paste -sd ' ' -)
           echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
           echo "Platform directories: $dirs"
 
