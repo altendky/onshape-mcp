@@ -64,7 +64,7 @@ Examples:
 
 - PR branch `feature/add-auth`: `0.2.0-staging-feature-add-auth-abc1234-12345678`
 - Tag `v0.2.0`: `0.2.0-staging-v0-2-0-abc1234-12345678`
-- Manual dispatch on `main`: `0.2.0-staging-main-abc1234-12345678`
+- Push to `main`: `0.2.0-staging-main-abc1234-12345678`
 
 ### Sanitization
 
@@ -200,13 +200,14 @@ version ──► build ──► npm (version=real, tag=latest)
         (needs: build, cargo-publish, npm)
 ```
 
-`build` and `cargo-publish` start in parallel (independent). `github-release` waits for everything and only runs on tag push.
+`build` and `cargo-publish` start in parallel (independent). `github-release` waits for everything and has an `if: github.ref_type == 'tag'` guard, though since the only trigger for `release.yml` is a tag push this condition is always true.
 
 ### Release-Only Jobs
 
 **cargo-publish** (ubuntu-latest)
 
 - `cargo publish` for all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
+
 **github-release** (ubuntu-latest, needs: build + npm + cargo-publish)
 
 - Download binary artifacts from the build workflow

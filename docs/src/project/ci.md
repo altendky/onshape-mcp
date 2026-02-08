@@ -116,7 +116,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    compute-staging-version: (needs: release-version)         │
 │      Computes staging version from ref, sha, run_id          │
 │                                                              │
-│    release-npm: (needs: staging-version, release-build)      │
+│    release-npm: (needs: compute-staging-version, release-build) │
 │      uses: ./.github/workflows/reflow-release-npm.yml       │
 │      (version=staging, dist-tag=staging)                     │
 │                                                              │
@@ -301,17 +301,16 @@ environments, verifying that statically-linked musl binaries work correctly on g
 
 | Workflow | Jobs |
 | -------- | ---- |
-| Pre-commit | 5 (1 per platform) |
-| Rust | 38 (1 lint + 15 build + 21 test + 1 resolve-versions) |
-| Coverage | 5 (Rust, stable only × 5 platforms) |
-| npm | 6 (1 check + 5 coverage) |
+| Pre-commit | 6 (1 library + 5 check) |
+| Rust | 39 (1 library + 1 resolve-versions + 1 lint + 15 build + 21 test) |
+| Coverage | 6 (1 library + 5 check) |
+| npm | 6 (1 library + 5 coverage) |
 | Release Version | 1 |
-| Release Build | 5 (1 per platform) |
+| Release Build | 6 (1 library + 5 build) |
 | Compute staging version | 1 |
-| Release npm | 12 (1 package + 5 test-tarballs + 1 publish + 5 test-published) |
-| Library | 6 (called by each reusable workflow needing platform matrix) |
+| Release npm | 13 (1 library + 1 package + 5 test-tarballs + 1 publish + 5 test-published) |
 | All | 1 |
-| **Total** | **80 jobs** |
+| **Total** | **79 jobs** |
 
 **Rust job breakdown:**
 
