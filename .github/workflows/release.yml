@@ -14,7 +14,7 @@ jobs:
     name: Version
     uses: ./.github/workflows/reflow-release-version.yml
     with:
-      git-tag: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      git-tag: ${{ github.ref_name }}
 
   build:
     name: Build
@@ -22,6 +22,8 @@ jobs:
 
   npm:
     name: npm
+    # Safety guard: always true since this workflow only triggers on push.tags
+    if: github.ref_type == 'tag'
     needs: [version, build]
     uses: ./.github/workflows/reflow-release-npm.yml
     permissions:
@@ -34,6 +36,8 @@ jobs:
 
   cargo-publish:
     name: Publish crates
+    # Safety guard: always true since this workflow only triggers on push.tags
+    if: github.ref_type == 'tag'
     needs: [version]
     runs-on: ubuntu-latest
     steps:
@@ -52,6 +56,7 @@ jobs:
 
   github-release:
     name: GitHub Release
+    # Safety guard: always true since this workflow only triggers on push.tags
     if: github.ref_type == 'tag'
     needs: [version, build, npm, cargo-publish]
     runs-on: ubuntu-latest
