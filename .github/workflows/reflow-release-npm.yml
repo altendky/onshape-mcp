@@ -310,18 +310,28 @@ jobs:
           delay=10
           for attempt in $(seq 1 "$max_attempts"); do
             echo "Attempt ${attempt}/${max_attempts}: installing onshape-mcp@${VERSION}..."
-            if npm install "onshape-mcp@${VERSION}" && [[ -f "$expected_bin" ]]; then
+            install_ok=false
+            if npm install "onshape-mcp@${VERSION}"; then
+              install_ok=true
+            fi
+            if [[ "$install_ok" == "true" ]] && [[ -f "$expected_bin" ]]; then
               echo "Install succeeded and platform binary exists: ${expected_bin}"
               break
             fi
             if [[ "$attempt" -eq "$max_attempts" ]]; then
               echo "ERROR: Install failed after ${max_attempts} attempts" >&2
-              if [[ ! -f "$expected_bin" ]]; then
+              if [[ "$install_ok" == "false" ]]; then
+                echo "npm install did not succeed" >&2
+              elif [[ ! -f "$expected_bin" ]]; then
                 echo "Platform binary not found: ${expected_bin}" >&2
               fi
               exit 1
             fi
-            echo "Retrying in ${delay}s..."
+            if [[ "$install_ok" == "false" ]]; then
+              echo "npm install failed, retrying in ${delay}s..."
+            else
+              echo "Platform binary not yet propagated, retrying in ${delay}s..."
+            fi
             rm -rf node_modules package-lock.json
             sleep "$delay"
             delay=$((delay * 2))
