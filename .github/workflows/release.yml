@@ -73,13 +73,14 @@ jobs:
 
       - name: Package release archives
         shell: bash
+        env:
+          PLATFORMS: ${{ steps.library.outputs.matrix }}
         run: |
           mkdir -p dist/release
 
           version="${{ needs.version.outputs.version }}"
-          platforms='${{ steps.library.outputs.matrix }}'
 
-          echo "$platforms" | jq -c '.release[]' | while read -r entry; do
+          echo "$PLATFORMS" | jq -c '.release[]' | while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
             rust_target=$(echo "$entry" | jq -r '.["rust-target"]')
             binary_name=$(echo "$entry" | jq -r '.["binary-name"]')

@@ -42,9 +42,10 @@ jobs:
 
       - name: Copy binaries into npm platform packages
         shell: bash
+        env:
+          PLATFORMS: ${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}
         run: |
-          platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
-          echo "$platforms" | jq -c '.[]' | while read -r entry; do
+          echo "$PLATFORMS" | jq -c '.[]' | while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
             binary_name=$(echo "$entry" | jq -r '.["binary-name"]')
 
@@ -60,9 +61,10 @@ jobs:
       - name: Compute platform directories
         id: platform-dirs
         shell: bash
+        env:
+          PLATFORMS: ${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}
         run: |
-          platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
-          dirs=$(echo "$platforms" | jq -r '.[]."npm-platform"' | sed 's|^|npm/|' | tr '\n' ' ')
+          dirs=$(echo "$PLATFORMS" | jq -r '.[]."npm-platform"' | sed 's|^|npm/|' | tr '\n' ' ')
           echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
           echo "Platform directories: $dirs"
 
@@ -222,9 +224,9 @@ jobs:
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PLATFORMS: ${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}
         run: |
-          platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
-          echo "$platforms" | jq -c '.[]' | while read -r entry; do
+          echo "$PLATFORMS" | jq -c '.[]' | while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
             shopt -s failglob
             tarballs=( ./tarballs/onshape-mcp-"${npm_platform}"-* )
