@@ -199,8 +199,9 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           # npm CLI >= 11.5.1 auto-detects OIDC via ACTIONS_ID_TOKEN_REQUEST_URL.
-          # When called from release.yml (id-token: write), OIDC is used.
-          # When called from ci.yml (no id-token), NPM_TOKEN is used as fallback.
+          # ci.yml grants id-token: write, so OIDC is used for both CI staging
+          # and release publishes.  NPM_TOKEN is the fallback (e.g. fork PRs
+          # where OIDC is unavailable).
           has_oidc="false"
           has_token="false"
 

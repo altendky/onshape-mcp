@@ -12,26 +12,21 @@ Users can install the server via:
 
 ## Workflow Architecture
 
-The release pipeline is composed of three reusable workflows that are shared between CI and release:
+CI and release share a single unified pipeline in `ci.yml`. A `release-config` job inspects the trigger (tag push vs PR/branch push) and centralizes all mode-dependent decisions. Downstream jobs consume named outputs and have no conditional logic of their own.
 
-| Workflow | Purpose |
-| -------- | ------- |
+The pipeline is composed of three reusable workflows plus two inline jobs:
+
+| Component | Purpose |
+| --------- | ------- |
 | `reflow-release-version.yml` | Extract version from Cargo.toml, verify tag match |
 | `reflow-release-build.yml` | Build release binaries on 5 platforms |
 | `reflow-release-npm.yml` | Package, publish, and test npm packages (parameterized by version and dist-tag) |
-
-The npm workflow is called with different parameters depending on the context:
-CI publishes a staging pre-release version (`--tag staging`), while releases publish the real version (`--tag latest`).
-This eliminates the need for separate staging and finalize workflows — the same npm pipeline handles both cases.
-
-### Calling Patterns
-
-| Caller | Trigger | Verify | Build | npm | Cargo publish | GitHub release |
-| ------ | ------- | ------ | ----- | --- | ------------- | -------------- |
-| `ci.yml` | PR / push to main | Yes | Yes | staging version | No | No |
-| `release.yml` | Tag push (`v*`) | Yes (with tag check) | Yes | real version (`latest`) | Yes | Yes |
+| `cargo-publish` job | Publish workspace crates to crates.io (or `--dry-run` validation) |
+| `github-release` job | Package archives, generate SHA256SUMS, create GitHub Release |
 
 ### Trigger Behavior
+
+All steps run on every trigger. The `release-config` job determines whether each step performs a real publish or a validation-only pass:
 
 | Step | PR / push to main | Git tag push |
 | ---- | ----------------- | ------------ |
@@ -42,7 +37,9 @@ This eliminates the need for separate staging and finalize workflows — the sam
 | Test npm from tarballs | Yes | Yes |
 | Publish npm | Yes (`--tag staging`) | Yes (`--tag latest`) |
 | Test npm from registry | Yes | Yes |
-| `cargo publish` | — | Yes |
+| `cargo publish` | `--dry-run` (validate only) | Yes (real publish) |
+| Package release archives | Yes | Yes |
+| Generate SHA256SUMS | Yes | Yes |
 | Create GitHub release | — | Yes |
 
 ## Version Strategy
@@ -185,38 +182,52 @@ The workflow:
 
 Staging versions are identifiable by their format: `{version}-staging-{sanitized_ref}-{commit_sha}-{run_id}`.
 
-## Release Entry Point (`release.yml`)
+## Release Pipeline
 
-Triggered by tag push (`v*`). Composes the reusable workflows and adds release-only jobs.
+Releases are triggered by pushing a `v*` tag to the repository. This triggers the same `ci.yml` workflow that runs on PRs, but the `release-config` job detects the tag push and switches all downstream jobs to publish mode.
 
 ### Release Job Flow
 
 ```text
-version ──┬──► npm (version=real, tag=latest) ◄── build
-           │                    │
-           ├──► cargo-publish   │
-           │                    │
-           └──► github-release ◄┘
-                 (needs: version, build, npm, cargo-publish)
+version ──► release-config ──┬──► release-npm ◄── build
+                              │         │
+                              ├──► cargo-publish
+                              │         │
+                              └──► github-release
+                                   (needs: release-config, version,
+                                    build, release-npm, cargo-publish)
 
-build starts immediately (no dependency on version)
+build starts immediately (no dependency on version or release-config)
 ```
 
-`build` and `version` start immediately in parallel (neither has dependencies). `cargo-publish` and `npm` depend on `version`; `npm` also depends on `build`. `github-release` waits for everything and has an `if: github.ref_type == 'tag'` guard, though since the only trigger for `release.yml` is a tag push this condition is always true.
+`build` and `version` start immediately in parallel (neither has dependencies). `release-config` depends on `version` and makes a single mode decision — all other release jobs consume its outputs. `cargo-publish` and `release-npm` depend on `release-config`; `release-npm` also depends on `build`. `github-release` waits for everything.
 
-### Release-Only Jobs
+### Release-Config Job
 
-**cargo-publish** (ubuntu-latest)
+The `release-config` job is the single point where `github.ref_type == 'tag'` is evaluated. It outputs:
 
-- `cargo publish` for all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
+| Output | Tag push (publish) | PR / branch push (validate) |
+| ------ | ------------------ | --------------------------- |
+| `publish` | `true` | `false` |
+| `npm-version` | Cargo.toml version | Staging version |
+| `npm-dist-tag` | `latest` | `staging` |
+| `cargo-dry-run` | _(empty)_ | `--dry-run` |
 
-**github-release** (ubuntu-latest, needs: version + build + npm + cargo-publish)
+### Inline Jobs
+
+**cargo-publish** (ubuntu-latest, needs: release-config)
+
+- Publishes all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
+- On PRs: runs `cargo publish --dry-run` to validate crate packaging without uploading
+- Inter-publish sleeps for index propagation are skipped in dry-run mode
+
+**github-release** (ubuntu-latest, needs: release-config + version + build + release-npm + cargo-publish)
 
 - Download binary artifacts from the build workflow
 - Package release archives (tar.gz for Unix, zip for Windows) with license files
 - Generate `SHA256SUMS` covering all release archives
-- Create GitHub release from tag via `gh release create`
-- Only runs on tag push
+- These steps run on every trigger, validating archive packaging in CI
+- Create GitHub release from tag via `gh release create` — only when `publish=true`
 
 ### GitHub Release Contents
 
@@ -231,7 +242,7 @@ Artifacts are shared across workflow runs via GitHub Actions upload/download.
 
 | Artifact | Created by | Consumed by |
 | -------- | ---------- | ----------- |
-| `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `release.yml` `github-release` |
+| `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `github-release` job |
 | `npm-tarballs` (6) | `reflow-release-npm.yml` package job | npm test-tarballs, npm publish, npm test-published |
 
 ## Crate Naming and Publish Order
@@ -284,53 +295,51 @@ e5f6a7b8...  onshape-mcp-0.2.0-aarch64-unknown-linux-musl.tar.gz
 ```
 
 The `SHA256SUMS` file covers all assets uploaded to the GitHub release (platform archives).
-It is generated in the `github-release` job at release time.
+It is generated in the `github-release` job on every CI run (validating the generation logic) and included in the GitHub Release on tag pushes.
 
 ## New Files
 
 | File | Purpose |
 | ---- | ------- |
-| `.github/workflows/release.yml` | Entry point for tag push releases |
 | `.github/workflows/reflow-release-version.yml` | Reusable: extract and validate version |
 | `.github/workflows/reflow-release-build.yml` | Reusable: build release binaries on 5 platforms |
 | `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
-| `.github/scripts/cargo-publish-workspace.sh` | Publishes all workspace crates to crates.io in dependency order |
+| `.github/scripts/cargo-publish-workspace.sh` | Publishes (or dry-run validates) all workspace crates to crates.io in dependency order |
 
 ## Modified Files
 
 | File | Change |
 | ---- | ------ |
-| `.github/workflows/ci.yml` | Add release-version, release-build, compute-staging-version, and release-npm jobs; wire into `all` gate |
-| `docs/src/project/ci.md` | Document new workflows and updated job counts |
+| `.github/workflows/ci.yml` | Unified CI and release entry point: version, build, release-config, release-npm, cargo-publish, github-release jobs; `all` gate covers everything |
+| `docs/src/project/ci.md` | Document unified pipeline and updated job counts |
 
 ## Secrets and Permissions
 
 | Secret | Used by | Purpose |
 | ------ | ------- | ------- |
-| `NPM_TOKEN` | npm publish (CI fallback) + cleanup | npm publish (CI), npm unpublish (cleanup) |
-| `CARGO_REGISTRY_TOKEN` | `release.yml` cargo-publish | crates.io publish |
-| `GITHUB_TOKEN` | `release.yml` github-release | GitHub release (automatic, not a manual secret) |
+| `NPM_TOKEN` | npm publish (fallback) + cleanup | npm publish (fork PRs), npm unpublish (cleanup) |
+| `CARGO_REGISTRY_TOKEN` | `ci.yml` cargo-publish job | crates.io publish (not needed for `--dry-run`) |
+| `GITHUB_TOKEN` | `ci.yml` github-release job | GitHub release (automatic, not a manual secret) |
 
-| Permission | Workflow | Purpose |
-| ---------- | -------- | ------- |
-| `id-token: write` | `release.yml` npm job | npm OIDC trusted publishing, provenance |
-| `contents: write` | `release.yml` github-release job | GitHub release creation |
+| Permission | Job | Purpose |
+| ---------- | --- | ------- |
+| `id-token: write` | `release-npm` | npm OIDC trusted publishing, provenance |
+| `contents: write` | `github-release` | GitHub release creation |
 
 ### npm Authentication Strategy
 
-npm publish uses a hybrid OIDC + token approach:
+npm publish uses OIDC trusted publishing for both CI and release:
 
-| Caller | Auth method | Mechanism |
-| ------ | ----------- | --------- |
-| `release.yml` | OIDC trusted publishing | `id-token: write` grants OIDC; npm CLI auto-detects |
-| `ci.yml` | `NPM_TOKEN` secret | Token in `~/.npmrc`; OIDC unavailable (no `id-token: write`) |
+| Context | Auth method | Mechanism |
+| ------- | ----------- | --------- |
+| CI staging + release | OIDC trusted publishing | `id-token: write` on `release-npm` job; npm CLI auto-detects |
+| Fork PRs | `NPM_TOKEN` secret (fallback) | OIDC unavailable; token in `~/.npmrc` |
 | `cleanup-npm-staging.yml` | `NPM_TOKEN` secret | `npm unpublish` does not support OIDC |
 
 npm's trusted publishing allows only **one workflow filename per package**.
-The trusted publisher is configured for `release.yml` on npmjs.com.
-When called from `ci.yml`, the npm CLI falls back to the `NPM_TOKEN` in `~/.npmrc`.
+The trusted publisher is configured for `ci.yml` on npmjs.com, which handles both CI and release.
 The publish job in `reflow-release-npm.yml` detects which credentials are available (`ACTIONS_ID_TOKEN_REQUEST_URL` for OIDC, `NPM_TOKEN` for token) and skips if neither is present (fork PRs).
 
 Provenance attestations are generated automatically when publishing via OIDC trusted publishing (no `--provenance` flag needed).
@@ -352,7 +361,7 @@ Items requiring further discussion before or during implementation.
 
 ### npm
 
-- [x] Auth: ~~traditional token or OIDC~~ Resolved: hybrid OIDC + token. npm now supports OIDC trusted publishing (eliminates tokens for publish), but only allows one workflow filename per package. `release.yml` is configured as the trusted publisher on npmjs.com (OIDC). `ci.yml` and `cleanup-npm-staging.yml` use `NPM_TOKEN` as fallback. Provenance attestations are generated automatically via OIDC. See [npm Authentication Strategy](#npm-authentication-strategy)
+- [x] Auth: ~~traditional token or OIDC~~ Resolved: OIDC trusted publishing for both CI and release. npm allows one workflow filename per package; `ci.yml` is configured as the trusted publisher on npmjs.com. `NPM_TOKEN` serves as a fallback for fork PRs and for `cleanup-npm-staging.yml`. Provenance attestations are generated automatically via OIDC. See [npm Authentication Strategy](#npm-authentication-strategy)
 - [x] Dist-tag: ~~unique per publish vs single reusable~~ Resolved: use a single `--tag staging` for all staging publishes. Packages are installed by exact version (`npm install onshape-mcp@0.2.0-staging-main-abc1234-12345678`), so the dist-tag is only needed to prevent `latest` from moving. The `staging` tag always points to the most recent staging publish, which is mildly useful for quick testing (`npm install onshape-mcp@staging`)
 - [x] Staging cleanup strategy: ~~per-run vs scheduled~~ Resolved: separate scheduled workflow (`cleanup-npm-staging.yml`) runs every 6 hours, unpublishes staging packages older than 2.2 days (52.8 hours). This preserves staging packages for manual testing of PR builds while staying within npm's 72-hour unpublish window (worst case: 58.8 hours, 13.2-hour buffer). See [Staging Cleanup](#staging-cleanup)
 - [x] Cleanup order: ~~main first or platform packages first~~ Resolved: unpublish main package first, then platform packages (reverse of publish order). The main package has `optionalDependencies` on the platform packages, so removing main first avoids broken dependency resolution during the cleanup window
@@ -361,7 +370,7 @@ Items requiring further discussion before or during implementation.
 
 ### CI Integration
 
-- [x] CI gate: ~~blocking or non-blocking~~ Resolved: `release-npm` is required by the `all` gate in `ci.yml`, blocking merge if it fails
+- [x] CI gate: ~~blocking or non-blocking~~ Resolved: `release-npm`, `cargo-publish`, and `github-release` are all required by the `all` gate in `ci.yml`, blocking merge if any fail
 
 ### GitHub Release
 
@@ -369,4 +378,4 @@ Items requiring further discussion before or during implementation.
 
 ### Workflow Inputs
 
-- [x] `workflow_dispatch` inputs: ~~determine whether to accept parameters~~ Resolved: removed. Release is triggered only by tag push. The CI pipeline exercises the full build/test/publish flow via staging versions on every PR, providing sufficient coverage without a manual dispatch trigger. See [#88](https://github.com/altendky/onshape-mcp/issues/88) for further testability review
+- [x] `workflow_dispatch` inputs: ~~determine whether to accept parameters~~ Resolved: removed. Release is triggered only by tag push. The unified `ci.yml` pipeline exercises the full release flow on every PR — including `cargo publish --dry-run`, archive packaging, and SHA256SUMS generation — providing comprehensive coverage without a manual dispatch trigger. See [#88](https://github.com/altendky/onshape-mcp/issues/88)

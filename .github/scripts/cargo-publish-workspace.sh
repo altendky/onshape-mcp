@@ -6,8 +6,33 @@
 # publishes leaves first.
 #
 # Crates with publish = false (or restricted registries) are skipped.
+#
+# Usage:
+#   cargo-publish-workspace.sh [--dry-run]
+#
+# When --dry-run is passed, each crate is validated with
+# `cargo publish --dry-run` (no upload) and inter-publish
+# index-propagation sleeps are skipped.
 
 set -euo pipefail
+
+dry_run=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--dry-run)
+		dry_run="--dry-run"
+		shift
+		;;
+	*)
+		echo "ERROR: Unknown argument: $1" >&2
+		exit 1
+		;;
+	esac
+done
+
+if [[ -n "$dry_run" ]]; then
+	echo "Dry-run mode: validating crate packaging without publishing"
+fi
 
 # Get workspace package names, their workspace-internal dependencies,
 # and whether they are publishable.
@@ -71,11 +96,15 @@ while ((${#crate_info[@]} > 0)); do
 		done
 
 		if $all_met; then
-			echo "Publishing ${name}..."
+			if [[ -n "$dry_run" ]]; then
+				echo "Validating ${name}..."
+			else
+				echo "Publishing ${name}..."
+			fi
 			max_retries=3
 			retry_delay=15
 			for attempt in $(seq 1 "$max_retries"); do
-				if cargo publish -p "$name"; then
+				if cargo publish -p "$name" $dry_run; then
 					break
 				fi
 				if [[ "$attempt" -eq "$max_retries" ]]; then
@@ -89,13 +118,14 @@ while ((${#crate_info[@]} > 0)); do
 			published+=("$name")
 			progress=true
 
-			# Brief delay for crates.io index propagation.  Skip only when
+			# Brief delay for crates.io index propagation.  Skip when in
+			# dry-run mode (nothing published, no index change) or when
 			# this round started with a single crate (meaning nothing else
 			# will be published after it).  When multiple crates remain at
 			# the start of the round, we always sleep because later
 			# iterations — in this round or the next — may need the index
 			# to reflect what was just published.
-			if ((${#crate_info[@]} > 1)); then
+			if [[ -z "$dry_run" ]] && ((${#crate_info[@]} > 1)); then
 				sleep 15
 			fi
 		else
@@ -112,4 +142,8 @@ while ((${#crate_info[@]} > 0)); do
 	crate_info=("${next[@]+"${next[@]}"}")
 done
 
-echo "Published ${#published[@]} crates: ${published[*]}"
+if [[ -n "$dry_run" ]]; then
+	echo "Validated ${#published[@]} crates: ${published[*]}"
+else
+	echo "Published ${#published[@]} crates: ${published[*]}"
+fi
