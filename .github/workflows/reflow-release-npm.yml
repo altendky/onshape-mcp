@@ -45,7 +45,7 @@ jobs:
         env:
           PLATFORMS: ${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}
         run: |
-          echo "$PLATFORMS" | jq -c '.[]' | while read -r entry; do
+          while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
             binary_name=$(echo "$entry" | jq -r '.["binary-name"]')
 
@@ -56,7 +56,7 @@ jobs:
             mkdir -p "npm/${npm_platform}/bin"
             cp "$src" "$dst"
             chmod +x "$dst"
-          done
+          done < <(echo "$PLATFORMS" | jq -c '.[]')
 
       - name: Compute platform directories
         id: platform-dirs
@@ -243,7 +243,7 @@ jobs:
           PLATFORMS: ${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}
           DIST_TAG: ${{ inputs.dist-tag }}
         run: |
-          echo "$PLATFORMS" | jq -c '.[]' | while read -r entry; do
+          while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
             shopt -s failglob
             tarballs=( ./tarballs/onshape-mcp-"${npm_platform}"-* )
@@ -253,7 +253,7 @@ jobs:
             fi
             echo "Publishing ${tarballs[0]}..."
             npm publish "${tarballs[0]}" --tag "$DIST_TAG" --access public
-          done
+          done < <(echo "$PLATFORMS" | jq -c '.[]')
 
       - name: Publish main package
         if: steps.check-auth.outputs.can-publish == 'true'
