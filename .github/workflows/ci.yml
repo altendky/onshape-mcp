@@ -51,7 +51,6 @@ jobs:
       publish: ${{ steps.config.outputs.publish }}
       npm-version: ${{ steps.config.outputs.npm-version }}
       npm-dist-tag: ${{ steps.config.outputs.npm-dist-tag }}
-      cargo-dry-run: ${{ steps.config.outputs.cargo-dry-run }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -71,7 +70,6 @@ jobs:
               echo "publish=true"
               echo "npm-version=$VERSION"
               echo "npm-dist-tag=latest"
-              echo "cargo-dry-run="
             } >> "$GITHUB_OUTPUT"
             echo "Mode: publish (tag push)"
           else
@@ -81,7 +79,6 @@ jobs:
               echo "publish=false"
               echo "npm-version=$staging"
               echo "npm-dist-tag=staging"
-              echo "cargo-dry-run=--dry-run"
             } >> "$GITHUB_OUTPUT"
             echo "Mode: validate (staging)"
             echo "Staging version: $staging"
@@ -112,17 +109,14 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Validate crate packaging
+        run: cargo package --workspace
+
       - name: Publish all workspace crates
-        shell: bash
+        if: needs.release-config.outputs.publish == 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          CARGO_DRY_RUN: ${{ needs.release-config.outputs.cargo-dry-run }}
-        run: |
-          args=()
-          if [[ -n "$CARGO_DRY_RUN" ]]; then
-            args+=("$CARGO_DRY_RUN")
-          fi
-          .github/scripts/cargo-publish-workspace.sh "${args[@]}"
+        run: .github/scripts/cargo-publish-workspace.sh
 
   github-release:
     name: GitHub Release

@@ -37,7 +37,8 @@ All steps run on every trigger. The `release-config` job determines whether each
 | Test npm from tarballs | Yes | Yes |
 | Publish npm | Yes (`--tag staging`) | Yes (`--tag latest`) |
 | Test npm from registry | Yes | Yes |
-| `cargo publish` | `--dry-run` (validate only) | Yes (real publish) |
+| Validate crate packaging | `cargo package --workspace` | `cargo package --workspace` |
+| `cargo publish` | — | Yes (real publish) |
 | Package release archives | Yes | Yes |
 | Generate SHA256SUMS | Yes | Yes |
 | Create GitHub release | — | Yes |
@@ -211,15 +212,13 @@ The `release-config` job is the single point where `github.ref_type == 'tag'` is
 | `publish` | `true` | `false` |
 | `npm-version` | Cargo.toml version | Staging version |
 | `npm-dist-tag` | `latest` | `staging` |
-| `cargo-dry-run` | _(empty)_ | `--dry-run` |
 
 ### Inline Jobs
 
 **cargo-publish** (ubuntu-latest, needs: release-config)
 
-- Publishes all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
-- On PRs: runs `cargo publish --dry-run` to validate crate packaging without uploading
-- Inter-publish sleeps for index propagation are skipped in dry-run mode
+- Always validates crate packaging via `cargo package --workspace`, which checks Cargo.toml metadata, file inclusion, dependency resolution (using sibling `.crate` files for workspace deps), and builds from the packaged source
+- On tag push: publishes all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
 
 **github-release** (ubuntu-latest, needs: release-config + version + build + release-npm + cargo-publish)
 
@@ -306,7 +305,7 @@ It is generated in the `github-release` job on every CI run (validating the gene
 | `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
-| `.github/scripts/cargo-publish-workspace.sh` | Publishes (or dry-run validates) all workspace crates to crates.io in dependency order |
+| `.github/scripts/cargo-publish-workspace.sh` | Publishes all workspace crates to crates.io in dependency order |
 
 ## Modified Files
 

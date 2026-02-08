@@ -6,44 +6,8 @@
 # publishes leaves first.
 #
 # Crates with publish = false (or restricted registries) are skipped.
-#
-# Usage:
-#   cargo-publish-workspace.sh [--dry-run]
-#
-# When --dry-run is passed, each crate is validated with
-# `cargo publish --dry-run` (no upload) and inter-publish
-# index-propagation sleeps are skipped.
 
 set -euo pipefail
-
-dry_run=""
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-	--dry-run)
-		dry_run="--dry-run"
-		shift
-		;;
-	*)
-		echo "ERROR: Unknown argument: $1" >&2
-		exit 1
-		;;
-	esac
-done
-
-if [[ -n "$dry_run" ]]; then
-	echo "Dry-run mode: validating crate packaging without publishing"
-	# In dry-run mode, skip the build-from-packaged-source verification
-	# (--no-verify).  cargo publish --dry-run verifies by building the
-	# crate from the packaged tarball, which requires all dependencies
-	# to be available on crates.io.  Workspace crates that haven't been
-	# published yet (pre-first-release) won't be found, causing spurious
-	# failures.  --no-verify still validates Cargo.toml metadata, package
-	# file inclusion, and version formatting.  The actual build is already
-	# verified by the Rust CI jobs.
-	no_verify="--no-verify"
-else
-	no_verify=""
-fi
 
 # Get workspace package names, their workspace-internal dependencies,
 # and whether they are publishable.
@@ -107,15 +71,11 @@ while ((${#crate_info[@]} > 0)); do
 		done
 
 		if $all_met; then
-			if [[ -n "$dry_run" ]]; then
-				echo "Validating ${name}..."
-			else
-				echo "Publishing ${name}..."
-			fi
+			echo "Publishing ${name}..."
 			max_retries=3
 			retry_delay=15
 			for attempt in $(seq 1 "$max_retries"); do
-				if cargo publish -p "$name" $dry_run $no_verify; then
+				if cargo publish -p "$name"; then
 					break
 				fi
 				if [[ "$attempt" -eq "$max_retries" ]]; then
@@ -129,14 +89,13 @@ while ((${#crate_info[@]} > 0)); do
 			published+=("$name")
 			progress=true
 
-			# Brief delay for crates.io index propagation.  Skip when in
-			# dry-run mode (nothing published, no index change) or when
+			# Brief delay for crates.io index propagation.  Skip only when
 			# this round started with a single crate (meaning nothing else
 			# will be published after it).  When multiple crates remain at
 			# the start of the round, we always sleep because later
 			# iterations — in this round or the next — may need the index
 			# to reflect what was just published.
-			if [[ -z "$dry_run" ]] && ((${#crate_info[@]} > 1)); then
+			if ((${#crate_info[@]} > 1)); then
 				sleep 15
 			fi
 		else
@@ -153,8 +112,4 @@ while ((${#crate_info[@]} > 0)); do
 	crate_info=("${next[@]+"${next[@]}"}")
 done
 
-if [[ -n "$dry_run" ]]; then
-	echo "Validated ${#published[@]} crates: ${published[*]}"
-else
-	echo "Published ${#published[@]} crates: ${published[*]}"
-fi
+echo "Published ${#published[@]} crates: ${published[*]}"
