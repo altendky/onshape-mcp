@@ -80,17 +80,16 @@ jobs:
         shell: bash
         env:
           PLATFORMS: ${{ steps.library.outputs.matrix }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir -p dist/release
-
-          version="${{ needs.version.outputs.version }}"
 
           echo "$PLATFORMS" | jq -c '.release[]' | while read -r entry; do
             npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
             rust_target=$(echo "$entry" | jq -r '.["rust-target"]')
             binary_name=$(echo "$entry" | jq -r '.["binary-name"]')
             archive_format=$(echo "$entry" | jq -r '.["archive-format"]')
-            archive_name="onshape-mcp-${version}-${rust_target}"
+            archive_name="onshape-mcp-${VERSION}-${rust_target}"
 
             echo "Packaging ${archive_name}..."
 
@@ -129,11 +128,10 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
         shell: bash
         run: |
-          tag="${{ github.ref_name }}"
-          version="${{ needs.version.outputs.version }}"
-
           # Collect all release assets
           assets=()
           for f in dist/release/*; do
@@ -141,8 +139,8 @@ jobs:
           done
           assets+=("dist/SHA256SUMS")
 
-          echo "Creating release ${tag} with ${#assets[@]} assets..."
-          gh release create "$tag" \
-            --title "v${version}" \
+          echo "Creating release ${TAG} with ${#assets[@]} assets..."
+          gh release create "$TAG" \
+            --title "v${VERSION}" \
             --generate-notes \
             "${assets[@]}"
