@@ -54,12 +54,17 @@ jobs:
       - name: Compute staging version
         id: compute
         shell: bash
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           staging_version=$(.github/scripts/compute-staging-version.sh \
-            "${{ needs.release-version.outputs.version }}" \
-            "${{ github.ref_name }}" \
-            "${{ github.sha }}" \
-            "${{ github.run_id }}")
+            "$VERSION" \
+            "$REF_NAME" \
+            "$SHA" \
+            "$RUN_ID")
           echo "staging-version=$staging_version" >> "$GITHUB_OUTPUT"
           echo "Staging version: $staging_version"
 
