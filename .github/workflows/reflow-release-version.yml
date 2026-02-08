@@ -35,6 +35,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Cargo.toml version: $version"
 
+      - name: Check npm version sync
+        run: node scripts/sync-npm-versions.js --check
+
       - name: Verify tag matches Cargo.toml version
         if: inputs.git-tag != ''
         shell: bash
