@@ -7,11 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       dry-run:
-        description: "Skip npm publish (run full build/test pipeline only)"
-        type: boolean
-        default: false
-      skip-cleanup:
-        description: "Preserve staging packages on npm for manual inspection"
+        description: "Skip publish steps (run full build/test pipeline only)"
         type: boolean
         default: false
 
@@ -20,14 +16,135 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  staging:
-    name: Staging
-    uses: ./.github/workflows/reflow-release-staging.yml
+  version:
+    name: Version
+    uses: ./.github/workflows/reflow-release-version.yml
+    with:
+      git-tag: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+
+  build:
+    name: Build
+    uses: ./.github/workflows/reflow-release-build.yml
+
+  npm:
+    name: npm
+    needs: [version, build]
+    uses: ./.github/workflows/reflow-release-npm.yml
     permissions:
-      contents: read
       id-token: write
     secrets: inherit
     with:
-      git-tag: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      version: ${{ needs.version.outputs.version }}
+      binary-version: ${{ needs.version.outputs.version }}
+      dist-tag: latest
       dry-run: ${{ inputs.dry-run || false }}
-      skip-cleanup: ${{ inputs.skip-cleanup || false }}
+
+  cargo-publish:
+    name: Publish crates
+    needs: [version]
+    if: ${{ !(inputs.dry-run || false) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+
+      - name: Publish all workspace crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: .github/scripts/cargo-publish-workspace.sh
+
+  github-release:
+    name: GitHub Release
+    if: github.ref_type == 'tag'
+    needs: [version, build, npm, cargo-publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Generate library matrix
+        id: library
+        uses: ./.github/actions/library
+
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: binary-*
+          path: binaries
+
+      - name: Package release archives
+        shell: bash
+        run: |
+          mkdir -p dist/release
+
+          version="${{ needs.version.outputs.version }}"
+          platforms='${{ steps.library.outputs.matrix }}'
+
+          echo "$platforms" | jq -c '.release[]' | while read -r entry; do
+            npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
+            rust_target=$(echo "$entry" | jq -r '.["rust-target"]')
+            binary_name=$(echo "$entry" | jq -r '.["binary-name"]')
+            archive_format=$(echo "$entry" | jq -r '.["archive-format"]')
+            archive_name="onshape-mcp-${version}-${rust_target}"
+
+            echo "Packaging ${archive_name}..."
+
+            # Create staging directory with binary and license files
+            staging_dir="dist/staging/${archive_name}"
+            mkdir -p "$staging_dir"
+            cp "binaries/binary-${npm_platform}/${binary_name}" "$staging_dir/"
+            chmod +x "$staging_dir/${binary_name}"
+            cp LICENSE-MIT LICENSE-APACHE "$staging_dir/"
+
+            # Create archive
+            if [[ "$archive_format" == "tar.gz" ]]; then
+              tar -czf "dist/release/${archive_name}.tar.gz" -C dist/staging "$archive_name"
+            elif [[ "$archive_format" == "zip" ]]; then
+              (cd dist/staging && zip -r "../release/${archive_name}.zip" "$archive_name")
+            fi
+          done
+
+          echo "Release archives:"
+          ls -la dist/release/
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          truncate -s 0 dist/SHA256SUMS
+
+          for f in dist/release/*; do
+            hash=$(sha256sum "$f" | cut -d' ' -f1)
+            name=$(basename "$f")
+            echo "$hash  $name" >> dist/SHA256SUMS
+          done
+
+          echo "SHA256SUMS:"
+          cat dist/SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag="${{ github.ref_name }}"
+          version="${{ needs.version.outputs.version }}"
+
+          # Collect all release assets
+          assets=()
+          for f in dist/release/*; do
+            assets+=("$f")
+          done
+          assets+=("dist/SHA256SUMS")
+
+          echo "Creating release ${tag} with ${#assets[@]} assets..."
+          gh release create "$tag" \
+            --title "v${version}" \
+            --generate-notes \
+            "${assets[@]}"

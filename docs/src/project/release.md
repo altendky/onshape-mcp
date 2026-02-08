@@ -12,24 +12,25 @@ Users can install the server via:
 
 ## Workflow Architecture
 
-The release pipeline is split into two reusable workflows:
+The release pipeline is composed of three reusable workflows that are shared between CI and release:
 
 | Workflow | Purpose |
 | -------- | ------- |
-| `reflow-release-staging.yml` | Build, test, npm staging publish, verify, cleanup |
-| `reflow-release-finalize.yml` | Publish real versions to npm/crates.io, create GitHub release |
+| `reflow-release-version.yml` | Extract version from Cargo.toml, verify tag match |
+| `reflow-release-build.yml` | Build release binaries on 5 platforms |
+| `reflow-release-npm.yml` | Package, publish, and test npm packages (parameterized by version and dist-tag) |
 
-The staging workflow always publishes a **unique pre-release version** (never the real version).
-The finalize workflow is the only path that publishes the real version.
-This eliminates idempotency concerns — there is no scenario where two runs compete for the same npm version.
+The npm workflow is called with different parameters depending on the context:
+CI publishes a staging pre-release version (`--tag staging`), while releases publish the real version (`--tag latest`).
+This eliminates the need for separate staging and finalize workflows — the same npm pipeline handles both cases.
 
 ### Calling Patterns
 
-| Caller | Trigger | Staging | Finalize |
-| ------ | ------- | ------- | -------- |
-| `ci.yml` | PR / push to main | Yes | No |
-| `release.yml` | `workflow_dispatch` | Yes | No |
-| `release.yml` | Tag push (`v*`) | Yes | Yes (after staging succeeds) |
+| Caller | Trigger | Verify | Build | npm | Cargo publish | GitHub release |
+| ------ | ------- | ------ | ----- | --- | ------------- | -------------- |
+| `ci.yml` | PR / push to main | Yes | Yes | staging version | No | No |
+| `release.yml` | `workflow_dispatch` | Yes | Yes | real version (`latest`) | Yes | No |
+| `release.yml` | Tag push (`v*`) | Yes (with tag check) | Yes | real version (`latest`) | Yes | Yes |
 
 ### Trigger Behavior
 
@@ -38,14 +39,11 @@ This eliminates idempotency concerns — there is no scenario where two runs com
 | Verify tag == Cargo.toml | — | — | Yes (fail if mismatch) |
 | Build release binaries | Yes | Yes | Yes |
 | Smoke test binaries | Yes | Yes | Yes |
-| Package npm tarballs | Yes | Yes | Yes |
+| Package npm tarballs | Yes (staging version) | Yes (real version) | Yes (real version) |
 | Test npm from tarballs | Yes | Yes | Yes |
-| Publish npm staging | Yes (pre-release version) | Yes (pre-release version) | Yes (pre-release version) |
+| Publish npm | Yes (`--tag staging`) | Yes (`--tag latest`) | Yes (`--tag latest`) |
 | Test npm from registry | Yes | Yes | Yes |
-| Cleanup npm staging | Yes (`always`) | Yes (`always`) | Yes (`always`) |
-| `cargo publish --dry-run` | Yes | Yes | — |
-| `cargo publish` | — | — | Yes |
-| Publish npm `latest` | — | — | Yes |
+| `cargo publish` | — | Yes | Yes |
 | Create GitHub release | — | — | Yes |
 
 ## Version Strategy
@@ -91,34 +89,17 @@ This prevents `latest` from moving while keeping things simple — packages are 
 The `staging` tag always points to the most recent staging publish.
 For the finalize publish, the `latest` tag moves to the real version (the default `npm publish` behavior).
 
-## Staging Workflow (`reflow-release-staging.yml`)
+## Version Workflow (`reflow-release-version.yml`)
 
-### Job Flow
+Extracts the version from `crates/onshape-mcp/Cargo.toml` and optionally verifies it matches a git tag.
 
-```text
-verify ──► build (5 platforms) ──► package-npm ──► test-npm-tarballs (5 platforms)
-                                       │                     │
-                                       │                     ▼
-                                       │          publish-npm-staging ──► test-npm-published (5 platforms)
-                                       │
-                                       ▼
-                              [artifacts for finalize]
-```
+- Input: `git-tag` (optional)
+- Output: `version`
+- If `git-tag` provided: strip `v` prefix, compare to Cargo.toml version, fail on mismatch
 
-### Jobs
+## Build Workflow (`reflow-release-build.yml`)
 
-**1. verify** (ubuntu-latest)
-
-- Extract version from `crates/onshape-mcp/Cargo.toml`
-- If `git-tag` input provided: strip `v` prefix, compare to Cargo.toml version, fail on mismatch
-- Run `node scripts/sync-npm-versions.js --check`
-- Compute staging version: `{version}-staging-{sanitized_ref}-{commit_sha}-{run_id}`
-- `cargo package -p onshape-mcp --no-verify` — produces `.crate` file
-- `cargo publish -p onshape-mcp --dry-run`
-- Upload `.crate` as artifact
-- Outputs: `version`, `staging-version`
-
-**2. build** (matrix: 5 platforms)
+Builds release binaries on all 5 platforms.
 
 | Runner | Rust target | npm platform |
 | ------ | ----------- | ------------ |
@@ -129,41 +110,57 @@ verify ──► build (5 platforms) ──► package-npm ──► test-npm-ta
 | `windows-latest` | (native) | `win32-x64` |
 
 - `cargo build --release` (with musl target on Linux)
-- Linux: verify static linking via `.github/scripts/verify-static-linking.sh`
+- Linux: verify static linking
 - Smoke test: `./target/release/onshape-mcp --version`
 - Upload binary as artifact `binary-{platform}`
 
-**3. package-npm** (ubuntu-latest, needs: build + verify)
+## npm Workflow (`reflow-release-npm.yml`)
 
-- Download all 5 binary artifacts
+Packages, publishes, and tests npm packages. Parameterized by version and dist-tag.
+
+### Inputs
+
+| Input | Description | Example |
+| ----- | ----------- | ------- |
+| `version` | Version to set in `package.json` | `0.1.0` or `0.1.0-staging-main-abc1234-12345678` |
+| `binary-version` | Expected `--version` output | `0.1.0` (always the Cargo.toml version) |
+| `dist-tag` | npm dist-tag for publish | `staging` or `latest` |
+| `dry-run` | Skip publish steps | `false` |
+
+### Job Flow
+
+```text
+package ──► test-tarballs (5 platforms) ──► publish ──► test-published (5 platforms)
+```
+
+### Jobs
+
+**1. package** (ubuntu-latest)
+
+- Download all 5 binary artifacts (from the build workflow)
 - Copy each into `npm/{platform}/bin/onshape-mcp` (`.exe` for win32)
-- Pack with **real version** (from Cargo.toml): `npm pack` all 6 packages — upload as `npm-release-tarballs`
-- Update all `package.json` to staging version
-- Pack with **staging version**: `npm pack` all 6 packages — upload as `npm-staging-tarballs`
-- Generate `SHA256SUMS` for all release artifacts (binaries, release tarballs, `.crate` file) — upload as artifact
+- Update all `package.json` to the input `version`
+- `npm pack` all 6 packages
+- Upload as `npm-tarballs` artifact
 
-Two sets of tarballs are needed because the version string is baked into `package.json` inside each tarball.
-The binaries inside are identical — only the `package.json` version field differs.
+**2. test-tarballs** (matrix: 5 platforms, needs: package)
 
-**4. test-npm-tarballs** (matrix: 5 platforms, needs: package-npm)
+- Install from tarballs in temp directory
+- Run `npx onshape-mcp --version`, verify output matches `binary-version`
 
-- Download staging tarballs
-- Install in temp directory from tarballs
-- Run `npx onshape-mcp --version`, verify output matches Cargo version
+**3. publish** (ubuntu-latest, needs: test-tarballs)
 
-**5. publish-npm-staging** (ubuntu-latest, needs: test-npm-tarballs)
+- Skip if `dry-run` or no npm credentials available (fork PRs)
+- `npm publish --tag {dist-tag} <tarball>` for 5 platform packages first
+- `npm publish --tag {dist-tag} <main-tarball>` last
 
-- Skip if `NPM_TOKEN` secret unavailable (fork PRs)
-- `npm publish --tag staging <tarball>` for 5 platform packages first
-- `npm publish --tag staging <main-tarball>` last (main package must be published after platform packages)
-
-**6. test-npm-published** (matrix: 5 platforms, needs: publish-npm-staging)
+**4. test-published** (matrix: 5 platforms, needs: publish)
 
 - Skip if publish was skipped
-- `npm install onshape-mcp@{staging-version}` in temp directory
+- `npm install onshape-mcp@{version}` in temp directory
 - Run `npx onshape-mcp --version`, verify output
 
-Staging packages are **not** cleaned up by this workflow.
+Staging packages are **not** cleaned up by the npm workflow.
 They remain on npm for up to 2.2 days (52.8 hours), allowing manual testing of PR builds.
 Cleanup is handled by a separate scheduled workflow — see [Staging Cleanup](#staging-cleanup).
 
@@ -189,46 +186,53 @@ The workflow:
 
 Staging versions are identifiable by their format: `{version}-staging-{sanitized_ref}-{commit_sha}-{run_id}`.
 
-## Finalize Workflow (`reflow-release-finalize.yml`)
+## Release Entry Point (`release.yml`)
 
-Called only on tag push, after staging succeeds.
-Downloads artifacts produced by the staging workflow — no rebuilding.
+Triggered by tag push (`v*`) or manual dispatch. Composes the reusable workflows and adds release-only jobs.
 
-### Finalize Job Flow
+### Release Job Flow
 
 ```text
-publish-npm ──► publish-crates ──► github-release
+version ──► build ──► npm (version=real, tag=latest)
+  │                              │
+  ├──► cargo-publish             │
+  │                              │
+  └──► github-release ◄──────────┘
+        (needs: build, cargo-publish, npm)
 ```
 
-### Finalize Jobs
+`build` and `cargo-publish` start in parallel (independent). `github-release` waits for everything and only runs on tag push.
 
-**1. publish-npm** (ubuntu-latest)
+### Release-Only Jobs
 
-- Download `npm-release-tarballs` artifact
-- `npm publish <tarball>` for 5 platform packages (gets `latest` tag by default)
-- `npm publish <main-tarball>` last
-
-**2. publish-crates** (ubuntu-latest, needs: publish-npm)
+**cargo-publish** (ubuntu-latest)
 
 - `cargo publish` for all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
+- Skipped when `dry-run` is true
 
-**3. github-release** (ubuntu-latest, needs: publish-crates)
+**github-release** (ubuntu-latest, needs: build + npm + cargo-publish)
 
-- Download all artifacts: binaries, release npm tarballs, `.crate` file, `SHA256SUMS`
+- Download binary artifacts from the build workflow
+- Package release archives (tar.gz for Unix, zip for Windows) with license files
+- Generate `SHA256SUMS` covering all release archives
 - Create GitHub release from tag via `gh release create`
-- Upload all artifacts to the release
+- Only runs on tag push (not manual dispatch)
+
+### GitHub Release Contents
+
+| Asset | Description |
+| ----- | ----------- |
+| Platform archives (5) | Binary + `LICENSE-MIT` + `LICENSE-APACHE` per platform |
+| `SHA256SUMS` | SHA-256 checksums for all archives |
 
 ## Artifacts
 
-All publishable artifacts are created in the staging workflow and passed to the finalize workflow via GitHub Actions upload/download.
+Artifacts are shared across workflow runs via GitHub Actions upload/download.
 
-| Artifact | Created by | Reusable across staging/release? | Consumed by |
-| -------- | ---------- | -------------------------------- | ----------- |
-| Platform binaries (5) | `build` job | Yes — binary embeds Cargo version, not npm version | `package-npm`, finalize `github-release` |
-| npm staging tarballs (6) | `package-npm` job | No — staging version baked into `package.json` | `test-npm-tarballs`, `publish-npm-staging` |
-| npm release tarballs (6) | `package-npm` job | N/A — these are the real-version tarballs | finalize `publish-npm`, finalize `github-release` |
-| `.crate` file | `verify` job | Yes — uses real version from Cargo.toml | finalize `publish-crates`, finalize `github-release` |
-| `SHA256SUMS` | `package-npm` job | Yes | finalize `github-release` |
+| Artifact | Created by | Consumed by |
+| -------- | ---------- | ----------- |
+| `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `release.yml` github-release |
+| `npm-tarballs` (6) | `reflow-release-npm.yml` package job | npm test-tarballs, npm publish, npm test-published |
 
 ## Crate Naming and Publish Order
 
@@ -279,16 +283,17 @@ e5f6a7b8...  onshape-mcp-0.2.0-aarch64-unknown-linux-musl.tar.gz
 ...
 ```
 
-The `SHA256SUMS` file covers all assets uploaded to the GitHub release (binaries, npm tarballs, `.crate` file).
-It is created in the staging workflow alongside the release artifacts.
+The `SHA256SUMS` file covers all assets uploaded to the GitHub release (platform archives).
+It is generated in the `github-release` job at release time.
 
 ## New Files
 
 | File | Purpose |
 | ---- | ------- |
 | `.github/workflows/release.yml` | Entry point for manual dispatch + tag push |
-| `.github/workflows/reflow-release-staging.yml` | Reusable: build, test, staging publish |
-| `.github/workflows/reflow-release-finalize.yml` | Reusable: real publish, crates.io, GitHub release |
+| `.github/workflows/reflow-release-version.yml` | Reusable: extract and validate version |
+| `.github/workflows/reflow-release-build.yml` | Reusable: build release binaries on 5 platforms |
+| `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
 
@@ -296,21 +301,21 @@ It is created in the staging workflow alongside the release artifacts.
 
 | File | Change |
 | ---- | ------ |
-| `.github/workflows/ci.yml` | Add call to `reflow-release-staging.yml`, wire into `all` gate |
+| `.github/workflows/ci.yml` | Add release verify, build, staging-version, and npm jobs; wire into `all` gate |
 | `docs/src/project/ci.md` | Document new workflows and updated job counts |
 
 ## Secrets and Permissions
 
 | Secret | Used by | Purpose |
 | ------ | ------- | ------- |
-| `NPM_TOKEN` | staging (CI fallback) + cleanup | npm publish (CI), npm unpublish (cleanup) |
-| `CARGO_REGISTRY_TOKEN` | finalize | crates.io publish |
-| `GITHUB_TOKEN` | finalize | GitHub release (automatic, not a manual secret) |
+| `NPM_TOKEN` | npm publish (CI fallback) + cleanup | npm publish (CI), npm unpublish (cleanup) |
+| `CARGO_REGISTRY_TOKEN` | `release.yml` cargo-publish | crates.io publish |
+| `GITHUB_TOKEN` | `release.yml` github-release | GitHub release (automatic, not a manual secret) |
 
 | Permission | Workflow | Purpose |
 | ---------- | -------- | ------- |
-| `id-token: write` | `release.yml` (staging + finalize) | npm OIDC trusted publishing, provenance |
-| `contents: write` | finalize | GitHub release creation |
+| `id-token: write` | `release.yml` npm job | npm OIDC trusted publishing, provenance |
+| `contents: write` | `release.yml` github-release job | GitHub release creation |
 
 ### npm Authentication Strategy
 
@@ -325,7 +330,7 @@ npm publish uses a hybrid OIDC + token approach:
 npm's trusted publishing allows only **one workflow filename per package**.
 The trusted publisher is configured for `release.yml` on npmjs.com.
 When called from `ci.yml`, the npm CLI falls back to the `NPM_TOKEN` in `~/.npmrc`.
-The publish job detects which credentials are available (`ACTIONS_ID_TOKEN_REQUEST_URL` for OIDC, `NPM_TOKEN` for token) and skips if neither is present (fork PRs).
+The publish job in `reflow-release-npm.yml` detects which credentials are available (`ACTIONS_ID_TOKEN_REQUEST_URL` for OIDC, `NPM_TOKEN` for token) and skips if neither is present (fork PRs).
 
 Provenance attestations are generated automatically when publishing via OIDC trusted publishing (no `--provenance` flag needed).
 
@@ -351,11 +356,11 @@ Items requiring further discussion before or during implementation.
 - [x] Staging cleanup strategy: ~~per-run vs scheduled~~ Resolved: separate scheduled workflow (`cleanup-npm-staging.yml`) runs every 6 hours, unpublishes staging packages older than 2.2 days (52.8 hours). This preserves staging packages for manual testing of PR builds while staying within npm's 72-hour unpublish window (worst case: 58.8 hours, 13.2-hour buffer). See [Staging Cleanup](#staging-cleanup)
 - [x] Cleanup order: ~~main first or platform packages first~~ Resolved: unpublish main package first, then platform packages (reverse of publish order). The main package has `optionalDependencies` on the platform packages, so removing main first avoids broken dependency resolution during the cleanup window
 - [x] Platform `package.json` files: ~~add `"files": ["bin"]`~~ Resolved: added to all 5 platform packages, ensuring only the `bin/` directory is included in published tarballs
-- [x] Staging vs release npm tarballs: ~~confirm approach~~ Resolved: the `package-npm` job creates two sets of tarballs. First, pack with the real version (from Cargo.toml) and upload as release artifacts for the finalize workflow. Then, update `package.json` versions to the staging version and pack again for staging publish/test. The binaries inside are identical — only the `package.json` version field differs. This is necessary because the version is baked into `package.json` inside each tarball
+- [x] Staging vs release npm tarballs: ~~confirm approach~~ Resolved: the `reflow-release-npm.yml` workflow is parameterized by version. Each invocation packs once with the provided version — CI passes a staging version, release passes the real version. No double-packing needed
 
 ### CI Integration
 
-- [x] CI gate: ~~blocking or non-blocking~~ Resolved: `release-staging` is required by the `all` gate in `ci.yml`, blocking merge if it fails
+- [x] CI gate: ~~blocking or non-blocking~~ Resolved: `release-npm` is required by the `all` gate in `ci.yml`, blocking merge if it fails
 
 ### GitHub Release
 
@@ -363,4 +368,4 @@ Items requiring further discussion before or during implementation.
 
 ### Workflow Inputs
 
-- [x] `workflow_dispatch` inputs: ~~determine whether to accept parameters~~ Resolved: two optional inputs. **`dry-run`** (boolean, default false) skips `npm publish` while running the full build/test pipeline. **`skip-cleanup`** (boolean, default false) preserves staging packages on npm for manual inspection. Branch selection is handled by GitHub's built-in UI when triggering manually; version is always read from Cargo.toml
+- [x] `workflow_dispatch` inputs: ~~determine whether to accept parameters~~ Resolved: one optional input. **`dry-run`** (boolean, default false) skips publish steps while running the full build/test pipeline. Branch selection is handled by GitHub's built-in UI when triggering manually; version is always read from Cargo.toml. Manual dispatch publishes real versions (not staging)

@@ -1,0 +1,326 @@
+name: Release npm
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to set in package.json (e.g., 0.1.0 or 0.1.0-staging-...)"
+        type: string
+        required: true
+      binary-version:
+        description: "Expected binary --version output (e.g., 0.1.0)"
+        type: string
+        required: true
+      dist-tag:
+        description: "npm dist-tag for publish (e.g., staging or latest)"
+        type: string
+        required: true
+      dry-run:
+        description: "Skip npm publish (run package and tarball tests only)"
+        type: boolean
+        default: false
+
+jobs:
+  library:
+    name: Generate library
+    uses: ./.github/workflows/reflow-library.yml
+
+  package:
+    name: Package npm
+    needs: [library]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: binary-*
+          path: binaries
+
+      - name: Copy binaries into npm platform packages
+        shell: bash
+        run: |
+          platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
+          echo "$platforms" | jq -c '.[]' | while read -r entry; do
+            npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
+            binary_name=$(echo "$entry" | jq -r '.["binary-name"]')
+
+            src="binaries/binary-${npm_platform}/${binary_name}"
+            dst="npm/${npm_platform}/bin/${binary_name}"
+
+            echo "Copying $src -> $dst"
+            mkdir -p "npm/${npm_platform}/bin"
+            cp "$src" "$dst"
+            chmod +x "$dst"
+          done
+
+      - name: Compute platform directories
+        id: platform-dirs
+        shell: bash
+        run: |
+          platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
+          dirs=$(echo "$platforms" | jq -r '.[]."npm-platform"' | sed 's|^|npm/|' | tr '\n' ' ')
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+          echo "Platform directories: $dirs"
+
+      - name: Update package.json files to target version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          echo "Updating all package.json to version: $version"
+
+          for pkg_dir in npm/onshape-mcp ${{ steps.platform-dirs.outputs.dirs }}; do
+            pkg_json="$pkg_dir/package.json"
+            echo "Updating $pkg_json to $version"
+            # Update version field
+            jq --arg v "$version" '.version = $v' "$pkg_json" > tmp.json && mv tmp.json "$pkg_json"
+            # Update optionalDependencies versions if present
+            if jq -e '.optionalDependencies' "$pkg_json" > /dev/null 2>&1; then
+              jq --arg v "$version" '.optionalDependencies |= with_entries(if .key | startswith("@onshape-mcp/") then .value = $v else . end)' "$pkg_json" > tmp.json && mv tmp.json "$pkg_json"
+            fi
+          done
+
+      - name: Pack npm tarballs
+        shell: bash
+        run: |
+          mkdir -p dist/tarballs
+
+          # Pack platform packages first
+          for dir in ${{ steps.platform-dirs.outputs.dirs }}; do
+            echo "Packing $dir..."
+            tarball=$(npm pack "./$dir" --pack-destination dist/tarballs 2>&1 | tail -1)
+            echo "  -> $tarball"
+          done
+
+          # Pack main package
+          echo "Packing npm/onshape-mcp..."
+          tarball=$(npm pack ./npm/onshape-mcp --pack-destination dist/tarballs 2>&1 | tail -1)
+          echo "  -> $tarball"
+
+          echo "Tarballs:"
+          ls -la dist/tarballs/
+
+      - name: Upload tarballs
+        uses: actions/upload-artifact@v6
+        with:
+          name: npm-tarballs
+          path: dist/tarballs/
+          retention-days: 3
+
+  test-tarballs:
+    name: "Test npm tarballs (${{ matrix.platform.name }})"
+    needs: [library, package]
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download tarballs
+        uses: actions/download-artifact@v7
+        with:
+          name: npm-tarballs
+          path: tarballs
+
+      - name: List tarballs
+        shell: bash
+        run: ls -la tarballs/
+
+      - name: Install from tarballs
+        shell: bash
+        run: |
+          mkdir test-install
+          cd test-install
+          npm init -y
+
+          npm_platform="${{ matrix.platform.npm-platform }}"
+
+          # Install the platform tarball for this platform
+          platform_tarball=$(ls ../tarballs/onshape-mcp-${npm_platform}-*)
+          echo "Installing platform tarball: $platform_tarball"
+          npm install "$platform_tarball"
+
+          # Install the main package tarball
+          main_tarball=$(ls ../tarballs/onshape-mcp-[0-9]*)
+          echo "Installing main tarball: $main_tarball"
+          npm install "$main_tarball"
+
+      - name: Verify binary version
+        shell: bash
+        run: |
+          cd test-install
+          version="${{ inputs.binary-version }}"
+          output=$(npx onshape-mcp --version 2>&1)
+          echo "Binary output: $output"
+          if echo "$output" | grep -qF "$version"; then
+            echo "OK: Version matches ($version)"
+          else
+            echo "ERROR: Expected version $version in output: $output" >&2
+            exit 1
+          fi
+
+  publish:
+    name: Publish npm
+    needs: [library, package, test-tarballs]
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.check-auth.outputs.can-publish }}
+    steps:
+      - name: Check npm publish credentials
+        id: check-auth
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # npm CLI >= 11.5.1 auto-detects OIDC via ACTIONS_ID_TOKEN_REQUEST_URL.
+          # When called from release.yml (id-token: write), OIDC is used.
+          # When called from ci.yml (no id-token), NPM_TOKEN is used as fallback.
+          has_oidc="false"
+          has_token="false"
+
+          if [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+            echo "OIDC available (id-token: write granted by caller)"
+            has_oidc="true"
+          fi
+
+          if [[ -n "$NPM_TOKEN" ]]; then
+            echo "NPM_TOKEN available"
+            has_token="true"
+          fi
+
+          if [[ "$has_oidc" == "false" && "$has_token" == "false" ]]; then
+            echo "No npm credentials available (fork PR?) — skipping publish"
+            echo "can-publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "can-publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.check-auth.outputs.can-publish == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download tarballs
+        if: steps.check-auth.outputs.can-publish == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: npm-tarballs
+          path: tarballs
+
+      - name: Publish platform packages
+        if: steps.check-auth.outputs.can-publish == 'true'
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
+          echo "$platforms" | jq -c '.[]' | while read -r entry; do
+            npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
+            shopt -s failglob
+            tarballs=( ./tarballs/onshape-mcp-"${npm_platform}"-* )
+            if [[ ${#tarballs[@]} -ne 1 ]]; then
+              echo "ERROR: Expected exactly 1 tarball for ${npm_platform}, found ${#tarballs[@]}" >&2
+              exit 1
+            fi
+            echo "Publishing ${tarballs[0]}..."
+            npm publish "${tarballs[0]}" --tag ${{ inputs.dist-tag }} --access public
+          done
+
+      - name: Publish main package
+        if: steps.check-auth.outputs.can-publish == 'true'
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          shopt -s failglob
+          tarballs=( ./tarballs/onshape-mcp-[0-9]* )
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "ERROR: Expected exactly 1 main tarball, found ${#tarballs[@]}" >&2
+            exit 1
+          fi
+          echo "Publishing ${tarballs[0]}..."
+          npm publish "${tarballs[0]}" --tag ${{ inputs.dist-tag }} --access public
+
+  test-published:
+    name: "Test npm published (${{ matrix.platform.name }})"
+    needs: [library, publish]
+    if: ${{ needs.publish.outputs.published == 'true' }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install from registry
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          npm_platform="${{ matrix.platform.npm-platform }}"
+          mkdir test-registry-install
+          cd test-registry-install
+          npm init -y
+
+          # Retry with exponential backoff to allow for npm registry propagation.
+          # After npm install succeeds we also verify the platform binary exists
+          # because platform packages are optionalDependencies — npm install can
+          # succeed even if the platform-specific package hasn't propagated yet.
+          bin_name="onshape-mcp"
+          if [[ "$npm_platform" == win32-* ]]; then
+            bin_name="onshape-mcp.exe"
+          fi
+          expected_bin="node_modules/@onshape-mcp/${npm_platform}/bin/${bin_name}"
+
+          max_attempts=5
+          delay=10
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "Attempt ${attempt}/${max_attempts}: installing onshape-mcp@${version}..."
+            if npm install "onshape-mcp@${version}" && [[ -f "$expected_bin" ]]; then
+              echo "Install succeeded and platform binary exists: ${expected_bin}"
+              break
+            fi
+            if [[ "$attempt" -eq "$max_attempts" ]]; then
+              echo "ERROR: Install failed after ${max_attempts} attempts" >&2
+              if [[ ! -f "$expected_bin" ]]; then
+                echo "Platform binary not found: ${expected_bin}" >&2
+              fi
+              exit 1
+            fi
+            echo "Retrying in ${delay}s..."
+            rm -rf node_modules package-lock.json
+            sleep "$delay"
+            delay=$((delay * 2))
+          done
+
+      - name: Verify binary version
+        shell: bash
+        run: |
+          cd test-registry-install
+          version="${{ inputs.binary-version }}"
+          output=$(npx onshape-mcp --version 2>&1)
+          echo "Binary output: $output"
+          if echo "$output" | grep -qF "$version"; then
+            echo "OK: Version matches ($version)"
+          else
+            echo "ERROR: Expected version $version in output: $output" >&2
+            exit 1
+          fi

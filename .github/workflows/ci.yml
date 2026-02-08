@@ -32,15 +32,51 @@ jobs:
     permissions:
       id-token: write
 
-  release-staging:
-    name: Release Staging
-    uses: ./.github/workflows/reflow-release-staging.yml
+  release-version:
+    name: Release Version
+    uses: ./.github/workflows/reflow-release-version.yml
+
+  release-build:
+    name: Release Build
+    uses: ./.github/workflows/reflow-release-build.yml
+
+  compute-staging-version:
+    name: Compute staging version
+    needs: [release-version]
+    runs-on: ubuntu-latest
+    outputs:
+      staging-version: ${{ steps.compute.outputs.staging-version }}
+      version: ${{ needs.release-version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Compute staging version
+        id: compute
+        shell: bash
+        run: |
+          staging_version=$(.github/scripts/compute-staging-version.sh \
+            "${{ needs.release-version.outputs.version }}" \
+            "${{ github.ref_name }}" \
+            "${{ github.sha }}" \
+            "${{ github.run_id }}")
+          echo "staging-version=$staging_version" >> "$GITHUB_OUTPUT"
+          echo "Staging version: $staging_version"
+
+  release-npm:
+    name: Release npm
+    needs: [compute-staging-version, release-build]
+    uses: ./.github/workflows/reflow-release-npm.yml
     secrets: inherit
+    with:
+      version: ${{ needs.compute-staging-version.outputs.staging-version }}
+      binary-version: ${{ needs.compute-staging-version.outputs.version }}
+      dist-tag: staging
 
   all:
     name: all
     if: always()
-    needs: [pre-commit, rust, coverage, npm, release-staging]
+    needs: [pre-commit, rust, coverage, npm, release-npm]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@release/v1

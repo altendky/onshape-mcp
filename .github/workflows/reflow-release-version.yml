@@ -1,0 +1,51 @@
+name: Release Version
+
+on:
+  workflow_call:
+    inputs:
+      git-tag:
+        description: "Git tag (e.g., v0.1.0) — if provided, version is verified against Cargo.toml"
+        type: string
+        default: ""
+    outputs:
+      version:
+        description: "Release version from Cargo.toml (e.g., 0.1.0)"
+        value: ${{ jobs.verify.outputs.version }}
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Extract version from Cargo.toml
+        id: version
+        shell: bash
+        run: |
+          version=$(cargo metadata --format-version 1 --no-deps --manifest-path crates/onshape-mcp/Cargo.toml \
+            | jq -r '.packages[] | select(.name == "onshape-mcp") | .version')
+          if [[ -z "$version" ]]; then
+            echo "ERROR: Could not extract version from Cargo.toml" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Cargo.toml version: $version"
+
+      - name: Verify tag matches Cargo.toml version
+        if: inputs.git-tag != ''
+        shell: bash
+        env:
+          GIT_TAG: ${{ inputs.git-tag }}
+        run: |
+          tag="$GIT_TAG"
+          tag_version="${tag#v}"
+          cargo_version="${{ steps.version.outputs.version }}"
+          if [[ "$tag_version" != "$cargo_version" ]]; then
+            echo "ERROR: Tag version ($tag_version) does not match Cargo.toml version ($cargo_version)" >&2
+            exit 1
+          fi
+          echo "Tag version matches Cargo.toml: $cargo_version"
