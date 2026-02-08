@@ -61,7 +61,7 @@ Store credentials in repository secrets:
 
 | File | Purpose |
 | ------ | --------- |
-| `.github/workflows/ci.yml` | Entry point, calls reusable workflows, `all` job aggregation |
+| `.github/workflows/ci.yml` | Entry point for CI and releases, calls reusable workflows, `all` job aggregation |
 | `.github/workflows/reflow-library.yml` | Reusable workflow that outputs matrix configuration |
 | `.github/workflows/reflow-pre-commit.yml` | Reusable workflow for pre-commit checks (5 platform jobs) |
 | `.github/workflows/reflow-rust.yml` | Reusable workflow for Rust lint, build, and test jobs |
@@ -70,7 +70,6 @@ Store credentials in repository secrets:
 | `.github/workflows/reflow-release-version.yml` | Reusable workflow for version extraction and tag verification |
 | `.github/workflows/reflow-release-build.yml` | Reusable workflow for release binary builds (5 platforms) |
 | `.github/workflows/reflow-release-npm.yml` | Reusable workflow for npm package, publish, and test |
-| `.github/workflows/release.yml` | Entry point for tag push releases |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
 
@@ -82,6 +81,7 @@ The top-level `ci.yml` workflow uses a concurrency group to cancel redundant PR 
 | ----- | --------- | -------- |
 | `pull_request` | `workflow_ref` + PR number | New push cancels previous run |
 | `push` (main) | `run_id` (unique) | Runs are never cancelled |
+| `push` (tag) | `run_id` (unique) | Runs are never cancelled |
 | `merge_group` | `run_id` (unique) | Runs are never cancelled |
 
 The concurrency group is only set on `ci.yml`. Reusable workflows (`reflow-*.yml`) inherit cancellation from the caller — when `ci.yml` is cancelled, all its called workflows are cancelled along with it.
@@ -91,62 +91,57 @@ The concurrency group is only set on `ci.yml`. Reusable workflows (`reflow-*.yml
 The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Each reusable workflow appears as a collapsible group containing its matrix jobs.
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                    ci.yml (entry point)                      │
-├─────────────────────────────────────────────────────────────┤
-│  jobs:                                                       │
-│    pre-commit:                                               │
-│      uses: ./.github/workflows/reflow-pre-commit.yml        │
-│                                                              │
-│    rust:                                                     │
-│      uses: ./.github/workflows/reflow-rust.yml              │
-│                                                              │
-│    coverage:                                                 │
-│      uses: ./.github/workflows/reflow-coverage.yml          │
-│                                                              │
-│    npm:                                                      │
-│      uses: ./.github/workflows/reflow-npm.yml               │
-│                                                              │
-│    release-version:                                          │
-│      uses: ./.github/workflows/reflow-release-version.yml   │
-│                                                              │
-│    release-build:                                            │
-│      uses: ./.github/workflows/reflow-release-build.yml     │
-│                                                              │
-│    compute-staging-version: (needs: release-version)         │
-│      Computes staging version from ref, sha, run_id          │
-│                                                              │
-│    release-npm: (needs: compute-staging-version, release-build) │
-│      uses: ./.github/workflows/reflow-release-npm.yml       │
-│      (version=staging, dist-tag=staging)                     │
-│                                                              │
-│    all:                                                      │
-│      needs: [pre-commit, rust, coverage, npm,               │
-│              release-npm]                                    │
-│      uses: re-actors/alls-green                             │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│              release.yml (entry point)                        │
-├─────────────────────────────────────────────────────────────┤
-│  jobs:                                                       │
-│    version:                                                  │
-│      uses: ./.github/workflows/reflow-release-version.yml   │
-│                                                              │
-│    build:                                                    │
-│      uses: ./.github/workflows/reflow-release-build.yml     │
-│                                                              │
-│    npm: (needs: version, build)                              │
-│      uses: ./.github/workflows/reflow-release-npm.yml       │
-│      (version=real, dist-tag=latest)                         │
-│                                                              │
-│    cargo-publish: (needs: version)                           │
-│      cargo publish in dependency order                       │
-│                                                              │
-│    github-release: (needs: version, build, npm, cargo-publish) │
-│      Package archives + SHA256SUMS, gh release create        │
-│      (tag push only)                                         │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│           ci.yml (entry point for CI and releases)                │
+├──────────────────────────────────────────────────────────────────┤
+│  triggers: push (main, v* tags), pull_request, merge_group       │
+│                                                                   │
+│  jobs:                                                            │
+│    pre-commit:                                                    │
+│      uses: ./.github/workflows/reflow-pre-commit.yml             │
+│                                                                   │
+│    rust:                                                          │
+│      uses: ./.github/workflows/reflow-rust.yml                   │
+│                                                                   │
+│    coverage:                                                      │
+│      uses: ./.github/workflows/reflow-coverage.yml               │
+│                                                                   │
+│    npm:                                                           │
+│      uses: ./.github/workflows/reflow-npm.yml                    │
+│                                                                   │
+│    version:                                                       │
+│      uses: ./.github/workflows/reflow-release-version.yml        │
+│      (tag verification when triggered by tag push)                │
+│                                                                   │
+│    build:                                                         │
+│      uses: ./.github/workflows/reflow-release-build.yml          │
+│                                                                   │
+│    checks: (needs: pre-commit, rust, coverage, npm)               │
+│      re-actors/alls-green — gates release jobs on all quality     │
+│      checks passing                                               │
+│                                                                   │
+│    release-config: (needs: version)                               │
+│      Centralizes all release-mode decisions:                      │
+│        tag push → publish=true, real version, latest dist-tag     │
+│        otherwise → publish=false, staging version, staging dist-tag│
+│                                                                   │
+│    release-npm: (needs: release-config, version, build, checks)   │
+│      uses: ./.github/workflows/reflow-release-npm.yml            │
+│      (version and dist-tag from release-config)                   │
+│                                                                   │
+│    cargo-publish: (needs: release-config, checks)                 │
+│      cargo package --workspace (always)                           │
+│      cargo publish in dependency order (tag push only)            │
+│                                                                   │
+│    github-release: (needs: release-config, version, build,        │
+│                     release-npm, cargo-publish)                    │
+│      Package archives + SHA256SUMS (always)                       │
+│      gh release create (only when publish=true)                   │
+│                                                                   │
+│    all:                                                           │
+│      needs: [checks, release-npm, cargo-publish, github-release] │
+│      uses: re-actors/alls-green                                  │
+└──────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │        reflow-pre-commit.yml (reusable workflow)             │
@@ -304,12 +299,15 @@ environments, verifying that statically-linked musl binaries work correctly on g
 | Rust | 39 (1 library + 1 resolve-versions + 1 lint + 15 build + 21 test) |
 | Coverage | 6 (1 library + 5 check) |
 | npm | 6 (1 library + 5 coverage) |
-| Release Version | 1 |
-| Release Build | 6 (1 library + 5 build) |
-| Compute staging version | 1 |
+| Version | 1 |
+| Build | 6 (1 library + 5 build) |
+| Checks | 1 (alls-green gate) |
+| Release config | 1 |
 | Release npm | 13 (1 library + 1 package + 5 test-tarballs + 1 publish + 5 test-published) |
+| Cargo publish | 1 |
+| GitHub Release | 1 |
 | All | 1 |
-| **Total** | **79 jobs** |
+| **Total** | **82 jobs** |
 
 **Rust job breakdown:**
 

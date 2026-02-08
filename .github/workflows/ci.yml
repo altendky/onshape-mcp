@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: ["**"]
   merge_group:
@@ -32,56 +33,204 @@ jobs:
     permissions:
       id-token: write
 
-  release-version:
-    name: Release Version
+  version:
+    name: Version
     uses: ./.github/workflows/reflow-release-version.yml
+    with:
+      git-tag: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
-  release-build:
-    name: Release Build
+  build:
+    name: Build
     uses: ./.github/workflows/reflow-release-build.yml
 
-  compute-staging-version:
-    name: Compute staging version
-    needs: [release-version]
+  checks:
+    name: checks
+    if: always()
+    needs: [pre-commit, rust, coverage, npm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
+
+  release-config:
+    name: Release config
+    needs: [version]
     runs-on: ubuntu-latest
     outputs:
-      staging-version: ${{ steps.compute.outputs.staging-version }}
-      version: ${{ needs.release-version.outputs.version }}
+      publish: ${{ steps.config.outputs.publish }}
+      npm-version: ${{ steps.config.outputs.npm-version }}
+      npm-dist-tag: ${{ steps.config.outputs.npm-dist-tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Compute staging version
-        id: compute
+      - name: Configure release pipeline
+        id: config
         shell: bash
         env:
-          VERSION: ${{ needs.release-version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          staging_version=$(.github/scripts/compute-staging-version.sh \
-            "$VERSION" \
-            "$REF_NAME" \
-            "$SHA" \
-            "$RUN_ID")
-          echo "staging-version=$staging_version" >> "$GITHUB_OUTPUT"
-          echo "Staging version: $staging_version"
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            {
+              echo "publish=true"
+              echo "npm-version=$VERSION"
+              echo "npm-dist-tag=latest"
+            } >> "$GITHUB_OUTPUT"
+            echo "Mode: publish (tag push)"
+          else
+            staging=$(.github/scripts/compute-staging-version.sh \
+              "$VERSION" "$REF_NAME" "$SHA" "$RUN_ID")
+            {
+              echo "publish=false"
+              echo "npm-version=$staging"
+              echo "npm-dist-tag=staging"
+            } >> "$GITHUB_OUTPUT"
+            echo "Mode: validate (staging)"
+            echo "Staging version: $staging"
+          fi
 
   release-npm:
     name: Release npm
-    needs: [compute-staging-version, release-build]
+    needs: [release-config, version, build, checks]
     uses: ./.github/workflows/reflow-release-npm.yml
+    permissions:
+      id-token: write
     secrets: inherit
     with:
-      version: ${{ needs.compute-staging-version.outputs.staging-version }}
-      binary-version: ${{ needs.compute-staging-version.outputs.version }}
-      dist-tag: staging
+      version: ${{ needs.release-config.outputs.npm-version }}
+      binary-version: ${{ needs.version.outputs.version }}
+      dist-tag: ${{ needs.release-config.outputs.npm-dist-tag }}
+
+  cargo-publish:
+    name: Publish crates
+    needs: [release-config, checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+
+      - name: Validate crate packaging
+        run: cargo package --workspace
+
+      - name: Publish all workspace crates
+        if: needs.release-config.outputs.publish == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: .github/scripts/cargo-publish-workspace.sh
+
+  github-release:
+    name: GitHub Release
+    needs: [release-config, version, build, release-npm, cargo-publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Generate library matrix
+        id: library
+        uses: ./.github/actions/library
+
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: binary-*
+          path: binaries
+
+      - name: Package release archives
+        shell: bash
+        env:
+          PLATFORMS: ${{ steps.library.outputs.matrix }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+
+          while read -r entry; do
+            npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
+            rust_target=$(echo "$entry" | jq -r '.["rust-target"]')
+            binary_name=$(echo "$entry" | jq -r '.["binary-name"]')
+            archive_format=$(echo "$entry" | jq -r '.["archive-format"]')
+            archive_name="onshape-mcp-${VERSION}-${rust_target}"
+
+            echo "Packaging ${archive_name}..."
+
+            # Create staging directory with binary and license files
+            staging_dir="dist/staging/${archive_name}"
+            mkdir -p "$staging_dir"
+            cp "binaries/binary-${npm_platform}/${binary_name}" "$staging_dir/"
+            chmod +x "$staging_dir/${binary_name}"
+            cp LICENSE-MIT LICENSE-APACHE "$staging_dir/"
+
+            # Create archive
+            if [[ "$archive_format" == "tar.gz" ]]; then
+              tar -czf "dist/release/${archive_name}.tar.gz" -C dist/staging "$archive_name"
+            elif [[ "$archive_format" == "zip" ]]; then
+              (cd dist/staging && zip -r "../release/${archive_name}.zip" "$archive_name")
+            else
+              echo "ERROR: Unknown archive format '${archive_format}' for ${rust_target}" >&2
+              exit 1
+            fi
+          done < <(echo "$PLATFORMS" | jq -c '.release[]')
+
+          echo "Release archives:"
+          ls -la dist/release/
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          truncate -s 0 dist/SHA256SUMS
+
+          for f in dist/release/*; do
+            hash=$(sha256sum "$f" | cut -d' ' -f1)
+            name=$(basename "$f")
+            echo "$hash  $name" >> dist/SHA256SUMS
+          done
+
+          echo "SHA256SUMS:"
+          cat dist/SHA256SUMS
+
+          if [[ ! -s dist/SHA256SUMS ]]; then
+            echo "ERROR: SHA256SUMS is empty — no release archives found" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        if: needs.release-config.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          # Collect all release assets
+          assets=()
+          for f in dist/release/*; do
+            assets+=("$f")
+          done
+          assets+=("dist/SHA256SUMS")
+
+          echo "Creating release ${TAG} with ${#assets[@]} assets..."
+          gh release create "$TAG" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            "${assets[@]}"
 
   all:
     name: all
     if: always()
-    needs: [pre-commit, rust, coverage, npm, release-npm]
+    needs: [checks, release-npm, cargo-publish, github-release]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@release/v1
