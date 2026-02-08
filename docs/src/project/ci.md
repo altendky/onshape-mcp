@@ -70,7 +70,7 @@ Store credentials in repository secrets:
 | `.github/workflows/reflow-release-version.yml` | Reusable workflow for version extraction and tag verification |
 | `.github/workflows/reflow-release-build.yml` | Reusable workflow for release binary builds (5 platforms) |
 | `.github/workflows/reflow-release-npm.yml` | Reusable workflow for npm package, publish, and test |
-| `.github/workflows/release.yml` | Entry point for manual dispatch + tag push releases |
+| `.github/workflows/release.yml` | Entry point for tag push releases |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
 

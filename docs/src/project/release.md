@@ -29,22 +29,21 @@ This eliminates the need for separate staging and finalize workflows — the sam
 | Caller | Trigger | Verify | Build | npm | Cargo publish | GitHub release |
 | ------ | ------- | ------ | ----- | --- | ------------- | -------------- |
 | `ci.yml` | PR / push to main | Yes | Yes | staging version | No | No |
-| `release.yml` | `workflow_dispatch` | Yes | Yes | real version (`latest`) | Yes | No |
 | `release.yml` | Tag push (`v*`) | Yes (with tag check) | Yes | real version (`latest`) | Yes | Yes |
 
 ### Trigger Behavior
 
-| Step | PR / push to main | Manual dispatch | Git tag push |
-| ---- | ----------------- | --------------- | ------------ |
-| Verify tag == Cargo.toml | — | — | Yes (fail if mismatch) |
-| Build release binaries | Yes | Yes | Yes |
-| Smoke test binaries | Yes | Yes | Yes |
-| Package npm tarballs | Yes (staging version) | Yes (real version) | Yes (real version) |
-| Test npm from tarballs | Yes | Yes | Yes |
-| Publish npm | Yes (`--tag staging`) | Yes (`--tag latest`) | Yes (`--tag latest`) |
-| Test npm from registry | Yes | Yes | Yes |
-| `cargo publish` | — | Yes | Yes |
-| Create GitHub release | — | — | Yes |
+| Step | PR / push to main | Git tag push |
+| ---- | ----------------- | ------------ |
+| Verify tag == Cargo.toml | — | Yes (fail if mismatch) |
+| Build release binaries | Yes | Yes |
+| Smoke test binaries | Yes | Yes |
+| Package npm tarballs | Yes (staging version) | Yes (real version) |
+| Test npm from tarballs | Yes | Yes |
+| Publish npm | Yes (`--tag staging`) | Yes (`--tag latest`) |
+| Test npm from registry | Yes | Yes |
+| `cargo publish` | — | Yes |
+| Create GitHub release | — | Yes |
 
 ## Version Strategy
 
@@ -125,7 +124,6 @@ Packages, publishes, and tests npm packages. Parameterized by version and dist-t
 | `version` | Version to set in `package.json` | `0.1.0` or `0.1.0-staging-main-abc1234-12345678` |
 | `binary-version` | Expected `--version` output | `0.1.0` (always the Cargo.toml version) |
 | `dist-tag` | npm dist-tag for publish | `staging` or `latest` |
-| `dry-run` | Skip publish steps | `false` |
 
 ### Job Flow
 
@@ -150,7 +148,7 @@ package ──► test-tarballs (5 platforms) ──► publish ──► test-p
 
 **3. publish** (ubuntu-latest, needs: test-tarballs)
 
-- Skip if `dry-run` or no npm credentials available (fork PRs)
+- Skip if no npm credentials available (fork PRs)
 - `npm publish --tag {dist-tag} <tarball>` for 5 platform packages first
 - `npm publish --tag {dist-tag} <main-tarball>` last
 
@@ -188,7 +186,7 @@ Staging versions are identifiable by their format: `{version}-staging-{sanitized
 
 ## Release Entry Point (`release.yml`)
 
-Triggered by tag push (`v*`) or manual dispatch. Composes the reusable workflows and adds release-only jobs.
+Triggered by tag push (`v*`). Composes the reusable workflows and adds release-only jobs.
 
 ### Release Job Flow
 
@@ -208,15 +206,13 @@ version ──► build ──► npm (version=real, tag=latest)
 **cargo-publish** (ubuntu-latest)
 
 - `cargo publish` for all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
-- Skipped when `dry-run` is true
-
 **github-release** (ubuntu-latest, needs: build + npm + cargo-publish)
 
 - Download binary artifacts from the build workflow
 - Package release archives (tar.gz for Unix, zip for Windows) with license files
 - Generate `SHA256SUMS` covering all release archives
 - Create GitHub release from tag via `gh release create`
-- Only runs on tag push (not manual dispatch)
+- Only runs on tag push
 
 ### GitHub Release Contents
 
@@ -290,7 +286,7 @@ It is generated in the `github-release` job at release time.
 
 | File | Purpose |
 | ---- | ------- |
-| `.github/workflows/release.yml` | Entry point for manual dispatch + tag push |
+| `.github/workflows/release.yml` | Entry point for tag push releases |
 | `.github/workflows/reflow-release-version.yml` | Reusable: extract and validate version |
 | `.github/workflows/reflow-release-build.yml` | Reusable: build release binaries on 5 platforms |
 | `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
@@ -368,4 +364,4 @@ Items requiring further discussion before or during implementation.
 
 ### Workflow Inputs
 
-- [x] `workflow_dispatch` inputs: ~~determine whether to accept parameters~~ Resolved: one optional input. **`dry-run`** (boolean, default false) skips publish steps while running the full build/test pipeline. Branch selection is handled by GitHub's built-in UI when triggering manually; version is always read from Cargo.toml. Manual dispatch publishes real versions (not staging)
+- [x] `workflow_dispatch` inputs: ~~determine whether to accept parameters~~ Resolved: removed. Release is triggered only by tag push. The CI pipeline exercises the full build/test/publish flow via staging versions on every PR, providing sufficient coverage without a manual dispatch trigger. See [#88](https://github.com/altendky/onshape-mcp/issues/88) for further testability review
