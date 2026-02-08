@@ -90,10 +90,11 @@ For the finalize publish, the `latest` tag moves to the real version (the defaul
 
 ## Version Workflow (`reflow-release-version.yml`)
 
-Extracts the version from `crates/onshape-mcp/Cargo.toml` and optionally verifies it matches a git tag.
+Extracts the version from `crates/onshape-mcp/Cargo.toml`, verifies npm packages are in sync, and optionally verifies the version matches a git tag.
 
 - Input: `git-tag` (optional)
 - Output: `version`
+- Verify all npm `package.json` versions match Cargo.toml (via `scripts/sync-npm-versions.js --check`)
 - If `git-tag` provided: strip `v` prefix, compare to Cargo.toml version, fail on mismatch
 
 ## Build Workflow (`reflow-release-build.yml`)
