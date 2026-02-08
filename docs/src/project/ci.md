@@ -183,7 +183,6 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │            reflow-npm.yml (reusable workflow)                │
 ├─────────────────────────────────────────────────────────────┤
 │  jobs:                                                       │
-│    check: 1 job (version sync, smoke tests)                 │
 │    library: uses reflow-library.yml                         │
 │    coverage: 5 platform jobs (c8 coverage)                  │
 └─────────────────────────────────────────────────────────────┘
