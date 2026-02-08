@@ -18,7 +18,7 @@ set -euo pipefail
 # exit codes).
 metadata=$(cargo metadata --format-version 1 --no-deps)
 
-crate_lines=$(echo "$metadata" | jq -r '
+crate_lines=$(printf '%s\n' "$metadata" | jq -r '
     [.packages[] | select(.publish == null or .publish == [])] as $publishable |
     ($publishable | map(.name)) as $ws_names |
     $publishable[] |
