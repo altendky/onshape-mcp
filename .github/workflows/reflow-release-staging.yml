@@ -320,7 +320,162 @@ jobs:
           version="${{ needs.verify.outputs.version }}"
           output=$(npx onshape-mcp --version 2>&1)
           echo "Binary output: $output"
-          if echo "$output" | grep -q "$version"; then
+          if echo "$output" | grep -qF "$version"; then
+            echo "OK: Version matches ($version)"
+          else
+            echo "ERROR: Expected version $version in output: $output" >&2
+            exit 1
+          fi
+
+  publish-npm-staging:
+    name: Publish npm staging
+    needs: [library, verify, package-npm, test-npm-tarballs]
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check npm publish credentials
+        id: check-auth
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # npm CLI >= 11.5.1 auto-detects OIDC via ACTIONS_ID_TOKEN_REQUEST_URL.
+          # When called from release.yml (id-token: write), OIDC is used.
+          # When called from ci.yml (no id-token), NPM_TOKEN is used as fallback.
+          has_oidc="false"
+          has_token="false"
+
+          if [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+            echo "OIDC available (id-token: write granted by caller)"
+            has_oidc="true"
+          fi
+
+          if [[ -n "$NPM_TOKEN" ]]; then
+            echo "NPM_TOKEN available"
+            has_token="true"
+          fi
+
+          if [[ "$has_oidc" == "false" && "$has_token" == "false" ]]; then
+            echo "No npm credentials available (fork PR?) — skipping publish"
+            echo "can-publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "can-publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.check-auth.outputs.can-publish == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download staging tarballs
+        if: steps.check-auth.outputs.can-publish == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: npm-staging-tarballs
+          path: staging-tarballs
+
+      - name: Publish platform packages
+        if: steps.check-auth.outputs.can-publish == 'true'
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          platforms='${{ toJSON(fromJSON(needs.library.outputs.matrix).release) }}'
+          echo "$platforms" | jq -c '.[]' | while read -r entry; do
+            npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
+            shopt -s failglob
+            tarballs=( ./staging-tarballs/onshape-mcp-"${npm_platform}"-* )
+            if [[ ${#tarballs[@]} -ne 1 ]]; then
+              echo "ERROR: Expected exactly 1 tarball for ${npm_platform}, found ${#tarballs[@]}" >&2
+              exit 1
+            fi
+            echo "Publishing ${tarballs[0]}..."
+            npm publish "${tarballs[0]}" --tag staging --access public
+          done
+
+      - name: Publish main package
+        if: steps.check-auth.outputs.can-publish == 'true'
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          shopt -s failglob
+          tarballs=( ./staging-tarballs/onshape-mcp-[0-9]* )
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "ERROR: Expected exactly 1 main tarball, found ${#tarballs[@]}" >&2
+            exit 1
+          fi
+          echo "Publishing ${tarballs[0]}..."
+          npm publish "${tarballs[0]}" --tag staging --access public
+
+    outputs:
+      can-publish: ${{ steps.check-auth.outputs.can-publish }}
+
+  test-npm-published:
+    name: "Test npm published (${{ matrix.platform.name }})"
+    needs: [library, verify, publish-npm-staging]
+    if: ${{ needs.publish-npm-staging.outputs.can-publish == 'true' }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install from registry
+        shell: bash
+        run: |
+          staging_version="${{ needs.verify.outputs.staging-version }}"
+          npm_platform="${{ matrix.platform.npm-platform }}"
+          mkdir test-registry-install
+          cd test-registry-install
+          npm init -y
+
+          # Retry with exponential backoff to allow for npm registry propagation.
+          # After npm install succeeds we also verify the platform binary exists
+          # because platform packages are optionalDependencies — npm install can
+          # succeed even if the platform-specific package hasn't propagated yet.
+          bin_name="onshape-mcp"
+          if [[ "$npm_platform" == win32-* ]]; then
+            bin_name="onshape-mcp.exe"
+          fi
+          expected_bin="node_modules/@onshape-mcp/${npm_platform}/bin/${bin_name}"
+
+          max_attempts=5
+          delay=10
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "Attempt ${attempt}/${max_attempts}: installing onshape-mcp@${staging_version}..."
+            if npm install "onshape-mcp@${staging_version}" && [[ -f "$expected_bin" ]]; then
+              echo "Install succeeded and platform binary exists: ${expected_bin}"
+              break
+            fi
+            if [[ "$attempt" -eq "$max_attempts" ]]; then
+              echo "ERROR: Install failed after ${max_attempts} attempts" >&2
+              if [[ ! -f "$expected_bin" ]]; then
+                echo "Platform binary not found: ${expected_bin}" >&2
+              fi
+              exit 1
+            fi
+            echo "Retrying in ${delay}s..."
+            rm -rf node_modules package-lock.json
+            sleep "$delay"
+            delay=$((delay * 2))
+          done
+
+      - name: Verify binary version
+        shell: bash
+        run: |
+          cd test-registry-install
+          version="${{ needs.verify.outputs.version }}"
+          output=$(npx onshape-mcp --version 2>&1)
+          echo "Binary output: $output"
+          if echo "$output" | grep -qF "$version"; then
             echo "OK: Version matches ($version)"
           else
             echo "ERROR: Expected version $version in output: $output" >&2

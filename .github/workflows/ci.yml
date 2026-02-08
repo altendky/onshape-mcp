@@ -35,6 +35,7 @@ jobs:
   release-staging:
     name: Release Staging
     uses: ./.github/workflows/reflow-release-staging.yml
+    secrets: inherit
 
   all:
     name: all

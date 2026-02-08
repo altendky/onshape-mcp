@@ -67,6 +67,9 @@ Store credentials in repository secrets:
 | `.github/workflows/reflow-rust.yml` | Reusable workflow for Rust lint, build, and test jobs |
 | `.github/workflows/reflow-coverage.yml` | Reusable workflow for Rust coverage generation (5 platform jobs) |
 | `.github/workflows/reflow-npm.yml` | Reusable workflow for npm checks and coverage (1 + 5 platform jobs) |
+| `.github/workflows/reflow-release-staging.yml` | Reusable workflow for release build, test, npm staging publish |
+| `.github/workflows/release.yml` | Entry point for manual dispatch + tag push releases |
+| `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
 
 ## Concurrency
