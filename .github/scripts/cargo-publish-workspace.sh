@@ -64,7 +64,12 @@ while ((${#crate_info[@]} > 0)); do
 			published+=("$name")
 			progress=true
 
-			# Brief delay for crates.io index propagation before publishing dependents
+			# Brief delay for crates.io index propagation.  Skip only when
+			# this round started with a single crate (meaning nothing else
+			# will be published after it).  When multiple crates remain at
+			# the start of the round, we always sleep because later
+			# iterations — in this round or the next — may need the index
+			# to reflect what was just published.
 			if ((${#crate_info[@]} > 1)); then
 				sleep 5
 			fi
