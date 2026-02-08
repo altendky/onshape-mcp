@@ -22,7 +22,7 @@ crate_lines=$(printf '%s\n' "$metadata" | jq -r '
     [.packages[] | select(.publish == null or .publish == [])] as $publishable |
     ($publishable | map(.name)) as $ws_names |
     $publishable[] |
-    [.name] + [.dependencies[] | .name | select(. as $n | $ws_names | index($n))] |
+    [.name] + [.dependencies[] | select(.kind == null) | .name | select(. as $n | $ws_names | index($n))] |
     join(" ")
   ')
 
