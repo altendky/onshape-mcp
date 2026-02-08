@@ -24,4 +24,6 @@ jobs:
         with:
           python-version: '3.x'
       - uses: ./.github/actions/setup-lychee
+        with:
+          token: ${{ github.token }}
       - uses: pre-commit/action@v3.0.1
