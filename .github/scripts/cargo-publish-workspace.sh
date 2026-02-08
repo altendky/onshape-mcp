@@ -35,8 +35,8 @@ if [[ ${#crate_info[@]} -eq 1 && -z "${crate_info[0]}" ]]; then
 fi
 
 if ((${#crate_info[@]} == 0)); then
-	echo "No publishable workspace crates found"
-	exit 0
+	echo "ERROR: No publishable workspace crates found" >&2
+	exit 1
 fi
 
 echo "Found ${#crate_info[@]} publishable crates"
