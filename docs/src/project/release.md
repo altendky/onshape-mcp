@@ -192,15 +192,17 @@ Triggered by tag push (`v*`). Composes the reusable workflows and adds release-o
 ### Release Job Flow
 
 ```text
-version ──► build ──► npm (version=real, tag=latest)
-  │                              │
-  ├──► cargo-publish             │
-  │                              │
-  └──► github-release ◄──────────┘
-        (needs: build, cargo-publish, npm)
+version ──┬──► npm (version=real, tag=latest) ◄── build
+           │                    │
+           ├──► cargo-publish   │
+           │                    │
+           └──► github-release ◄┘
+                 (needs: version, build, npm, cargo-publish)
+
+build starts immediately (no dependency on version)
 ```
 
-`build` and `cargo-publish` start in parallel (independent). `github-release` waits for everything and has an `if: github.ref_type == 'tag'` guard, though since the only trigger for `release.yml` is a tag push this condition is always true.
+`build` and `version` start immediately in parallel (neither has dependencies). `cargo-publish` and `npm` depend on `version`; `npm` also depends on `build`. `github-release` waits for everything and has an `if: github.ref_type == 'tag'` guard, though since the only trigger for `release.yml` is a tag push this condition is always true.
 
 ### Release-Only Jobs
 
