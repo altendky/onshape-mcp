@@ -296,6 +296,7 @@ It is generated in the `github-release` job at release time.
 | `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
+| `.github/scripts/cargo-publish-workspace.sh` | Publishes all workspace crates to crates.io in dependency order |
 
 ## Modified Files
 
