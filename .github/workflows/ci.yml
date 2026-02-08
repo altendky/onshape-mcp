@@ -43,6 +43,16 @@ jobs:
     name: Build
     uses: ./.github/workflows/reflow-release-build.yml
 
+  checks:
+    name: checks
+    if: always()
+    needs: [pre-commit, rust, coverage, npm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
+
   release-config:
     name: Release config
     needs: [version]
@@ -86,7 +96,7 @@ jobs:
 
   release-npm:
     name: Release npm
-    needs: [release-config, version, build]
+    needs: [release-config, version, build, checks]
     uses: ./.github/workflows/reflow-release-npm.yml
     permissions:
       id-token: write
@@ -98,7 +108,7 @@ jobs:
 
   cargo-publish:
     name: Publish crates
-    needs: [release-config]
+    needs: [release-config, checks]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -220,7 +230,7 @@ jobs:
   all:
     name: all
     if: always()
-    needs: [pre-commit, rust, coverage, npm, release-npm, cargo-publish, github-release]
+    needs: [checks, release-npm, cargo-publish, github-release]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@release/v1

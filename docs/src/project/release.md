@@ -190,18 +190,22 @@ Releases are triggered by pushing a `v*` tag to the repository. This triggers th
 ### Release Job Flow
 
 ```text
-version ──► release-config ──┬──► release-npm ◄── build
-                              │         │
-                              ├──► cargo-publish
-                              │         │
-                              └──► github-release
-                                   (needs: release-config, version,
-                                    build, release-npm, cargo-publish)
-
-build starts immediately (no dependency on version or release-config)
+pre-commit ─┐
+rust ───────┤
+coverage ───┼──► checks (alls-green)
+npm ────────┘         │
+                      ├──► cargo-publish
+                      │         │
+version ──► release-config ──┤  │
+                      │      │  │
+build ────────────────┼──► release-npm
+                      │         │
+                      └──► github-release
+                           (needs: release-config, version,
+                            build, release-npm, cargo-publish)
 ```
 
-`build` and `version` start immediately in parallel (neither has dependencies). `release-config` depends on `version` and makes a single mode decision — all other release jobs consume its outputs. `cargo-publish` and `release-npm` depend on `release-config`; `release-npm` also depends on `build`. `github-release` waits for everything.
+All quality jobs (`pre-commit`, `rust`, `coverage`, `npm`) must pass the `checks` gate before any publishing can begin. `build` and `version` start immediately in parallel. `release-config` depends on `version` and makes a single mode decision. `cargo-publish` and `release-npm` both depend on `release-config` and `checks`; `release-npm` also depends on `build`. `github-release` waits for everything.
 
 ### Release-Config Job
 
@@ -215,10 +219,11 @@ The `release-config` job is the single point where `github.ref_type == 'tag'` is
 
 ### Inline Jobs
 
-**cargo-publish** (ubuntu-latest, needs: release-config)
+**cargo-publish** (ubuntu-latest, needs: release-config + checks)
 
 - Always validates crate packaging via `cargo package --workspace`, which checks Cargo.toml metadata, file inclusion, dependency resolution (using sibling `.crate` files for workspace deps), and builds from the packaged source
 - On tag push: publishes all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
+- Gated by `checks` — no crate is published unless all quality checks pass
 
 **github-release** (ubuntu-latest, needs: release-config + version + build + release-npm + cargo-publish)
 

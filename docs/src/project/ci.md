@@ -116,18 +116,22 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    build:                                                         │
 │      uses: ./.github/workflows/reflow-release-build.yml          │
 │                                                                   │
+│    checks: (needs: pre-commit, rust, coverage, npm)               │
+│      re-actors/alls-green — gates release jobs on all quality     │
+│      checks passing                                               │
+│                                                                   │
 │    release-config: (needs: version)                               │
 │      Centralizes all release-mode decisions:                      │
 │        tag push → publish=true, real version, latest dist-tag     │
 │        otherwise → publish=false, staging version, staging dist-tag│
 │                                                                   │
-│    release-npm: (needs: release-config, version, build)           │
+│    release-npm: (needs: release-config, version, build, checks)   │
 │      uses: ./.github/workflows/reflow-release-npm.yml            │
 │      (version and dist-tag from release-config)                   │
 │                                                                   │
-│    cargo-publish: (needs: release-config)                         │
-│      cargo publish in dependency order                            │
-│      (--dry-run when not publishing)                              │
+│    cargo-publish: (needs: release-config, checks)                 │
+│      cargo package --workspace (always)                           │
+│      cargo publish in dependency order (tag push only)            │
 │                                                                   │
 │    github-release: (needs: release-config, version, build,        │
 │                     release-npm, cargo-publish)                    │
@@ -135,8 +139,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │      gh release create (only when publish=true)                   │
 │                                                                   │
 │    all:                                                           │
-│      needs: [pre-commit, rust, coverage, npm,                    │
-│              release-npm, cargo-publish, github-release]          │
+│      needs: [checks, release-npm, cargo-publish, github-release] │
 │      uses: re-actors/alls-green                                  │
 └──────────────────────────────────────────────────────────────────┘
 
@@ -298,12 +301,13 @@ environments, verifying that statically-linked musl binaries work correctly on g
 | npm | 6 (1 library + 5 coverage) |
 | Version | 1 |
 | Build | 6 (1 library + 5 build) |
+| Checks | 1 (alls-green gate) |
 | Release config | 1 |
 | Release npm | 13 (1 library + 1 package + 5 test-tarballs + 1 publish + 5 test-published) |
 | Cargo publish | 1 |
 | GitHub Release | 1 |
 | All | 1 |
-| **Total** | **81 jobs** |
+| **Total** | **82 jobs** |
 
 **Rust job breakdown:**
 
