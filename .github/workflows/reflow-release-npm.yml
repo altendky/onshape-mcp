@@ -93,13 +93,13 @@ jobs:
           # Pack platform packages first
           for dir in ${{ steps.platform-dirs.outputs.dirs }}; do
             echo "Packing $dir..."
-            tarball=$(npm pack "./$dir" --pack-destination dist/tarballs 2>&1 | tail -1)
+            tarball=$(npm pack "./$dir" --pack-destination dist/tarballs --json | jq -r '.[0].filename')
             echo "  -> $tarball"
           done
 
           # Pack main package
           echo "Packing npm/onshape-mcp..."
-          tarball=$(npm pack ./npm/onshape-mcp --pack-destination dist/tarballs 2>&1 | tail -1)
+          tarball=$(npm pack ./npm/onshape-mcp --pack-destination dist/tarballs --json | jq -r '.[0].filename')
           echo "  -> $tarball"
 
           echo "Tarballs:"
