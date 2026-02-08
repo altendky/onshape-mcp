@@ -125,6 +125,11 @@ jobs:
           echo "SHA256SUMS:"
           cat dist/SHA256SUMS
 
+          if [[ ! -s dist/SHA256SUMS ]]; then
+            echo "ERROR: SHA256SUMS is empty — no release archives found" >&2
+            exit 1
+          fi
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
