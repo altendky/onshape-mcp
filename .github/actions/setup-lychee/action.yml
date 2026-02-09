@@ -6,6 +6,9 @@ inputs:
     description: "Lychee version to install (e.g., 'v0.18.0' or 'latest')"
     required: false
     default: "latest"
+  token:
+    description: "GitHub token for authenticated API requests (avoids rate limiting)"
+    required: true
 
 runs:
   using: composite
@@ -30,12 +33,13 @@ runs:
       shell: bash
       env:
         INPUT_VERSION: ${{ inputs.version }}
+        GITHUB_TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
 
         # Determine version
         if [[ "${INPUT_VERSION}" == "latest" ]]; then
-          VERSION=$(curl -fsSL https://api.github.com/repos/lycheeverse/lychee/releases/latest | jq -r '.tag_name')
+          VERSION=$(curl -fsSL -H "Authorization: token ${GITHUB_TOKEN}" https://api.github.com/repos/lycheeverse/lychee/releases/latest | jq -r '.tag_name')
         else
           VERSION="${INPUT_VERSION}"
         fi
@@ -76,7 +80,7 @@ runs:
         esac
 
         echo "Downloading ${ASSET}..."
-        curl -fsSL "${BASE_URL}/${ASSET}" -o "${ASSET}"
+        curl -fsSL -H "Authorization: token ${GITHUB_TOKEN}" "${BASE_URL}/${ASSET}" -o "${ASSET}"
 
         # Install to ~/.local/bin
         mkdir -p "$HOME/.local/bin"
