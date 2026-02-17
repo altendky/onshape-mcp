@@ -1,2 +1,3 @@
 * -text
-**/*.lock  -linguist-generated
+**/*.lock -linguist-generated
+**/*-lock.json -linguist-generated
