@@ -745,3 +745,145 @@ fn cli_flags_override_env_vars() {
 
     client.shutdown();
 }
+
+// ============================================================================
+// OAuth Auth Method Tests
+// ============================================================================
+
+#[test]
+fn auth_status_not_configured_with_oauth_method_no_credentials() {
+    let mut env = HashMap::new();
+    env.insert("ONSHAPE_MCP_AUTH__METHOD", "oauth");
+
+    let mut client = McpTestClient::spawn_with_env(&env);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["status"], "not_configured");
+    assert_eq!(auth_result["auth_method"], "oauth");
+
+    client.shutdown();
+}
+
+#[test]
+fn auth_status_oauth_partial_with_only_client_id() {
+    let mut env = HashMap::new();
+    env.insert("ONSHAPE_MCP_AUTH__METHOD", "oauth");
+    env.insert("ONSHAPE_MCP_AUTH__CLIENT_ID", "my-client-id");
+
+    let mut client = McpTestClient::spawn_with_env(&env);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["status"], "not_configured");
+    assert_eq!(auth_result["auth_method"], "oauth");
+    assert!(
+        auth_result["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("client_secret"))
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn auth_status_oauth_configured_with_client_credentials() {
+    let mut env = HashMap::new();
+    env.insert("ONSHAPE_MCP_AUTH__METHOD", "oauth");
+    env.insert("ONSHAPE_MCP_AUTH__CLIENT_ID", "my-client-id");
+    env.insert("ONSHAPE_MCP_AUTH__CLIENT_SECRET", "my-client-secret");
+
+    let mut client = McpTestClient::spawn_with_env(&env);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    // OAuth configured means client creds are present but no tokens yet
+    assert_eq!(auth_result["status"], "not_configured");
+    assert_eq!(auth_result["auth_method"], "oauth");
+    assert!(
+        auth_result["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("no access token"))
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn auth_method_oauth_via_env_var() {
+    let mut env = HashMap::new();
+    env.insert("ONSHAPE_MCP_AUTH__METHOD", "oauth");
+
+    let mut client = McpTestClient::spawn_with_env(&env);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["auth_method"], "oauth");
+
+    client.shutdown();
+}
+
+#[test]
+fn auth_method_oauth_via_cli_flag() {
+    let mut client = McpTestClient::spawn_with_args(&["--auth-method", "oauth"]);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["auth_method"], "oauth");
+
+    client.shutdown();
+}
+
+#[test]
+fn auth_method_oauth_via_config_file() {
+    let dir = tempfile::tempdir().expect("should create temp dir");
+    let config_path = dir.path().join("config.toml");
+
+    std::fs::write(
+        &config_path,
+        "[auth]\nmethod = \"oauth\"\nclient_id = \"file-cid\"\nclient_secret = \"file-cs\"\n",
+    )
+    .expect("should write config file");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600))
+            .expect("should set permissions");
+    }
+
+    let config_arg = format!("--config={}", config_path.display());
+    let mut client = McpTestClient::spawn_with_args(&[&config_arg]);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["auth_method"], "oauth");
+    // Client credentials present but no tokens
+    assert_eq!(auth_result["status"], "not_configured");
+
+    client.shutdown();
+}
+
+#[test]
+fn oauth_client_credentials_via_cli_flags() {
+    let mut client = McpTestClient::spawn_with_args(&[
+        "--auth-method",
+        "oauth",
+        "--client-id",
+        "cli-client-id",
+        "--client-secret",
+        "cli-client-secret",
+    ]);
+    client.initialize();
+
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["auth_method"], "oauth");
+    assert_eq!(auth_result["status"], "not_configured");
+    assert!(
+        auth_result["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("no access token"))
+    );
+
+    client.shutdown();
+}

@@ -4,6 +4,7 @@
 //! It delegates all tool logic to `onshape-mcp-core`.
 
 pub mod config;
+pub mod oauth;
 
 use std::sync::Arc;
 

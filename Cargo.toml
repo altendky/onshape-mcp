@@ -24,6 +24,8 @@ chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 figment = { version = "0.10", features = ["toml", "env"] }
+oauth2 = { version = "5", default-features = false }
+open = "5"
 rmcp = "0.14"
 schemars = "1"
 secrecy = { version = "0.10", features = ["serde"] }
@@ -33,6 +35,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tempfile = "3"
 toml = "0.9"
+url = "2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

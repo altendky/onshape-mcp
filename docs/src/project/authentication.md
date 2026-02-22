@@ -6,11 +6,13 @@
 | -------- | -------- | ------- |
 | API Keys (Basic) | Implemented | Base64-encoded credentials over HTTPS; personal use, single user |
 | API Keys (HMAC-SHA256) | Future | Per-request signed headers with nonce/timestamp; replay protection, secret never sent |
-| OAuth 2.0 | Future | Multi-user apps, team access |
+| OAuth 2.0 | Implemented | Authorization code flow via OpenCode plugin; token file storage |
 
 ## Credential Sources
 
 Credentials can be provided via config file or environment variables. See [Configuration](configuration.md) for file locations and precedence rules.
+
+### API Key Credentials
 
 **Config file example:**
 
@@ -24,8 +26,56 @@ secret_key = "..."
 
 | Variable | Description |
 | ---------- | ------------- |
-| `ONSHAPE_MCP_ACCESS_KEY` | Onshape API access key |
-| `ONSHAPE_MCP_SECRET_KEY` | Onshape API secret key |
+| `ONSHAPE_MCP_AUTH__ACCESS_KEY` | Onshape API access key |
+| `ONSHAPE_MCP_AUTH__SECRET_KEY` | Onshape API secret key |
+
+### OAuth 2.0 Credentials
+
+OAuth requires a client ID and client secret from an Onshape OAuth application, plus access tokens obtained through the authorization code flow.
+
+**Config file example:**
+
+```toml
+[auth]
+method = "oauth"
+client_id = "..."
+client_secret = "..."
+```
+
+**Environment variables:**
+
+| Variable | Description |
+| ---------- | ------------- |
+| `ONSHAPE_MCP_AUTH__METHOD` | Set to `oauth` to use OAuth authentication |
+| `ONSHAPE_MCP_AUTH__CLIENT_ID` | OAuth 2.0 client ID |
+| `ONSHAPE_MCP_AUTH__CLIENT_SECRET` | OAuth 2.0 client secret |
+
+**CLI flags:**
+
+| Flag | Description |
+| ------ | ------------- |
+| `--auth-method oauth` | Use OAuth authentication |
+| `--client-id <ID>` | OAuth 2.0 client ID |
+| `--client-secret <SECRET>` | OAuth 2.0 client secret |
+
+### OAuth Token File
+
+OAuth access and refresh tokens are stored in a local JSON file:
+
+| Platform | Location |
+| ---------- | ---------- |
+| Unix | `~/.local/share/onshape-mcp/tokens.json` |
+| macOS | `~/Library/Application Support/onshape-mcp/tokens.json` |
+| Windows | `%LOCALAPPDATA%\onshape-mcp\tokens.json` |
+
+The token file has the same permission requirements as the config file (0600 on Unix).
+Token refresh is not yet implemented; when tokens expire, re-run the OAuth authorization flow.
+
+### OpenCode Plugin
+
+When using OpenCode, the OAuth flow is handled by the `.opencode/plugin.ts` plugin.
+The plugin prompts for client ID and client secret, opens the Onshape authorization page in your browser,
+starts a local callback server, exchanges the authorization code for tokens, and writes them to the token file.
 
 **Future credential sources** (to be implemented):
 

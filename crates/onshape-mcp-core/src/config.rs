@@ -28,12 +28,18 @@ pub const MIN_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 /// Credentials are wrapped in [`SecretString`] to prevent accidental logging.
 #[derive(Deserialize)]
 pub struct AuthConfig {
-    /// Onshape API access key.
+    /// Onshape API access key (for Basic/HMAC auth).
     #[serde(default)]
     pub access_key: Option<SecretString>,
-    /// Onshape API secret key.
+    /// Onshape API secret key (for Basic/HMAC auth).
     #[serde(default)]
     pub secret_key: Option<SecretString>,
+    /// OAuth 2.0 client ID (for OAuth auth).
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// OAuth 2.0 client secret (for OAuth auth).
+    #[serde(default)]
+    pub client_secret: Option<SecretString>,
     /// Authentication method to use for Onshape API requests.
     #[serde(default = "default_auth_method")]
     pub method: AuthMethod,
@@ -63,7 +69,7 @@ pub struct AppConfig {
 /// credentials against the Onshape API.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CredentialStatus {
-    /// Both access key and secret key are provided.
+    /// Both access key and secret key are provided (API key auth).
     BothPresent,
     /// No credentials are configured.
     NonePresent,
@@ -72,20 +78,43 @@ pub enum CredentialStatus {
         /// Name of the missing credential field.
         missing: &'static str,
     },
+    /// OAuth client credentials are fully configured (`client_id` + `client_secret`).
+    OAuthConfigured,
+    /// OAuth client credentials are partially configured.
+    OAuthPartial {
+        /// Name of the missing OAuth credential field.
+        missing: &'static str,
+    },
 }
 
 impl AuthConfig {
     /// Checks whether credentials are present (without validating them).
+    ///
+    /// For OAuth, checks `client_id` and `client_secret` instead of API keys.
+    /// For Basic (and future HMAC), checks `access_key` and `secret_key`.
     #[must_use]
     pub const fn credential_status(&self) -> CredentialStatus {
-        match (&self.access_key, &self.secret_key) {
-            (Some(_), Some(_)) => CredentialStatus::BothPresent,
-            (None, None) => CredentialStatus::NonePresent,
-            (Some(_), None) => CredentialStatus::Partial {
-                missing: "secret_key",
+        match self.method {
+            AuthMethod::OAuth => match (&self.client_id, &self.client_secret) {
+                (Some(_), Some(_)) => CredentialStatus::OAuthConfigured,
+                (None, None) => CredentialStatus::NonePresent,
+                (Some(_), None) => CredentialStatus::OAuthPartial {
+                    missing: "client_secret",
+                },
+                (None, Some(_)) => CredentialStatus::OAuthPartial {
+                    missing: "client_id",
+                },
             },
-            (None, Some(_)) => CredentialStatus::Partial {
-                missing: "access_key",
+            // Basic auth (and any future API-key-based methods) checks access_key/secret_key.
+            _ => match (&self.access_key, &self.secret_key) {
+                (Some(_), Some(_)) => CredentialStatus::BothPresent,
+                (None, None) => CredentialStatus::NonePresent,
+                (Some(_), None) => CredentialStatus::Partial {
+                    missing: "secret_key",
+                },
+                (None, Some(_)) => CredentialStatus::Partial {
+                    missing: "access_key",
+                },
             },
         }
     }
@@ -111,6 +140,8 @@ impl Default for AuthConfig {
         Self {
             access_key: None,
             secret_key: None,
+            client_id: None,
+            client_secret: None,
             method: default_auth_method(),
             check_interval: DEFAULT_CHECK_INTERVAL,
         }
@@ -476,5 +507,97 @@ mod tests {
         let original = config.clamp_check_interval();
         assert_eq!(original, None);
         assert_eq!(config.check_interval, Duration::from_secs(300));
+    }
+
+    // ====================================================================
+    // OAuth Credential Status Tests
+    // ====================================================================
+
+    #[test]
+    fn credential_status_oauth_configured() {
+        let config = AuthConfig {
+            client_id: Some("my-client-id".into()),
+            client_secret: Some(SecretString::from("my-client-secret")),
+            method: AuthMethod::OAuth,
+            ..AuthConfig::default()
+        };
+        assert_eq!(
+            config.credential_status(),
+            CredentialStatus::OAuthConfigured
+        );
+    }
+
+    #[test]
+    fn credential_status_oauth_none_present() {
+        let config = AuthConfig {
+            method: AuthMethod::OAuth,
+            ..AuthConfig::default()
+        };
+        assert_eq!(config.credential_status(), CredentialStatus::NonePresent);
+    }
+
+    #[test]
+    fn credential_status_oauth_missing_client_secret() {
+        let config = AuthConfig {
+            client_id: Some("my-client-id".into()),
+            client_secret: None,
+            method: AuthMethod::OAuth,
+            ..AuthConfig::default()
+        };
+        assert_eq!(
+            config.credential_status(),
+            CredentialStatus::OAuthPartial {
+                missing: "client_secret"
+            }
+        );
+    }
+
+    #[test]
+    fn credential_status_oauth_missing_client_id() {
+        let config = AuthConfig {
+            client_id: None,
+            client_secret: Some(SecretString::from("my-client-secret")),
+            method: AuthMethod::OAuth,
+            ..AuthConfig::default()
+        };
+        assert_eq!(
+            config.credential_status(),
+            CredentialStatus::OAuthPartial {
+                missing: "client_id"
+            }
+        );
+    }
+
+    #[test]
+    fn deserialize_auth_config_method_oauth() {
+        let toml_str = r#"
+            method = "oauth"
+            client_id = "my-client-id"
+            client_secret = "my-client-secret"
+        "#;
+
+        let config: AuthConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.method, AuthMethod::OAuth);
+        assert_eq!(config.client_id.as_deref(), Some("my-client-id"));
+        assert_eq!(
+            config
+                .client_secret
+                .as_ref()
+                .expect("should have client_secret")
+                .expose_secret(),
+            "my-client-secret"
+        );
+    }
+
+    #[test]
+    fn deserialize_auth_config_oauth_defaults() {
+        let toml_str = r#"
+            method = "oauth"
+        "#;
+
+        let config: AuthConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.method, AuthMethod::OAuth);
+        assert!(config.client_id.is_none());
+        assert!(config.client_secret.is_none());
     }
 }

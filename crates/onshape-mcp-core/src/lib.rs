@@ -78,6 +78,43 @@ impl AuthStatusResult {
             )),
         }
     }
+
+    /// Returns a result indicating OAuth is configured but no token file is present.
+    #[must_use]
+    pub fn oauth_not_configured() -> Self {
+        Self {
+            status: AuthStatus::NotConfigured,
+            auth_method: AuthMethod::OAuth,
+            last_check: None,
+            message: Some("OAuth client credentials configured but no access token present. Run the OAuth authorization flow to obtain tokens.".into()),
+        }
+    }
+
+    /// Returns a result indicating OAuth tokens are present (not yet validated).
+    #[must_use]
+    pub fn oauth_token_present() -> Self {
+        Self {
+            status: AuthStatus::NotValidated,
+            auth_method: AuthMethod::OAuth,
+            last_check: None,
+            message: Some(
+                "OAuth access token present but not yet validated against Onshape API".into(),
+            ),
+        }
+    }
+
+    /// Returns a result indicating the OAuth access token has expired.
+    #[must_use]
+    pub fn oauth_token_expired() -> Self {
+        Self {
+            status: AuthStatus::Expired,
+            auth_method: AuthMethod::OAuth,
+            last_check: None,
+            message: Some(
+                "OAuth access token has expired. Re-run the OAuth authorization flow to obtain new tokens.".into(),
+            ),
+        }
+    }
 }
 
 /// The iconic Onshape regeneration success message.
@@ -188,5 +225,56 @@ mod tests {
                 .as_deref()
                 .is_some_and(|m| m.contains("secret_key"))
         );
+    }
+
+    #[test]
+    fn auth_status_oauth_not_configured() {
+        let result = AuthStatusResult::oauth_not_configured();
+
+        assert_eq!(result.status, AuthStatus::NotConfigured);
+        assert_eq!(result.auth_method, AuthMethod::OAuth);
+        assert!(
+            result
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("OAuth") && m.contains("no access token"))
+        );
+    }
+
+    #[test]
+    fn auth_status_oauth_token_present() {
+        let result = AuthStatusResult::oauth_token_present();
+
+        assert_eq!(result.status, AuthStatus::NotValidated);
+        assert_eq!(result.auth_method, AuthMethod::OAuth);
+        assert!(
+            result
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("not yet validated"))
+        );
+    }
+
+    #[test]
+    fn auth_status_oauth_token_expired() {
+        let result = AuthStatusResult::oauth_token_expired();
+
+        assert_eq!(result.status, AuthStatus::Expired);
+        assert_eq!(result.auth_method, AuthMethod::OAuth);
+        assert!(
+            result
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("expired"))
+        );
+    }
+
+    #[test]
+    fn auth_status_oauth_serializes_correctly() {
+        let result = AuthStatusResult::oauth_not_configured();
+        let json = serde_json::to_string(&result).expect("should serialize");
+
+        assert!(json.contains("\"auth_method\":\"oauth\""));
+        assert!(json.contains("\"status\":\"not_configured\""));
     }
 }

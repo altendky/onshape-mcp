@@ -1,5 +1,6 @@
 /.opencode/*
 !/.opencode/commands/
+!/.opencode/plugins/
 /target/
 
 # npm artifacts

@@ -1,8 +1,8 @@
 //! Authentication types and logic for the Onshape API.
 //!
 //! Provides pure functions for generating authorization headers from API credentials.
-//! Currently supports Basic authentication; HMAC-SHA256 request signing is planned
-//! as a future enhancement.
+//! Supports Basic authentication and OAuth 2.0 bearer tokens.
+//! HMAC-SHA256 request signing is planned as a future enhancement.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use schemars::JsonSchema;
@@ -26,6 +26,13 @@ pub enum AuthMethod {
     /// Simplest method. Relies on HTTPS for transport security.
     /// Onshape documents this as suitable for local testing and personal use.
     Basic,
+    /// OAuth 2.0 bearer token authentication.
+    ///
+    /// Uses access tokens obtained through the OAuth 2.0 authorization code flow.
+    /// Tokens are stored in a local file and refreshed when expired.
+    /// Suitable for multi-user apps and team access.
+    #[serde(rename = "oauth")]
+    OAuth,
     // Future: HMAC-SHA256 request signing.
     // Each request is signed with a nonce and timestamp, providing replay
     // protection and avoiding sending the secret key over the wire.
@@ -72,7 +79,30 @@ pub struct Credentials {
 pub fn authorization_header_value(credentials: &Credentials, method: AuthMethod) -> SecretString {
     match method {
         AuthMethod::Basic => basic_authorization_header_value(credentials),
+        AuthMethod::OAuth => {
+            // OAuth uses bearer tokens, not API key credentials.
+            // Callers should use `bearer_authorization_header_value()` instead.
+            // This arm exists for exhaustiveness; passing API-key credentials
+            // when OAuth is configured is a caller error, but we produce a
+            // valid (though useless) Basic header rather than panicking.
+            basic_authorization_header_value(credentials)
+        }
     }
+}
+
+/// Generates a Bearer token `Authorization` header value for OAuth 2.0.
+///
+/// Format: `Bearer <access_token>`
+///
+/// The returned string is wrapped in [`SecretString`] because it contains
+/// the access token that should not be logged.
+///
+/// # Arguments
+///
+/// * `access_token` — The OAuth 2.0 access token.
+#[must_use]
+pub fn bearer_authorization_header_value(access_token: &SecretString) -> SecretString {
+    SecretString::from(format!("Bearer {}", access_token.expose_secret()))
 }
 
 /// Generates a Basic auth `Authorization` header value.
@@ -202,5 +232,38 @@ mod tests {
     fn auth_method_deserializes_from_snake_case() {
         let method: AuthMethod = serde_json::from_str("\"basic\"").expect("should deserialize");
         assert_eq!(method, AuthMethod::Basic);
+    }
+
+    #[test]
+    fn auth_method_oauth_serializes_to_snake_case() {
+        let json = serde_json::to_string(&AuthMethod::OAuth).expect("should serialize");
+        assert_eq!(json, "\"oauth\"");
+    }
+
+    #[test]
+    fn auth_method_oauth_deserializes_from_snake_case() {
+        let method: AuthMethod = serde_json::from_str("\"oauth\"").expect("should deserialize");
+        assert_eq!(method, AuthMethod::OAuth);
+    }
+
+    #[test]
+    fn bearer_auth_starts_with_bearer_prefix() {
+        let token = SecretString::from("test-access-token");
+        let header = bearer_authorization_header_value(&token);
+        assert!(header.expose_secret().starts_with("Bearer "));
+    }
+
+    #[test]
+    fn bearer_auth_contains_token() {
+        let token = SecretString::from("my-oauth-token-12345");
+        let header = bearer_authorization_header_value(&token);
+        assert_eq!(header.expose_secret(), "Bearer my-oauth-token-12345");
+    }
+
+    #[test]
+    fn bearer_auth_handles_empty_token() {
+        let token = SecretString::from("");
+        let header = bearer_authorization_header_value(&token);
+        assert_eq!(header.expose_secret(), "Bearer ");
     }
 }

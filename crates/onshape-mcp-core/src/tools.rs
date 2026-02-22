@@ -89,8 +89,14 @@ fn call_auth_status(auth_config: &AuthConfig) -> Result<CallToolResult, ErrorDat
     let result = match auth_config.credential_status() {
         CredentialStatus::NonePresent => AuthStatusResult::not_configured(method),
         CredentialStatus::BothPresent => AuthStatusResult::not_validated(method),
-        CredentialStatus::Partial { missing } => {
+        CredentialStatus::Partial { missing } | CredentialStatus::OAuthPartial { missing } => {
             AuthStatusResult::partial_credentials(missing, method)
+        }
+        CredentialStatus::OAuthConfigured => {
+            // OAuth client credentials are configured, but we don't know about
+            // tokens here (that's the I/O layer's responsibility).
+            // Report that OAuth is configured but no token status is available.
+            AuthStatusResult::oauth_not_configured()
         }
     };
     let content = Content::json(&result)?;
@@ -230,5 +236,108 @@ mod tests {
         assert_eq!(ErrorCode::METHOD_NOT_FOUND.0, -32601);
         assert_eq!(ErrorCode::INVALID_PARAMS.0, -32602);
         assert_eq!(ErrorCode::INTERNAL_ERROR.0, -32603);
+    }
+
+    // ====================================================================
+    // OAuth Tool Tests
+    // ====================================================================
+
+    fn oauth_no_creds() -> AuthConfig {
+        AuthConfig {
+            method: onshape_client_core::auth::AuthMethod::OAuth,
+            ..AuthConfig::default()
+        }
+    }
+
+    fn oauth_configured() -> AuthConfig {
+        AuthConfig {
+            client_id: Some("my-client-id".into()),
+            client_secret: Some(SecretString::from("my-client-secret")),
+            method: onshape_client_core::auth::AuthMethod::OAuth,
+            ..AuthConfig::default()
+        }
+    }
+
+    fn oauth_partial_missing_secret() -> AuthConfig {
+        AuthConfig {
+            client_id: Some("my-client-id".into()),
+            client_secret: None,
+            method: onshape_client_core::auth::AuthMethod::OAuth,
+            ..AuthConfig::default()
+        }
+    }
+
+    fn oauth_partial_missing_id() -> AuthConfig {
+        AuthConfig {
+            client_id: None,
+            client_secret: Some(SecretString::from("my-client-secret")),
+            method: onshape_client_core::auth::AuthMethod::OAuth,
+            ..AuthConfig::default()
+        }
+    }
+
+    #[test]
+    fn call_tool_auth_status_oauth_not_configured_no_creds() {
+        let config = oauth_no_creds();
+        let result = call_tool("onshape_mcp_auth_status", None, &config).expect("should succeed");
+        assert_eq!(result.is_error, Some(false));
+
+        let content = &result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_configured");
+        assert_eq!(value["auth_method"], "oauth");
+    }
+
+    #[test]
+    fn call_tool_auth_status_oauth_configured() {
+        let config = oauth_configured();
+        let result = call_tool("onshape_mcp_auth_status", None, &config).expect("should succeed");
+        assert_eq!(result.is_error, Some(false));
+
+        let content = &result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_configured");
+        assert_eq!(value["auth_method"], "oauth");
+        assert!(
+            value["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("no access token"))
+        );
+    }
+
+    #[test]
+    fn call_tool_auth_status_oauth_partial_missing_secret() {
+        let config = oauth_partial_missing_secret();
+        let result = call_tool("onshape_mcp_auth_status", None, &config).expect("should succeed");
+        assert_eq!(result.is_error, Some(false));
+
+        let content = &result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_configured");
+        assert!(
+            value["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("client_secret"))
+        );
+    }
+
+    #[test]
+    fn call_tool_auth_status_oauth_partial_missing_id() {
+        let config = oauth_partial_missing_id();
+        let result = call_tool("onshape_mcp_auth_status", None, &config).expect("should succeed");
+        assert_eq!(result.is_error, Some(false));
+
+        let content = &result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_configured");
+        assert!(
+            value["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("client_id"))
+        );
     }
 }

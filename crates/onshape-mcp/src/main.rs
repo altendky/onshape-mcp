@@ -19,6 +19,14 @@ struct Args {
     #[arg(long)]
     secret_key: Option<String>,
 
+    /// OAuth 2.0 client ID (overrides config file and environment variable).
+    #[arg(long)]
+    client_id: Option<String>,
+
+    /// OAuth 2.0 client secret (overrides config file and environment variable).
+    #[arg(long)]
+    client_secret: Option<String>,
+
     /// Authentication method for Onshape API requests (overrides config file and environment variable).
     #[arg(long)]
     auth_method: Option<String>,
@@ -45,6 +53,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         auth_overrides.insert(
             "secret_key".into(),
             figment::value::Value::from(secret_key.clone()),
+        );
+    }
+    if let Some(ref client_id) = args.client_id {
+        auth_overrides.insert(
+            "client_id".into(),
+            figment::value::Value::from(client_id.clone()),
+        );
+    }
+    if let Some(ref client_secret) = args.client_secret {
+        auth_overrides.insert(
+            "client_secret".into(),
+            figment::value::Value::from(client_secret.clone()),
         );
     }
     if let Some(ref auth_method) = args.auth_method {
