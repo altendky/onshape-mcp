@@ -52,7 +52,7 @@ All npm `package.json` files are synced to this version via `scripts/sync-npm-ve
 
 ### Staging Version Format
 
-Staging publishes use a pre-release version to ensure uniqueness and traceability:
+Non-tag CI runs use a pre-release version for npm tarball naming to ensure uniqueness and traceability:
 
 ```text
 {version}-staging-{sanitized_ref}-{commit_sha}-{run_id}
@@ -79,12 +79,11 @@ npm has two distinct mechanisms that are easy to conflate:
 | **Dist-tag** | `latest`, `staging` | Yes — a mutable pointer to a version | Convenience label for `npm install` |
 
 When you run `npm publish`, npm automatically moves the `latest` dist-tag to point to the new version.
-To prevent this for staging publishes, pass `--tag <name>`.
+To prevent this, pass `--tag <name>` to publish under a different dist-tag instead.
 
-For staging publishes, a single `staging` dist-tag is used (`npm publish --tag staging`).
-This prevents `latest` from moving while keeping things simple — packages are installed by exact version string, not by dist-tag.
-The `staging` tag always points to the most recent staging publish.
-For the finalize publish, the `latest` tag moves to the real version (the default `npm publish` behavior).
+Currently, only tag pushes publish to npm (using the default `latest` dist-tag).
+Staging versions are computed for CI tarball naming but are not published to the registry.
+The `staging` dist-tag and `cleanup-npm-staging.yml` workflow are retained for potential future use with test release paths.
 
 ## Version Workflow (`reflow-release-version.yml`)
 
