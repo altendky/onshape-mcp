@@ -105,6 +105,7 @@ jobs:
       version: ${{ needs.release-config.outputs.npm-version }}
       binary-version: ${{ needs.version.outputs.version }}
       dist-tag: ${{ needs.release-config.outputs.npm-dist-tag }}
+      publish: ${{ needs.release-config.outputs.publish == 'true' }}
 
   cargo-publish:
     name: Publish crates
