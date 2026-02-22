@@ -123,7 +123,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    release-config: (needs: version)                               │
 │      Centralizes all release-mode decisions:                      │
 │        tag push → publish=true, real version, latest dist-tag     │
-│        otherwise → publish=false, staging version, staging dist-tag│
+│        otherwise → publish=false, staging version (tarballs only) │
 │                                                                   │
 │    release-npm: (needs: release-config, version, build, checks)   │
 │      uses: ./.github/workflows/reflow-release-npm.yml            │
