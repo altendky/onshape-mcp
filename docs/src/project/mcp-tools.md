@@ -50,7 +50,7 @@ Mode settings are configured via the standard configuration system. See [Configu
 
 ### Permission Enforcement
 
-Permission enforcement will happen at call time in `onshape_api_call` (not yet implemented). The search and explain tools return information about all endpoints regardless of permission mode (they don't modify anything). The call tool will reject operations that exceed the current mode, with a clear error message.
+Permission enforcement will happen at call time in `onshape_api_call`. Currently, the tool validates inputs and builds a complete API request using the OpenAPI spec, but HTTP execution is pending (the `onshape-client-io` crate is not yet built). Permission mode checks will be added alongside HTTP execution. The search and explain tools return information about all endpoints regardless of permission mode (they don't modify anything). The call tool will reject operations that exceed the current mode, with a clear error message.
 
 ### MCP Tool Annotations
 
