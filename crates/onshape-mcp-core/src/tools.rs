@@ -117,18 +117,7 @@ pub fn call_tool(
     spec: Option<&OpenApiSpec>,
 ) -> ToolResult {
     match name {
-        "onshape_mcp_auth_status" => {
-            if let Some(args) = arguments
-                && !args.is_empty()
-            {
-                return ToolResult::Immediate(Err(ErrorData::new(
-                    ErrorCode::INVALID_PARAMS,
-                    "onshape_mcp_auth_status expects no arguments",
-                    None,
-                )));
-            }
-            ToolResult::Immediate(call_auth_status(auth_config))
-        }
+        "onshape_mcp_auth_status" => ToolResult::Immediate(call_auth_status(auth_config)),
         "onshape_api_search" => {
             let Some(spec) = spec else {
                 return ToolResult::Immediate(Err(ErrorData::new(
@@ -629,17 +618,23 @@ mod tests {
     }
 
     #[test]
-    fn call_tool_auth_status_rejects_unexpected_arguments() {
+    fn call_tool_auth_status_ignores_unexpected_arguments() {
         let config = no_creds();
         let mut args = Map::new();
         args.insert("unexpected".to_string(), Value::String("value".to_string()));
-        let err = assert_immediate_err(call_tool(
+        // Extra arguments are silently ignored, consistent with the API
+        // tools which use serde's default lenient deserialization.
+        let call_result = assert_immediate_ok(call_tool(
             "onshape_mcp_auth_status",
             Some(&args),
             &config,
             None,
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(call_result.is_error, Some(false));
+        let content = &call_result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_configured");
     }
 
     #[test]
