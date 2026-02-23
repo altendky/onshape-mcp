@@ -119,32 +119,23 @@ pub fn call_tool(
     match name {
         "onshape_mcp_auth_status" => ToolResult::Immediate(call_auth_status(auth_config)),
         "onshape_api_search" => {
-            let Some(spec) = spec else {
-                return ToolResult::Immediate(Err(ErrorData::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    "OpenAPI spec not loaded",
-                    None,
-                )));
+            let spec = match require_spec(spec) {
+                Ok(s) => s,
+                Err(e) => return ToolResult::Immediate(Err(e)),
             };
             ToolResult::Immediate(call_api_search(arguments, spec))
         }
         "onshape_api_explain" => {
-            let Some(spec) = spec else {
-                return ToolResult::Immediate(Err(ErrorData::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    "OpenAPI spec not loaded",
-                    None,
-                )));
+            let spec = match require_spec(spec) {
+                Ok(s) => s,
+                Err(e) => return ToolResult::Immediate(Err(e)),
             };
             ToolResult::Immediate(call_api_explain(arguments, spec))
         }
         "onshape_api_call" => {
-            let Some(spec) = spec else {
-                return ToolResult::Immediate(Err(ErrorData::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    "OpenAPI spec not loaded",
-                    None,
-                )));
+            let spec = match require_spec(spec) {
+                Ok(s) => s,
+                Err(e) => return ToolResult::Immediate(Err(e)),
             };
             call_api_call(arguments, spec)
         }
@@ -381,6 +372,11 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
     };
 
     ToolResult::OnshapeApiRequest { request }
+}
+
+/// Unwrap the `OpenAPI` spec reference or return an internal error.
+fn require_spec(spec: Option<&OpenApiSpec>) -> Result<&OpenApiSpec, ErrorData> {
+    spec.ok_or_else(|| ErrorData::new(ErrorCode::INTERNAL_ERROR, "OpenAPI spec not loaded", None))
 }
 
 /// Parse tool arguments from the MCP request into a typed struct.
