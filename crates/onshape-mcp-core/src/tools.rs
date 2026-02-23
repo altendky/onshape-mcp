@@ -292,7 +292,7 @@ fn tool_api_call_def() -> Tool {
          {\"did\": \"abc123\"}), not baked into a URL string. Returns the API response.",
         Arc::new(input_schema),
     )
-    .annotate(ToolAnnotations::new().read_only(false).destructive(false))
+    .annotate(ToolAnnotations::new().read_only(false).destructive(true))
 }
 
 // ============================================================================
