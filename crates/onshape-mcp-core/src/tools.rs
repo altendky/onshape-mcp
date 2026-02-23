@@ -356,19 +356,24 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
         Err(e) => return ToolResult::Immediate(Err(e)),
     };
 
-    let body: Option<Value> = match input.body {
-        Some(s) => match serde_json::from_str(&s) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                return ToolResult::Immediate(Err(ErrorData::new(
-                    ErrorCode::INVALID_PARAMS,
-                    format!("invalid body JSON: {e}"),
-                    None,
-                )));
-            }
-        },
-        None => None,
+    let body: Option<Value> = match input.body.as_deref().map(serde_json::from_str).transpose() {
+        Ok(v) => v,
+        Err(e) => {
+            return ToolResult::Immediate(Err(ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                format!("invalid body JSON: {e}"),
+                None,
+            )));
+        }
     };
+
+    if body == Some(Value::Null) {
+        return ToolResult::Immediate(Err(ErrorData::new(
+            ErrorCode::INVALID_PARAMS,
+            "body parsed as JSON null; omit the body field instead of passing \"null\"".to_string(),
+            None,
+        )));
+    }
 
     let request = match spec.build_request(
         &input.endpoint,
@@ -866,6 +871,27 @@ mod tests {
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
         assert!(err.message.contains("invalid body JSON"));
+    }
+
+    #[test]
+    fn api_call_with_null_body_json_returns_error() {
+        let config = no_creds();
+        let spec = test_spec();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("searchDocuments".to_string()),
+        );
+        args.insert("body".to_string(), Value::String("null".to_string()));
+
+        let err = assert_immediate_err(call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &config,
+            Some(&spec),
+        ));
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("JSON null"));
     }
 
     // --- process_api_response tests ---
