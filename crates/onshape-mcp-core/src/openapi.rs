@@ -4,11 +4,13 @@
 //! The spec JSON content is provided externally; this module never performs I/O.
 
 use std::collections::HashMap;
-use std::str::FromStr;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+// Re-export types that moved to onshape-client-core.
+pub use onshape_client_core::request::{ApiRequest, ApiResponse, HttpMethod};
 
 // ============================================================================
 // Error Types
@@ -37,44 +39,6 @@ pub enum OpenApiError {
 // ============================================================================
 // Public Types
 // ============================================================================
-
-/// HTTP method for an API request.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum HttpMethod {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Patch,
-}
-
-impl FromStr for HttpMethod {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "get" => Ok(Self::Get),
-            "post" => Ok(Self::Post),
-            "put" => Ok(Self::Put),
-            "delete" => Ok(Self::Delete),
-            "patch" => Ok(Self::Patch),
-            _ => Err(format!("unknown HTTP method: {s}")),
-        }
-    }
-}
-
-impl std::fmt::Display for HttpMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Get => write!(f, "GET"),
-            Self::Post => write!(f, "POST"),
-            Self::Put => write!(f, "PUT"),
-            Self::Delete => write!(f, "DELETE"),
-            Self::Patch => write!(f, "PATCH"),
-        }
-    }
-}
 
 /// Brief summary of an endpoint, returned by search.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -147,21 +111,6 @@ pub struct EndpointDetail {
     /// Response schema (JSON Schema) for the success response.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_schema: Option<Value>,
-}
-
-/// An HTTP request to the Onshape API, produced as an effect by `build_request`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ApiRequest {
-    /// HTTP method.
-    pub method: HttpMethod,
-    /// Fully resolved URL path (path params substituted).
-    pub path: String,
-    /// Query parameters.
-    pub query_params: Vec<(String, String)>,
-    /// Request body, if any.
-    pub body: Option<Value>,
-    /// Content type for the request body.
-    pub content_type: Option<String>,
 }
 
 /// Filters for searching endpoints.

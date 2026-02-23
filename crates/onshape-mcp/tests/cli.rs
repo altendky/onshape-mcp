@@ -892,11 +892,8 @@ fn api_explain_nonexistent_returns_error() {
     client.shutdown();
 }
 
-// TODO: update this test when the HTTP client (onshape-client-io) is wired up;
-// at that point onshape_api_call should execute real requests instead of
-// returning "not yet implemented".
 #[test]
-fn api_call_returns_not_implemented_message() {
+fn api_call_without_credentials_returns_not_configured_error() {
     let mut client = McpTestClient::spawn();
     client.initialize();
 
@@ -922,14 +919,14 @@ fn api_call_returns_not_implemented_message() {
         .expect("text should be a string");
 
     assert!(
-        text.contains("not yet implemented"),
-        "should indicate HTTP client is not yet implemented, got: {text}"
+        text.contains("credentials are not configured"),
+        "should indicate credentials are not configured, got: {text}"
     );
 
-    // is_error should be true since the call can't actually execute
+    // is_error should be true since credentials aren't available
     assert_eq!(
         response["result"]["isError"], true,
-        "should indicate an error since HTTP client isn't wired up"
+        "should indicate an error since credentials aren't configured"
     );
 
     client.shutdown();

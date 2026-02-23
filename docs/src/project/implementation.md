@@ -39,9 +39,9 @@
 ## Phase 3: I/O Integration
 
 - [ ] Implement transport layer in `onshape-mcp-io`
-- [ ] Implement HTTP client in `onshape-client-io`
-- [ ] Wire up `onshape_api_call` effect execution in I/O layer
-- [ ] Wire up in main binary
+- [x] Implement HTTP client in `onshape-client-io`
+- [x] Wire up `onshape_api_call` effect execution in I/O layer
+- [x] Wire up in main binary
 
 ## Phase 4: Polish
 
