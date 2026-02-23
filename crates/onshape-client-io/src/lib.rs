@@ -171,14 +171,21 @@ impl OnshapeClient {
             builder = builder.query(&request.query_params);
         }
 
-        // Add request body.
+        // Add request body.  Serialize manually instead of using
+        // `reqwest::RequestBuilder::json()` so that the Content-Type header
+        // from the OpenAPI spec (e.g. "application/json;charset=UTF-8; qs=0.09")
+        // is preserved rather than being overwritten by `.json()`.
         if let Some(body) = &request.body {
             let content_type = request
                 .content_type
                 .as_deref()
                 .unwrap_or("application/json");
-            builder = builder.header("Content-Type", content_type);
-            builder = builder.json(body);
+            let serialized = serde_json::to_vec(body).map_err(|e| ClientError::ResponseBody {
+                message: format!("failed to serialize request body: {e}"),
+            })?;
+            builder = builder
+                .header("Content-Type", content_type)
+                .body(serialized);
         }
 
         let response = builder

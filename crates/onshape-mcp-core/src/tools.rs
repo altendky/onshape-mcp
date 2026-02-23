@@ -187,9 +187,10 @@ pub struct ApiCallInput {
     /// Query parameters (e.g., `{"q": "robot arm", "limit": "10"}`).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub query_params: HashMap<String, String>,
-    /// Request body (for POST/PUT/PATCH endpoints).
+    /// JSON string for the request body (for POST/PUT/PATCH endpoints).
+    /// Use `onshape_api_explain` to see the expected schema for each endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub body: Option<Value>,
+    pub body: Option<String>,
 }
 
 // ============================================================================
@@ -355,11 +356,25 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
         Err(e) => return ToolResult::Immediate(Err(e)),
     };
 
+    let body: Option<Value> = match input.body {
+        Some(s) => match serde_json::from_str(&s) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                return ToolResult::Immediate(Err(ErrorData::new(
+                    ErrorCode::INVALID_PARAMS,
+                    format!("invalid body JSON: {e}"),
+                    None,
+                )));
+            }
+        },
+        None => None,
+    };
+
     let request = match spec.build_request(
         &input.endpoint,
         &input.path_params,
         &input.query_params,
-        input.body,
+        body,
     ) {
         Ok(req) => req,
         Err(e) => {
@@ -472,6 +487,28 @@ mod tests {
                                     "description": "Document ID"
                                 }
                             ],
+                            "responses": { "200": {} }
+                        }
+                    },
+                    "/documents/search": {
+                        "post": {
+                            "operationId": "searchDocuments",
+                            "summary": "Search documents",
+                            "tags": ["Document"],
+                            "requestBody": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {
+                                                "rawQuery": { "type": "string" },
+                                                "limit": { "type": "integer" }
+                                            }
+                                        }
+                                    }
+                                },
+                                "required": true
+                            },
                             "responses": { "200": {} }
                         }
                     }
@@ -657,7 +694,7 @@ mod tests {
         let content = &call_result.content[0];
         let text = content.raw.as_text().expect("should be text content");
         let results: Vec<Value> = serde_json::from_str(&text.text).expect("should be JSON array");
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 3);
     }
 
     #[test]
@@ -673,7 +710,7 @@ mod tests {
         let content = &call_result.content[0];
         let text = content.raw.as_text().expect("should be text content");
         let results: Vec<Value> = serde_json::from_str(&text.text).expect("should be JSON array");
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 3);
     }
 
     #[test]
@@ -778,6 +815,53 @@ mod tests {
 
         let err = assert_immediate_err(call_tool("onshape_api_call", Some(&args), &config, None));
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+    }
+
+    #[test]
+    fn api_call_with_body_string_returns_request() {
+        let config = no_creds();
+        let spec = test_spec();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("searchDocuments".to_string()),
+        );
+        args.insert(
+            "body".to_string(),
+            Value::String(r#"{"rawQuery": "cabinets", "limit": 5}"#.to_string()),
+        );
+
+        let result = call_tool("onshape_api_call", Some(&args), &config, Some(&spec));
+        let request = assert_api_request(result);
+        assert_eq!(request.path, "/documents/search");
+
+        let body = request.body.expect("request should have a body");
+        assert_eq!(body["rawQuery"], "cabinets");
+        assert_eq!(body["limit"], 5);
+    }
+
+    #[test]
+    fn api_call_with_invalid_body_json_returns_error() {
+        let config = no_creds();
+        let spec = test_spec();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("searchDocuments".to_string()),
+        );
+        args.insert(
+            "body".to_string(),
+            Value::String("not valid json".to_string()),
+        );
+
+        let err = assert_immediate_err(call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &config,
+            Some(&spec),
+        ));
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("invalid body JSON"));
     }
 
     // --- process_api_response tests ---
