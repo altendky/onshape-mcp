@@ -4,6 +4,7 @@
 //! The spec JSON content is provided externally; this module never performs I/O.
 
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,15 +49,17 @@ pub enum HttpMethod {
     Patch,
 }
 
-impl HttpMethod {
-    fn from_str(s: &str) -> Option<Self> {
+impl FromStr for HttpMethod {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "get" => Some(Self::Get),
-            "post" => Some(Self::Post),
-            "put" => Some(Self::Put),
-            "delete" => Some(Self::Delete),
-            "patch" => Some(Self::Patch),
-            _ => None,
+            "get" => Ok(Self::Get),
+            "post" => Ok(Self::Post),
+            "put" => Ok(Self::Put),
+            "delete" => Ok(Self::Delete),
+            "patch" => Ok(Self::Patch),
+            _ => Err(format!("unknown HTTP method: {s}")),
         }
     }
 }
@@ -263,7 +266,7 @@ impl OpenApiSpec {
                 continue;
             };
             for (method_str, detail) in methods {
-                let Some(method) = HttpMethod::from_str(method_str) else {
+                let Ok(method) = method_str.parse::<HttpMethod>() else {
                     continue;
                 };
                 let Some(operation_id) = detail.get("operationId").and_then(Value::as_str) else {
@@ -304,7 +307,10 @@ impl OpenApiSpec {
     pub fn search(&self, query: &str, filters: &SearchFilters) -> Vec<EndpointSummary> {
         let query_lower = query.to_lowercase();
 
-        let method_filter = filters.method.as_deref().and_then(HttpMethod::from_str);
+        let method_filter = filters
+            .method
+            .as_deref()
+            .and_then(|s| s.parse::<HttpMethod>().ok());
 
         let tag_filter = filters.tag.as_deref().map(str::to_lowercase);
 
