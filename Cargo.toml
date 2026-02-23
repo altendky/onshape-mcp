@@ -24,7 +24,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 figment = { version = "0.10", features = ["toml", "env"] }
-rmcp = "0.14"
+rmcp = "0.16"
 schemars = "1"
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
