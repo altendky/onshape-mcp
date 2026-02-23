@@ -745,3 +745,189 @@ fn cli_flags_override_env_vars() {
 
     client.shutdown();
 }
+
+// ============================================================================
+// API Tools Integration Tests
+// ============================================================================
+
+#[test]
+fn tools_list_includes_api_tools() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request("tools/list", &serde_json::json!({}));
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+
+    let tools = response["result"]["tools"]
+        .as_array()
+        .expect("tools should be an array");
+
+    assert_eq!(tools.len(), 4, "should have 4 tools");
+
+    let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+
+    assert!(
+        tool_names.contains(&"onshape_api_search"),
+        "should include search"
+    );
+    assert!(
+        tool_names.contains(&"onshape_api_explain"),
+        "should include explain"
+    );
+    assert!(
+        tool_names.contains(&"onshape_api_call"),
+        "should include call"
+    );
+    assert!(
+        tool_names.contains(&"onshape_mcp_auth_status"),
+        "should include auth_status"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn api_search_returns_results_for_document_query() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request(
+        "tools/call",
+        &serde_json::json!({
+            "name": "onshape_api_search",
+            "arguments": {
+                "query": "document",
+                "tag": "Document"
+            }
+        }),
+    );
+
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+
+    let content = response["result"]["content"]
+        .as_array()
+        .expect("content should be an array");
+    assert!(!content.is_empty(), "content should not be empty");
+
+    let text = content[0]["text"]
+        .as_str()
+        .expect("text should be a string");
+    let results: Vec<serde_json::Value> =
+        serde_json::from_str(text).expect("should be a JSON array");
+
+    assert!(
+        !results.is_empty(),
+        "should find document-related endpoints"
+    );
+    assert!(
+        results.iter().any(|r| r["operation_id"]
+            .as_str()
+            .is_some_and(|id| id.contains("Document") || id.contains("document"))),
+        "results should contain document endpoints"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn api_explain_returns_endpoint_detail() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request(
+        "tools/call",
+        &serde_json::json!({
+            "name": "onshape_api_explain",
+            "arguments": {
+                "endpoint": "getDocuments"
+            }
+        }),
+    );
+
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+
+    let content = response["result"]["content"]
+        .as_array()
+        .expect("content should be an array");
+    assert!(!content.is_empty(), "content should not be empty");
+
+    let text = content[0]["text"]
+        .as_str()
+        .expect("text should be a string");
+    let detail: serde_json::Value = serde_json::from_str(text).expect("should be valid JSON");
+
+    assert_eq!(detail["operation_id"], "getDocuments");
+    assert_eq!(detail["method"], "GET");
+    assert!(
+        detail["parameters"]
+            .as_array()
+            .is_some_and(|p| !p.is_empty()),
+        "should have parameters"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn api_explain_nonexistent_returns_error() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request(
+        "tools/call",
+        &serde_json::json!({
+            "name": "onshape_api_explain",
+            "arguments": {
+                "endpoint": "totallyFakeEndpoint"
+            }
+        }),
+    );
+
+    // The MCP protocol returns errors in the error field for invalid params
+    assert!(
+        response["error"].is_object(),
+        "should return an error for nonexistent endpoint"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn api_call_returns_not_implemented_message() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request(
+        "tools/call",
+        &serde_json::json!({
+            "name": "onshape_api_call",
+            "arguments": {
+                "endpoint": "getDocuments"
+            }
+        }),
+    );
+
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+
+    let content = response["result"]["content"]
+        .as_array()
+        .expect("content should be an array");
+    assert!(!content.is_empty(), "content should not be empty");
+
+    let text = content[0]["text"]
+        .as_str()
+        .expect("text should be a string");
+
+    assert!(
+        text.contains("not yet implemented"),
+        "should indicate HTTP client is not yet implemented, got: {text}"
+    );
+
+    // is_error should be true since the call can't actually execute
+    assert_eq!(
+        response["result"]["isError"], true,
+        "should indicate an error since HTTP client isn't wired up"
+    );
+
+    client.shutdown();
+}
