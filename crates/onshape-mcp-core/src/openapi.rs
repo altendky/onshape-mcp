@@ -436,13 +436,15 @@ impl OpenApiSpec {
                         .ok_or_else(|| OpenApiError::InvalidParams {
                             reason: format!("missing required path parameter: {}", param.name),
                         })?;
-                resolved_path = resolved_path.replace(&format!("{{{}}}", param.name), value);
+                resolved_path = resolved_path
+                    .replace(&format!("{{{}}}", param.name), &encode_path_param(value));
             }
         }
 
         // Also substitute any optional path params that were provided
         for (name, value) in path_params {
-            resolved_path = resolved_path.replace(&format!("{{{name}}}"), value);
+            resolved_path =
+                resolved_path.replace(&format!("{{{name}}}"), &encode_path_param(value));
         }
 
         // Validate required query parameters
@@ -660,6 +662,23 @@ impl OpenApiSpec {
             format!("{}...", &s[..max_len - 3])
         }
     }
+}
+
+/// Percent-encode a path parameter value to ensure it remains a single path segment.
+///
+/// Encodes everything except unreserved characters (RFC 3986 §2.3: ALPHA, DIGIT,
+/// `-`, `.`, `_`, `~`). This prevents path traversal and URL structure alteration
+/// from user-provided values.
+fn encode_path_param(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                String::from(b as char)
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 // ============================================================================
