@@ -23,13 +23,11 @@ use onshape_mcp_core::tools::{self, ToolResult};
 
 /// The embedded Onshape `OpenAPI` specification JSON.
 ///
-/// This is included at compile time from `specs/onshape-openapi.json` at the
-/// workspace root. The spec is ~1.8 MB and adds to the binary size, but
-/// simplifies distribution (single binary, no external files needed).
-const OPENAPI_SPEC_JSON: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../specs/onshape-openapi.json"
-));
+/// Included at compile time from `onshape-openapi.json` in the crate root.
+/// The spec is ~1.8 MB and adds to the binary size, but simplifies
+/// distribution (single binary, no external files needed).
+const OPENAPI_SPEC_JSON: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/onshape-openapi.json"));
 
 /// The MCP server handler for Onshape integration.
 ///

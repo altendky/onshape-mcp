@@ -187,14 +187,14 @@ Invoke an Onshape API endpoint with structured parameters. Path parameters are n
 
 ### OpenAPI Spec
 
-All endpoint metadata comes from the Onshape OpenAPI specification (`specs/onshape-openapi.json`). This makes the tools self-documenting and automatically up-to-date.
+All endpoint metadata comes from the Onshape OpenAPI specification (`crates/onshape-mcp-io/onshape-openapi.json`). This makes the tools self-documenting and automatically up-to-date.
 
 | Setting | Value |
 | --------- | ------- |
-| Location | `specs/onshape-openapi.json` |
+| Location | `crates/onshape-mcp-io/onshape-openapi.json` |
 | Source | `https://cad.onshape.com/api/v6/openapi` (spec download URL; `v6` is the download endpoint version) |
 | Server URL | Parsed from `servers[0].url` in the spec (currently `v14`, the API base-path version) |
-| License | Apache 2.0 (see `specs/ONSHAPE-API-LICENSE`) |
+| License | Apache 2.0 (see `crates/onshape-mcp-io/ONSHAPE-API-LICENSE`) |
 | Loading | Embedded at compile time via `include_str!()` |
 
 ## Tool Parameters

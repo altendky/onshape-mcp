@@ -37,6 +37,8 @@ onshape-mcp/
 │   │   └── src/
 │   ├── onshape-mcp-io/           # MCP I/O layer (tokio, rmcp)
 │   │   ├── Cargo.toml
+│   │   ├── onshape-openapi.json  # Vendored Onshape OpenAPI spec
+│   │   ├── ONSHAPE-API-LICENSE
 │   │   └── src/
 │   ├── onshape-client-core/      # Pure Onshape API logic (sans-IO)
 │   │   ├── Cargo.toml
@@ -62,9 +64,6 @@ onshape-mcp/
 ├── rust-toolchain.toml
 ├── .pre-commit-config.yaml
 ├── typos.toml
-├── specs/
-│   ├── onshape-openapi.json
-│   └── ONSHAPE-API-LICENSE
 ├── docs/
 │   ├── book.toml
 │   └── src/

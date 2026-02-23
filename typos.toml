@@ -12,5 +12,5 @@ extend-ignore-re = [
 # Files to ignore
 extend-exclude = [
     # Vendored Onshape OpenAPI spec — contains upstream typos we don't control
-    "specs/onshape-openapi.json",
+    "crates/onshape-mcp-io/onshape-openapi.json",
 ]
