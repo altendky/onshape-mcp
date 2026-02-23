@@ -153,14 +153,10 @@ Get full details for a specific endpoint. Returns parameter schemas, types, requ
       "location": "path",
       "required": true,
       "param_type": "string",
-      "description": "Document ID",
-      "default": null,
-      "enum_values": null
+      "description": "Document ID"
     }
   ],
   "has_request_body": false,
-  "request_body_schema": null,
-  "request_body_content_type": null,
   "response_schema": { "..." : "..." }
 }
 ```
