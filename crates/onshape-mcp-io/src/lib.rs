@@ -163,9 +163,9 @@ fn build_http_client(
     // Both keys are guaranteed present by the `BothPresent` check above.
     let (Some(access_key), Some(secret_key)) = (&config.auth.access_key, &config.auth.secret_key)
     else {
-        // This branch is unreachable given the BothPresent guard, but we
-        // handle it gracefully rather than panicking.
-        return Ok(None);
+        // Safety: BothPresent guarantees both keys are present; this branch
+        // is logically unreachable.
+        unreachable!("credential_status() returned BothPresent but keys are None");
     };
 
     let credentials = Arc::new(Credentials {
