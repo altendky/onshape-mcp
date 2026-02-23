@@ -29,8 +29,13 @@ pub enum HttpMethod {
     Patch,
 }
 
+/// Error returned when parsing an unrecognized HTTP method string.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("unknown HTTP method: {0}")]
+pub struct UnknownHttpMethod(pub String);
+
 impl FromStr for HttpMethod {
-    type Err = String;
+    type Err = UnknownHttpMethod;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -39,7 +44,7 @@ impl FromStr for HttpMethod {
             "put" => Ok(Self::Put),
             "delete" => Ok(Self::Delete),
             "patch" => Ok(Self::Patch),
-            _ => Err(format!("unknown HTTP method: {s}")),
+            _ => Err(UnknownHttpMethod(s.to_string())),
         }
     }
 }
