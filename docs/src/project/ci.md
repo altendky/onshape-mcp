@@ -123,7 +123,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    release-config: (needs: version)                               │
 │      Centralizes all release-mode decisions:                      │
 │        tag push → publish=true, real version, latest dist-tag     │
-│        otherwise → publish=false, staging version, staging dist-tag│
+│        otherwise → publish=false, staging version (tarballs only) │
 │                                                                   │
 │    release-npm: (needs: release-config, version, build, checks)   │
 │      uses: ./.github/workflows/reflow-release-npm.yml            │
@@ -420,9 +420,9 @@ The Onshape OpenAPI specification is stored locally for reference and code gener
 
 | Setting | Value |
 | --------- | ------- |
-| Location | `specs/onshape-openapi.json` |
+| Location | `crates/onshape-mcp-io/onshape-openapi.json` |
 | Source | `https://cad.onshape.com/api/v6/openapi` |
-| License | Apache 2.0 (see `specs/ONSHAPE-API-LICENSE`) |
+| License | Apache 2.0 (see `crates/onshape-mcp-io/ONSHAPE-API-LICENSE`) |
 | Format | Pretty-printed JSON |
 
 ### Update Workflow

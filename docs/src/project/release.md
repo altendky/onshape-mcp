@@ -35,8 +35,8 @@ All steps run on every trigger. The `release-config` job determines whether each
 | Smoke test binaries | Yes | Yes |
 | Package npm tarballs | Yes (staging version) | Yes (real version) |
 | Test npm from tarballs | Yes | Yes |
-| Publish npm | Yes (`--tag staging`) | Yes (`--tag latest`) |
-| Test npm from registry | Yes | Yes |
+| Publish npm | — | Yes (`--tag latest`) |
+| Test npm from registry | — | Yes |
 | Validate crate packaging | `cargo package --workspace` | `cargo package --workspace` |
 | `cargo publish` | — | Yes (real publish) |
 | Package release archives | Yes | Yes |
@@ -52,7 +52,7 @@ All npm `package.json` files are synced to this version via `scripts/sync-npm-ve
 
 ### Staging Version Format
 
-Staging publishes use a pre-release version to ensure uniqueness and traceability:
+Non-tag CI runs use a pre-release version for npm tarball naming to ensure uniqueness and traceability:
 
 ```text
 {version}-staging-{sanitized_ref}-{commit_sha}-{run_id}
@@ -79,12 +79,11 @@ npm has two distinct mechanisms that are easy to conflate:
 | **Dist-tag** | `latest`, `staging` | Yes — a mutable pointer to a version | Convenience label for `npm install` |
 
 When you run `npm publish`, npm automatically moves the `latest` dist-tag to point to the new version.
-To prevent this for staging publishes, pass `--tag <name>`.
+To prevent this, pass `--tag <name>` to publish under a different dist-tag instead.
 
-For staging publishes, a single `staging` dist-tag is used (`npm publish --tag staging`).
-This prevents `latest` from moving while keeping things simple — packages are installed by exact version string, not by dist-tag.
-The `staging` tag always points to the most recent staging publish.
-For the finalize publish, the `latest` tag moves to the real version (the default `npm publish` behavior).
+Currently, only tag pushes publish to npm (using the default `latest` dist-tag).
+Staging versions are computed for CI tarball naming but are not published to the registry.
+The `staging` dist-tag and `cleanup-npm-staging.yml` workflow are retained for potential future use with test release paths.
 
 ## Version Workflow (`reflow-release-version.yml`)
 
@@ -157,31 +156,14 @@ package ──► test-tarballs (5 platforms) ──► publish ──► test-p
 - `npm install onshape-mcp@{version}` in temp directory
 - Run `npx onshape-mcp --version`, verify output
 
-Staging packages are **not** cleaned up by the npm workflow.
-They remain on npm for up to 2.2 days (52.8 hours), allowing manual testing of PR builds.
-Cleanup is handled by a separate scheduled workflow — see [Staging Cleanup](#staging-cleanup).
+Staging versions are only used for tarball naming in CI — they are not published to npm.
+Only tag pushes (real releases) publish to the npm registry.
 
-## Staging Cleanup
+## Staging Versions
 
-Staging npm packages are cleaned up by a **scheduled workflow** (`cleanup-npm-staging.yml`), not by the staging workflow itself.
-This allows manual testing of PR builds for a window of time after the CI run completes.
-
-| Setting | Value |
-| ------- | ----- |
-| Schedule | Every 6 hours (`cron: '0 */6 * * *'`) |
-| Max age | 2.2 days (52.8 hours) |
-| npm unpublish deadline | 72 hours (3 days) |
-| Worst-case buffer | 13.2 hours (52.8h max age + 6h interval = 58.8h, vs 72h deadline) |
-
-The workflow:
-
-1. Lists all versions of `onshape-mcp` and each `@onshape-mcp/*` platform package
-2. Filters for staging versions (matching the `*-staging-*` pattern)
-3. Checks publish timestamps for each staging version
-4. Unpublishes any staging version older than 2.2 days (52.8 hours)
-5. Unpublishes main package before platform packages (reverse of publish order)
-
-Staging versions are identifiable by their format: `{version}-staging-{sanitized_ref}-{commit_sha}-{run_id}`.
+Staging versions (e.g., `0.2.0-staging-main-abc1234-12345678`) are computed on non-tag CI runs for use in npm tarball naming only.
+They are **not published** to the npm registry — only tag pushes trigger real npm publishes.
+The staging version format provides traceability in CI artifacts (branch, commit, run ID) without generating external notifications.
 
 ## Release Pipeline
 
@@ -334,17 +316,17 @@ It is generated in the `github-release` job on every CI run (validating the gene
 
 ### npm Authentication Strategy
 
-npm publish uses OIDC trusted publishing for both CI and release:
+npm publish uses OIDC trusted publishing for releases:
 
 | Context | Auth method | Mechanism |
 | ------- | ----------- | --------- |
-| CI staging + release | OIDC trusted publishing | `id-token: write` on `release-npm` job; npm CLI auto-detects |
+| Release (tag push) | OIDC trusted publishing | `id-token: write` on `release-npm` job; npm CLI auto-detects |
 | Fork PRs | `NPM_TOKEN` secret (fallback) | OIDC unavailable; token in `~/.npmrc` |
 | `cleanup-npm-staging.yml` | `NPM_TOKEN` secret | `npm unpublish` does not support OIDC |
 
 npm's trusted publishing allows only **one workflow filename per package**.
-The trusted publisher is configured for `ci.yml` on npmjs.com, which handles both CI and release.
-The publish job in `reflow-release-npm.yml` detects which credentials are available (`ACTIONS_ID_TOKEN_REQUEST_URL` for OIDC, `NPM_TOKEN` for token) and skips if neither is present (fork PRs).
+The trusted publisher is configured for `ci.yml` on npmjs.com.
+The publish job in `reflow-release-npm.yml` only runs on tag pushes and detects which credentials are available (`ACTIONS_ID_TOKEN_REQUEST_URL` for OIDC, `NPM_TOKEN` for token), skipping if neither is present.
 
 Provenance attestations are generated automatically when publishing via OIDC trusted publishing (no `--provenance` flag needed).
 
@@ -367,10 +349,9 @@ Items requiring further discussion before or during implementation.
 
 - [x] Auth: ~~traditional token or OIDC~~ Resolved: OIDC trusted publishing for both CI and release. npm allows one workflow filename per package; `ci.yml` is configured as the trusted publisher on npmjs.com. `NPM_TOKEN` serves as a fallback for fork PRs and for `cleanup-npm-staging.yml`. Provenance attestations are generated automatically via OIDC. See [npm Authentication Strategy](#npm-authentication-strategy)
 - [x] Dist-tag: ~~unique per publish vs single reusable~~ Resolved: use a single `--tag staging` for all staging publishes. Packages are installed by exact version (`npm install onshape-mcp@0.2.0-staging-main-abc1234-12345678`), so the dist-tag is only needed to prevent `latest` from moving. The `staging` tag always points to the most recent staging publish, which is mildly useful for quick testing (`npm install onshape-mcp@staging`)
-- [x] Staging cleanup strategy: ~~per-run vs scheduled~~ Resolved: separate scheduled workflow (`cleanup-npm-staging.yml`) runs every 6 hours, unpublishes staging packages older than 2.2 days (52.8 hours). This preserves staging packages for manual testing of PR builds while staying within npm's 72-hour unpublish window (worst case: 58.8 hours, 13.2-hour buffer). See [Staging Cleanup](#staging-cleanup)
-- [x] Cleanup order: ~~main first or platform packages first~~ Resolved: unpublish main package first, then platform packages (reverse of publish order). The main package has `optionalDependencies` on the platform packages, so removing main first avoids broken dependency resolution during the cleanup window
+- [x] Staging cleanup strategy: ~~per-run vs scheduled~~ Resolved: staging versions are no longer published to npm ([#89](https://github.com/altendky/onshape-mcp/issues/89)). Only tag pushes publish to npm. Staging versions are used solely for CI tarball naming. See [Staging Versions](#staging-versions)
 - [x] Platform `package.json` files: ~~add `"files": ["bin"]`~~ Resolved: added to all 5 platform packages, ensuring only the `bin/` directory is included in published tarballs
-- [x] Staging vs release npm tarballs: ~~confirm approach~~ Resolved: the `reflow-release-npm.yml` workflow is parameterized by version. Each invocation packs once with the provided version — CI passes a staging version, release passes the real version. No double-packing needed
+- [x] Staging vs release npm tarballs: ~~confirm approach~~ Resolved: the `reflow-release-npm.yml` workflow is parameterized by version. CI passes a staging version for tarball naming (not published), release passes the real version (published). No double-packing needed
 
 ### CI Integration
 

@@ -30,7 +30,7 @@ Items to address later in the project:
 
 ### Features
 
-- [ ] FeatureScript support — Phase E tools (`onshape_eval_featurescript`, etc.)
+- [ ] FeatureScript support — FeatureScript evaluation via `onshape_api_call`
 
 ### Tracing Crate Naming
 

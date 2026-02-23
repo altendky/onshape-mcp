@@ -15,6 +15,10 @@ on:
         description: "npm dist-tag for publish (e.g., staging or latest)"
         type: string
         required: true
+      publish:
+        description: "Whether to publish packages to npm (false = package and test tarballs only)"
+        type: boolean
+        required: true
 
 jobs:
   library:
@@ -187,6 +191,7 @@ jobs:
 
   publish:
     name: Publish npm
+    if: inputs.publish
     needs: [library, package, test-tarballs]
     runs-on: ubuntu-latest
     outputs:
@@ -275,7 +280,7 @@ jobs:
   test-published:
     name: "Test npm published (${{ matrix.platform.name }})"
     needs: [library, publish]
-    if: ${{ needs.publish.outputs.published == 'true' }}
+    if: ${{ inputs.publish && needs.publish.outputs.published == 'true' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false

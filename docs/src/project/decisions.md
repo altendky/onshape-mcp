@@ -32,7 +32,7 @@ Resolved design decisions and their rationale.
 
 ## Export Destination
 
-**Decision:** URL default with optional `save_to` path; `overwrite` parameter; typed errors. See [MCP Tools > Phase B: Export](mcp-tools.md#phase-b-export-mvp).
+**Decision:** ~~URL default with optional `save_to` path; `overwrite` parameter; typed errors.~~ Superseded by the generic API tools design — export operations are now handled via `onshape_api_call` like any other API endpoint. See [MCP Tools](mcp-tools.md#onshape-api-tools).
 
 ## CLI Library
 
