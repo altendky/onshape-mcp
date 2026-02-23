@@ -497,7 +497,7 @@ mod tests {
                             "tags": ["Document"],
                             "requestBody": {
                                 "content": {
-                                    "application/json": {
+                                    "application/json;charset=UTF-8; qs=0.09": {
                                         "schema": {
                                             "type": "object",
                                             "properties": {
@@ -838,6 +838,10 @@ mod tests {
         let body = request.body.expect("request should have a body");
         assert_eq!(body["rawQuery"], "cabinets");
         assert_eq!(body["limit"], 5);
+        assert_eq!(
+            request.content_type.as_deref(),
+            Some("application/json;charset=UTF-8; qs=0.09")
+        );
     }
 
     #[test]
