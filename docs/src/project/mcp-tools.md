@@ -165,7 +165,7 @@ Invoke an Onshape API endpoint with structured parameters. Path parameters are n
 | `endpoint` | `string` | Yes | The operation ID to call |
 | `path_params` | `object` | No | Path parameters (e.g., `{"did": "abc123"}`) |
 | `query_params` | `object` | No | Query parameters (e.g., `{"q": "robot arm", "limit": "10"}`) |
-| `body` | `object` | No | Request body (for POST/PUT/PATCH endpoints) |
+| `body` | `any` | No | Request body (for POST/PUT/PATCH endpoints) |
 
 **Output:** The API response content.
 
