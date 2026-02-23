@@ -610,11 +610,10 @@ impl OpenApiSpec {
 
         let content = rb.get("content").and_then(Value::as_object);
         if let Some(content_map) = content {
-            // Prefer application/json; fall back to the first content type
-            let entry = content_map
-                .get("application/json")
-                .map(|v| ("application/json", v))
-                .or_else(|| content_map.iter().next().map(|(k, v)| (k.as_str(), v)));
+            // Prefer application/json (including variants like
+            // "application/json;charset=UTF-8; qs=0.09"); fall back to the
+            // first content type.
+            let entry = Self::prefer_json_content(content_map);
             if let Some((content_type, schema_info)) = entry {
                 let schema = schema_info.get("schema").cloned();
                 let resolved = schema.map(|s| Self::resolve_ref_shallow(&s, components));
@@ -635,10 +634,23 @@ impl OpenApiSpec {
             .or_else(|| responses.get("2XX"))?;
 
         let content = response.get("content")?.as_object()?;
-        let (_, schema_info) = content.iter().next()?;
+        // Prefer application/json (including variants); fall back to the
+        // first content type.
+        let (_, schema_info) = Self::prefer_json_content(content)?;
         let schema = schema_info.get("schema")?;
 
         Some(Self::resolve_ref_shallow(schema, components))
+    }
+
+    /// Pick the `application/json` (or `application/json;…` variant) entry from
+    /// a content-type map, falling back to the first entry if no JSON type is
+    /// found.
+    fn prefer_json_content(content_map: &serde_json::Map<String, Value>) -> Option<(&str, &Value)> {
+        content_map
+            .iter()
+            .find(|(k, _)| k.starts_with("application/json"))
+            .map(|(k, v)| (k.as_str(), v))
+            .or_else(|| content_map.iter().next().map(|(k, v)| (k.as_str(), v)))
     }
 
     /// Resolve a single level of `$ref` — replaces the `$ref` pointer with the
