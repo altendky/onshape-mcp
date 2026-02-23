@@ -425,6 +425,7 @@ mod tests {
     use secrecy::SecretString;
 
     use super::*;
+    use crate::openapi::HttpMethod;
 
     fn no_creds() -> AuthConfig {
         AuthConfig::default()
@@ -892,6 +893,34 @@ mod tests {
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
         assert!(err.message.contains("JSON null"));
+    }
+
+    #[test]
+    fn api_call_with_body_for_get_endpoint_passes_through() {
+        let config = no_creds();
+        let spec = test_spec();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("getDocuments".to_string()),
+        );
+        args.insert(
+            "body".to_string(),
+            Value::String(r#"{"unexpected": "data"}"#.to_string()),
+        );
+
+        let result = call_tool("onshape_api_call", Some(&args), &config, Some(&spec));
+        let request = assert_api_request(result);
+        assert_eq!(request.method, HttpMethod::Get);
+        assert_eq!(request.path, "/documents");
+        assert!(
+            request.body.is_some(),
+            "body should be silently passed through for GET endpoint without requestBody"
+        );
+        assert!(
+            request.content_type.is_none(),
+            "content_type should be None since the endpoint declares no requestBody"
+        );
     }
 
     // --- process_api_response tests ---
