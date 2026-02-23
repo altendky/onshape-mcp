@@ -25,7 +25,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 figment = { version = "0.10", features = ["toml", "env"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query"] }
 rmcp = "0.16"
 schemars = "1"
 secrecy = { version = "0.10", features = ["serde"] }
