@@ -459,11 +459,6 @@ impl OpenApiSpec {
             }
         }
 
-        // Validate request body
-        if ep.has_request_body && body.is_none() {
-            // Some request bodies are optional, so we just note it but don't error
-        }
-
         let query_params_vec: Vec<(String, String)> = query_params
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
