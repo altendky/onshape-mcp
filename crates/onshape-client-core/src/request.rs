@@ -14,6 +14,11 @@ use serde_json::Value;
 // ============================================================================
 
 /// HTTP method for an API request.
+///
+/// JSON serialization/deserialization is **uppercase-only** (via `serde(rename_all = "UPPERCASE")`),
+/// matching the HTTP convention for method tokens in structured payloads.
+/// [`FromStr`] is **case-insensitive** (e.g. `"get"`, `"Get"`, `"GET"` all parse successfully),
+/// to accommodate sources like `OpenAPI` spec keys that use lowercase by convention.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum HttpMethod {
