@@ -50,7 +50,7 @@ impl OnshapeMcpServer {
         name: &str,
         version: &str,
         config: AppConfig,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let spec = OpenApiSpec::from_json(OPENAPI_SPEC_JSON)?;
         Ok(Self {
             info: onshape_mcp_core::server_info(name, version),
@@ -128,7 +128,7 @@ pub async fn run(
     name: &str,
     version: &str,
     config: AppConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server = OnshapeMcpServer::new(name, version, config)?;
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
