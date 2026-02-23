@@ -27,7 +27,7 @@ pub enum ToolResult {
 }
 
 // Pure function: tool call arguments -> ToolResult
-pub fn call_tool(name: &str, args: Value, ...) -> ToolResult {
+pub fn call_tool(name: &str, args: Value, /* ... */) -> ToolResult {
     // Pure logic here, returns either an immediate result
     // or an API request effect for the I/O layer to execute
 }
