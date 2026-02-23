@@ -892,6 +892,9 @@ fn api_explain_nonexistent_returns_error() {
     client.shutdown();
 }
 
+// TODO: update this test when the HTTP client (onshape-client-io) is wired up;
+// at that point onshape_api_call should execute real requests instead of
+// returning "not yet implemented".
 #[test]
 fn api_call_returns_not_implemented_message() {
     let mut client = McpTestClient::spawn();
