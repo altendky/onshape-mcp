@@ -15,32 +15,30 @@ The project follows **full sans-IO design principles** to maximize testability.
 
 ### Example Pattern
 
+As implemented in the generic API tools:
+
 ```rust
 // Core crate - pure logic, no I/O
-pub enum Effect {
-    SendMcpResponse(Response),
-    CallOnshapeApi(OnshapeRequest),
-    Log(LogLevel, String),
+pub enum ToolResult {
+    /// Tool completed immediately with no I/O needed.
+    Immediate(Result<CallToolResult, ErrorData>),
+    /// Tool needs an HTTP request to the Onshape API.
+    OnshapeApiRequest { request: ApiRequest },
 }
 
-pub struct McpHandler {
-    state: State,
-}
-
-impl McpHandler {
-    // Pure function: input -> (new_state, effects)
-    pub fn handle_request(&mut self, request: Request) -> Vec<Effect> {
-        // Pure logic here, returns effects to be executed
-    }
+// Pure function: tool call arguments -> ToolResult
+pub fn call_tool(name: &str, args: Value, /* ... */) -> ToolResult {
+    // Pure logic here, returns either an immediate result
+    // or an API request effect for the I/O layer to execute
 }
 
 // I/O crate - interprets effects
-async fn run_effects(effects: Vec<Effect>, transport: &mut Transport) {
-    for effect in effects {
-        match effect {
-            Effect::SendMcpResponse(r) => transport.send(r).await,
-            // ...
-        }
+match tool_result {
+    ToolResult::Immediate(result) => send_response(result),
+    ToolResult::OnshapeApiRequest { request } => {
+        let response = http_client.execute(request).await;
+        let result = process_api_response(response);
+        send_response(result);
     }
 }
 ```

@@ -8,7 +8,7 @@
 - [ ] Configure linting (clippy.toml, rustfmt.toml)
 - [ ] Set up pre-commit hooks (.pre-commit-config.yaml, typos.toml)
 - [ ] Set up GitHub Actions CI
-- [ ] Set up specs/ directory with OpenAPI spec and license
+- [x] Set up specs/ directory with OpenAPI spec and license
 - [ ] Create update-openapi-spec.yml workflow
 - [ ] Configure GitHub App for CI triggering
 - [ ] Add license files
@@ -30,18 +30,18 @@
 - [ ] Implement MCP handler state machine
 - [ ] Implement permission model (modes, escalation)
 - [ ] Define Onshape API types in `onshape-client-core`
-- [ ] Implement MCP Tools — Phase A (read-only)
-- [ ] Implement MCP Tools — Phase B (export)
-- [ ] Implement server admin tools (`onshape_mcp_*`)
+- [x] Implement generic API tools (`onshape_api_search`, `onshape_api_explain`, `onshape_api_call`)
+- [x] Implement OpenAPI spec parsing and indexing
+- [x] Implement effects-as-data pattern for `ToolResult`
+- [ ] Implement server admin tools (`onshape_mcp_get_mode`, `onshape_mcp_request_mode`)
 - [ ] Write comprehensive unit tests for core crates
 
 ## Phase 3: I/O Integration
 
 - [ ] Implement transport layer in `onshape-mcp-io`
-- [ ] Implement HTTP client in `onshape-client-io`
-- [ ] Wire up in main binary
-- [ ] Implement MCP Tools — Phase C (modify)
-- [ ] Implement MCP Tools — Phase D (destroy)
+- [x] Implement HTTP client in `onshape-client-io`
+- [x] Wire up `onshape_api_call` effect execution in I/O layer
+- [x] Wire up in main binary
 
 ## Phase 4: Polish
 
@@ -52,4 +52,4 @@
 
 ## Phase 5: FeatureScript (Future)
 
-- [ ] Implement MCP Tools — Phase E (FeatureScript)
+- [ ] Implement FeatureScript-related API endpoints (accessible via `onshape_api_call`)

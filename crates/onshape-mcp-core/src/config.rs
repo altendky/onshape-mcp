@@ -9,6 +9,9 @@ use onshape_client_core::auth::AuthMethod;
 use secrecy::SecretString;
 use serde::Deserialize;
 
+/// Default timeout for HTTP requests to the Onshape API.
+pub const DEFAULT_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Default interval for periodic credential validation checks.
 pub const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 
@@ -51,12 +54,34 @@ pub struct AuthConfig {
     pub check_interval: Duration,
 }
 
+/// HTTP client configuration.
+#[derive(Deserialize)]
+pub struct HttpConfig {
+    /// Request timeout for Onshape API calls (default: 30 seconds).
+    #[serde(
+        default = "default_http_timeout",
+        deserialize_with = "deserialize_duration"
+    )]
+    pub timeout: Duration,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            timeout: DEFAULT_HTTP_TIMEOUT,
+        }
+    }
+}
+
 /// Top-level application configuration.
 #[derive(Default, Deserialize)]
 pub struct AppConfig {
     /// Authentication settings.
     #[serde(default)]
     pub auth: AuthConfig,
+    /// HTTP client settings.
+    #[serde(default)]
+    pub http: HttpConfig,
 }
 
 // ============================================================================
@@ -160,6 +185,11 @@ const fn default_auth_method() -> AuthMethod {
 /// Default check interval for serde deserialization.
 const fn default_check_interval() -> Duration {
     DEFAULT_CHECK_INTERVAL
+}
+
+/// Default HTTP timeout for serde deserialization.
+const fn default_http_timeout() -> Duration {
+    DEFAULT_HTTP_TIMEOUT
 }
 
 /// Deserializes a duration from either an integer (seconds) or a string like "5m", "300s".
@@ -599,5 +629,66 @@ mod tests {
         assert_eq!(config.method, AuthMethod::OAuth);
         assert!(config.client_id.is_none());
         assert!(config.client_secret.is_none());
+    }
+
+    // --- HttpConfig tests ---
+
+    #[test]
+    fn default_http_config() {
+        let config = HttpConfig::default();
+        assert_eq!(config.timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn deserialize_http_config_with_timeout() {
+        let toml_str = r#"
+            timeout = "10s"
+        "#;
+        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.timeout, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn deserialize_http_config_timeout_minutes() {
+        let toml_str = r#"
+            timeout = "2m"
+        "#;
+        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.timeout, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn deserialize_http_config_timeout_integer() {
+        let toml_str = r"
+            timeout = 45
+        ";
+        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.timeout, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn deserialize_http_config_defaults() {
+        let toml_str = "";
+        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.timeout, DEFAULT_HTTP_TIMEOUT);
+    }
+
+    #[test]
+    fn deserialize_app_config_with_http_section() {
+        let toml_str = r#"
+            [auth]
+            access_key = "ak"
+            secret_key = "sk"
+
+            [http]
+            timeout = "60s"
+        "#;
+
+        let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(
+            config.auth.credential_status(),
+            CredentialStatus::BothPresent
+        );
+        assert_eq!(config.http.timeout, Duration::from_secs(60));
     }
 }
