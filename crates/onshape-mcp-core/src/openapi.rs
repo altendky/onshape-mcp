@@ -610,11 +610,15 @@ impl OpenApiSpec {
 
         let content = rb.get("content").and_then(Value::as_object);
         if let Some(content_map) = content {
-            // Pick the first content type (usually application/json)
-            if let Some((content_type, schema_info)) = content_map.iter().next() {
+            // Prefer application/json; fall back to the first content type
+            let entry = content_map
+                .get("application/json")
+                .map(|v| ("application/json", v))
+                .or_else(|| content_map.iter().next().map(|(k, v)| (k.as_str(), v)));
+            if let Some((content_type, schema_info)) = entry {
                 let schema = schema_info.get("schema").cloned();
                 let resolved = schema.map(|s| Self::resolve_ref_shallow(&s, components));
-                return (true, resolved, Some(content_type.clone()));
+                return (true, resolved, Some(content_type.to_string()));
             }
         }
 
