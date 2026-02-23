@@ -4,6 +4,7 @@
 //! All I/O operations are handled by the `onshape-mcp-io` crate.
 
 pub mod config;
+pub mod openapi;
 pub mod tools;
 
 use chrono::{DateTime, Utc};

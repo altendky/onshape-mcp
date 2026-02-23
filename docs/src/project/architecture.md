@@ -37,6 +37,8 @@ onshape-mcp/
 │   │   └── src/
 │   ├── onshape-mcp-io/           # MCP I/O layer (tokio, rmcp)
 │   │   ├── Cargo.toml
+│   │   ├── onshape-openapi.json  # Vendored Onshape OpenAPI spec
+│   │   ├── ONSHAPE-API-LICENSE
 │   │   └── src/
 │   ├── onshape-client-core/      # Pure Onshape API logic (sans-IO)
 │   │   ├── Cargo.toml
@@ -62,9 +64,6 @@ onshape-mcp/
 ├── rust-toolchain.toml
 ├── .pre-commit-config.yaml
 ├── typos.toml
-├── specs/
-│   ├── onshape-openapi.json
-│   └── ONSHAPE-API-LICENSE
 ├── docs/
 │   ├── book.toml
 │   └── src/
@@ -81,8 +80,8 @@ onshape-mcp/
 | Crate | Layer | Purpose |
 | ------- | ------- | --------- |
 | `onshape-mcp` | Application | Main binary, wires everything together |
-| `onshape-mcp-io` | Integration | MCP transport glue (tokio, rmcp) |
-| `onshape-mcp-core` | Core | Pure MCP protocol and business logic (no I/O) |
+| `onshape-mcp-io` | Integration | MCP transport glue (tokio, rmcp); embeds OpenAPI spec via `include_str!()` |
+| `onshape-mcp-core` | Core | Pure MCP protocol and business logic, including OpenAPI spec parsing (no I/O) |
 | `onshape-client-io` | Integration | HTTP client for Onshape API (reqwest) |
 | `onshape-client-core` | Core | Pure Onshape API logic, request/response types (no I/O) |
 | `tracing-sansio` | Core | Sans-IO tracing capture library |
