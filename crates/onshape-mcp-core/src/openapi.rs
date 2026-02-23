@@ -275,8 +275,12 @@ impl OpenApiSpec {
 
                 let endpoint =
                     Self::parse_endpoint(operation_id, method, path, detail, &components);
-                operation_ids.push(operation_id.to_string());
-                endpoints.insert(operation_id.to_string(), endpoint);
+                if endpoints
+                    .insert(operation_id.to_string(), endpoint)
+                    .is_none()
+                {
+                    operation_ids.push(operation_id.to_string());
+                }
             }
         }
 
