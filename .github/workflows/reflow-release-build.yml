@@ -28,6 +28,11 @@ jobs:
       - name: Add Rust target
         run: rustup target add ${{ matrix.platform.rust-target }}
 
+      # Linux: Install musl C toolchain (needed by crates like ring that compile C code)
+      - name: Install musl-tools (Linux)
+        if: contains(matrix.platform.rust-target, 'linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.platform.rust-target }}
 

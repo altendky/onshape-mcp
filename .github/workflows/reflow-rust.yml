@@ -96,6 +96,11 @@ jobs:
         if: matrix.os.matrix == 'linux'
         run: rustup target add ${{ matrix.arch.matrix == 'arm' && 'aarch64' || 'x86_64' }}-unknown-linux-musl
 
+      # Linux: Install musl C toolchain (needed by crates like ring that compile C code)
+      - name: Install musl-tools (Linux)
+        if: matrix.os.matrix == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       - name: Setup nextest
         uses: ./.github/actions/setup-nextest
 
