@@ -192,8 +192,8 @@ All endpoint metadata comes from the Onshape OpenAPI specification (`specs/onsha
 | Setting | Value |
 | --------- | ------- |
 | Location | `specs/onshape-openapi.json` |
-| Source | `https://cad.onshape.com/api/v6/openapi` (spec download URL) |
-| Server URL | Parsed from `servers[0].url` in the spec (currently `v14`) |
+| Source | `https://cad.onshape.com/api/v6/openapi` (spec download URL; `v6` is the download endpoint version) |
+| Server URL | Parsed from `servers[0].url` in the spec (currently `v14`, the API base-path version) |
 | License | Apache 2.0 (see `specs/ONSHAPE-API-LICENSE`) |
 | Loading | Embedded at compile time via `include_str!()` |
 
