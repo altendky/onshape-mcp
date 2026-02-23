@@ -700,7 +700,7 @@ mod tests {
                         "tags": ["Document"],
                         "requestBody": {
                             "content": {
-                                "application/json": {
+                                "application/json;charset=UTF-8; qs=0.09": {
                                     "schema": { "$ref": "#/components/schemas/CreateDocParams" }
                                 }
                             }
@@ -878,11 +878,9 @@ mod tests {
 
         assert!(detail.has_request_body);
         assert!(detail.request_body_schema.is_some());
-        assert!(
-            detail
-                .request_body_content_type
-                .as_deref()
-                .is_some_and(|ct| ct.contains("application/json"))
+        assert_eq!(
+            detail.request_body_content_type.as_deref(),
+            Some("application/json;charset=UTF-8; qs=0.09")
         );
     }
 
@@ -950,7 +948,10 @@ mod tests {
 
         assert_eq!(request.method, HttpMethod::Post);
         assert!(request.body.is_some());
-        assert!(request.content_type.is_some());
+        assert_eq!(
+            request.content_type.as_deref(),
+            Some("application/json;charset=UTF-8; qs=0.09")
+        );
     }
 
     #[test]
