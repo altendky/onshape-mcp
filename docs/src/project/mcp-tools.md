@@ -2,7 +2,7 @@
 
 ## Primary Use Cases
 
-1. **Exporting** — Get data out of Onshape (STL, STEP, glTF, etc.)
+1. **Exporting** — Get data out of Onshape (STL, STEP, glTF, etc.) via the generic API tool
 2. **Exploring** — Navigate and understand existing designs
 3. **AI-assisted FeatureScript development** — Later phase
 
@@ -35,9 +35,9 @@ The server supports three permission modes controlling which tools are visible a
 
 | Mode | Tools Available | Description |
 | ------ | ----------------- | ------------- |
-| `read` | Read-only tools | Query, list, export |
-| `modify` | Read + non-destructive writes | Add, update, set |
-| `destroy` | All tools | Delete, remove |
+| `read` | Read-only tools | GET endpoints (query, list, export) |
+| `modify` | Read + non-destructive writes | GET, POST, PUT, PATCH endpoints |
+| `destroy` | All tools | All endpoints including DELETE |
 
 ### Mode Configuration
 
@@ -50,26 +50,33 @@ Mode settings are configured via the standard configuration system. See [Configu
 
 ### Permission Enforcement
 
-Permission enforcement happens at call time in `onshape_api_call`. The search and explain tools return information about all endpoints regardless of permission mode (they don't modify anything). The call tool rejects operations that exceed the current mode, with a clear error message.
+Permission enforcement will happen at call time in `onshape_api_call` (not yet implemented). The search and explain tools return information about all endpoints regardless of permission mode (they don't modify anything). The call tool will reject operations that exceed the current mode, with a clear error message.
 
 ### MCP Tool Annotations
 
 Tools declare their characteristics using MCP's `ToolAnnotations`:
 
 - `readOnlyHint` — true if tool doesn't modify Onshape data
-- `destructiveHint` — true if tool performs destructive operations
+- `destructiveHint` — true if tool may perform destructive operations
 
 These are advisory hints for MCP clients, not security enforcement.
+
+| Tool | `readOnlyHint` | `destructiveHint` |
+| ---- | -------------- | ----------------- |
+| `onshape_mcp_auth_status` | true | false |
+| `onshape_api_search` | true | false |
+| `onshape_api_explain` | true | false |
+| `onshape_api_call` | false | true |
 
 ## Server Administration Tools
 
 Always visible (read-only operations on the server itself).
 
-| Tool | Description |
-| ------ | ------------- |
-| `onshape_mcp_get_mode` | Returns current mode, max mode, escalation allowed |
-| `onshape_mcp_request_mode` | Request mode change (escalate or de-escalate, within max) |
-| `onshape_mcp_auth_status` | Returns auth status (valid/invalid/expired), last check time, connectivity |
+| Tool | Description | Status |
+| ------ | ------------- | ------ |
+| `onshape_mcp_get_mode` | Returns current mode, max mode, escalation allowed | Not yet implemented |
+| `onshape_mcp_request_mode` | Request mode change (escalate or de-escalate, within max) | Not yet implemented |
+| `onshape_mcp_auth_status` | Returns auth status (valid/invalid/expired), last check time, connectivity | Implemented |
 
 ## Onshape API Tools
 
@@ -146,13 +153,20 @@ Get full details for a specific endpoint. Returns parameter schemas, types, requ
       "location": "path",
       "required": true,
       "param_type": "string",
-      "description": "Document ID"
+      "description": "Document ID",
+      "default": null,
+      "enum_values": null
     }
   ],
   "has_request_body": false,
+  "request_body_schema": null,
+  "request_body_content_type": null,
   "response_schema": { "..." : "..." }
 }
 ```
+
+Fields `default`, `enum_values`, `request_body_schema`, and `request_body_content_type` are omitted from the response when null (via `skip_serializing_if`).
+They appear only when the endpoint has relevant values (e.g., POST/PUT endpoints with a request body, or parameters with defaults or enum constraints).
 
 ### `onshape_api_call`
 
@@ -178,7 +192,8 @@ All endpoint metadata comes from the Onshape OpenAPI specification (`specs/onsha
 | Setting | Value |
 | --------- | ------- |
 | Location | `specs/onshape-openapi.json` |
-| Source | `https://cad.onshape.com/api/v6/openapi` |
+| Source | `https://cad.onshape.com/api/v6/openapi` (spec download URL) |
+| Server URL | Parsed from `servers[0].url` in the spec (currently `v14`) |
 | License | Apache 2.0 (see `specs/ONSHAPE-API-LICENSE`) |
 | Loading | Embedded at compile time via `include_str!()` |
 
