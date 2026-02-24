@@ -4,4 +4,5 @@
 //! No async runtime, HTTP client, or network access — all I/O is handled by `onshape-client-io`.
 
 pub mod auth;
+pub mod oauth;
 pub mod request;

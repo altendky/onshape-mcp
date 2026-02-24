@@ -13,7 +13,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use onshape_client_core::auth::{AuthMethod, Credentials, authorization_header_value};
+use oauth2::AccessToken;
+use onshape_client_core::auth::{
+    Credentials, basic_authorization_header_value, bearer_authorization_header_value,
+};
 use onshape_client_core::request::{ApiRequest, ApiResponse, HttpMethod};
 use reqwest::Client;
 use secrecy::ExposeSecret;
@@ -82,14 +85,28 @@ impl ClientError {
 /// Default request timeout.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Authentication configuration for the HTTP client.
+///
+/// Determines how the `Authorization` header is constructed for each request.
+pub enum ClientAuthConfig {
+    /// HTTP Basic authentication using API key credentials.
+    Basic {
+        /// API credentials (shared via `Arc` to avoid cloning secrets).
+        credentials: Arc<Credentials>,
+    },
+    /// OAuth 2.0 bearer token authentication.
+    Bearer {
+        /// The OAuth 2.0 access token.
+        access_token: AccessToken,
+    },
+}
+
 /// Configuration for constructing an [`OnshapeClient`].
 pub struct ClientConfig {
     /// Base URL for the Onshape API (e.g., `https://cad.onshape.com/api/v14`).
     pub base_url: String,
-    /// API credentials (shared via `Arc` to avoid cloning secrets).
-    pub credentials: Arc<Credentials>,
-    /// Authentication method to use.
-    pub auth_method: AuthMethod,
+    /// Authentication configuration.
+    pub auth: ClientAuthConfig,
     /// Request timeout. Defaults to 30 seconds if `None`.
     pub timeout: Option<Duration>,
 }
@@ -107,9 +124,21 @@ pub struct ClientConfig {
 pub struct OnshapeClient {
     http: Client,
     base_url: String,
-    credentials: Arc<Credentials>,
-    auth_method: AuthMethod,
+    auth: ClientAuthConfig,
     timeout: Duration,
+}
+
+impl Clone for ClientAuthConfig {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Basic { credentials } => Self::Basic {
+                credentials: Arc::clone(credentials),
+            },
+            Self::Bearer { access_token } => Self::Bearer {
+                access_token: access_token.clone(),
+            },
+        }
+    }
 }
 
 impl OnshapeClient {
@@ -136,8 +165,7 @@ impl OnshapeClient {
         Ok(Self {
             http,
             base_url,
-            credentials: config.credentials,
-            auth_method: config.auth_method,
+            auth: config.auth,
             timeout,
         })
     }
@@ -156,7 +184,14 @@ impl OnshapeClient {
     pub async fn execute(&self, request: &ApiRequest) -> Result<ApiResponse, ClientError> {
         let url = format!("{}{}", self.base_url, request.path);
 
-        let auth_header = authorization_header_value(&self.credentials, self.auth_method);
+        let auth_header = match &self.auth {
+            ClientAuthConfig::Basic { credentials } => {
+                basic_authorization_header_value(credentials)
+            }
+            ClientAuthConfig::Bearer { access_token } => {
+                bearer_authorization_header_value(access_token)
+            }
+        };
 
         let method = to_reqwest_method(request.method);
 
@@ -240,15 +275,32 @@ mod tests {
     fn test_config() -> ClientConfig {
         ClientConfig {
             base_url: "https://cad.onshape.com/api/v14".to_string(),
-            credentials: test_credentials(),
-            auth_method: AuthMethod::Basic,
+            auth: ClientAuthConfig::Basic {
+                credentials: test_credentials(),
+            },
+            timeout: Some(Duration::from_secs(10)),
+        }
+    }
+
+    fn test_oauth_config() -> ClientConfig {
+        ClientConfig {
+            base_url: "https://cad.onshape.com/api/v14".to_string(),
+            auth: ClientAuthConfig::Bearer {
+                access_token: AccessToken::new("test-oauth-token".to_string()),
+            },
             timeout: Some(Duration::from_secs(10)),
         }
     }
 
     #[test]
-    fn client_creation_succeeds() {
+    fn client_creation_succeeds_basic() {
         let client = OnshapeClient::new(test_config());
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn client_creation_succeeds_oauth() {
+        let client = OnshapeClient::new(test_oauth_config());
         assert!(client.is_ok());
     }
 
@@ -279,6 +331,13 @@ mod tests {
     #[test]
     fn client_is_clone() {
         let client = OnshapeClient::new(test_config()).expect("should create client");
+        #[allow(clippy::redundant_clone)]
+        let _cloned = client.clone();
+    }
+
+    #[test]
+    fn oauth_client_is_clone() {
+        let client = OnshapeClient::new(test_oauth_config()).expect("should create client");
         #[allow(clippy::redundant_clone)]
         let _cloned = client.clone();
     }

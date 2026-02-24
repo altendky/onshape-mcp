@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use onshape_client_core::auth::AuthMethod;
 use secrecy::SecretString;
 use serde::Deserialize;
@@ -31,12 +32,18 @@ pub const MIN_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 /// Credentials are wrapped in [`SecretString`] to prevent accidental logging.
 #[derive(Deserialize)]
 pub struct AuthConfig {
-    /// Onshape API access key.
+    /// Onshape API access key (for Basic/HMAC auth).
     #[serde(default)]
     pub access_key: Option<SecretString>,
-    /// Onshape API secret key.
+    /// Onshape API secret key (for Basic/HMAC auth).
     #[serde(default)]
     pub secret_key: Option<SecretString>,
+    /// OAuth 2.0 client ID (for OAuth auth).
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// OAuth 2.0 client secret (for OAuth auth).
+    #[serde(default)]
+    pub client_secret: Option<SecretString>,
     /// Authentication method to use for Onshape API requests.
     #[serde(default = "default_auth_method")]
     pub method: AuthMethod,
@@ -79,42 +86,212 @@ pub struct AppConfig {
 }
 
 // ============================================================================
-// Credential Status
+// Auth Resolution
 // ============================================================================
 
-/// Result of checking whether credentials are present in the configuration.
+/// Status of the OAuth token file, as probed by the I/O layer.
 ///
-/// This is a pure check of the config data — it does not validate
-/// credentials against the Onshape API.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CredentialStatus {
-    /// Both access key and secret key are provided.
-    BothPresent,
-    /// No credentials are configured.
-    NonePresent,
-    /// Only one credential is provided — the other is missing.
-    Partial {
-        /// Name of the missing credential field.
-        missing: &'static str,
+/// This is a lightweight summary of what was found on disk — no secrets,
+/// just enough for the core to make decisions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenStatus {
+    /// No token file found (or the file could not be read).
+    Absent,
+    /// Token file exists and was successfully parsed.
+    Present {
+        /// When the access token expires, if known.
+        expires_at: Option<DateTime<Utc>>,
     },
 }
 
-impl AuthConfig {
-    /// Checks whether credentials are present (without validating them).
+/// Summary of all available credential sources.
+///
+/// Built by the I/O layer from the config + token file probe.
+/// Contains no secrets — just presence flags and token status.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct AuthInventory {
+    /// Whether an API access key is configured.
+    pub has_access_key: bool,
+    /// Whether an API secret key is configured.
+    pub has_secret_key: bool,
+    /// Whether an OAuth client ID is configured.
+    pub has_client_id: bool,
+    /// Whether an OAuth client secret is configured.
+    pub has_client_secret: bool,
+    /// Status of the OAuth token file on disk.
+    pub token_status: TokenStatus,
+}
+
+impl AuthInventory {
+    /// Build an inventory from an [`AuthConfig`] and a [`TokenStatus`].
     #[must_use]
-    pub const fn credential_status(&self) -> CredentialStatus {
-        match (&self.access_key, &self.secret_key) {
-            (Some(_), Some(_)) => CredentialStatus::BothPresent,
-            (None, None) => CredentialStatus::NonePresent,
-            (Some(_), None) => CredentialStatus::Partial {
-                missing: "secret_key",
-            },
-            (None, Some(_)) => CredentialStatus::Partial {
-                missing: "access_key",
-            },
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn from_config(config: &AuthConfig, token_status: TokenStatus) -> Self {
+        Self {
+            has_access_key: config.access_key.is_some(),
+            has_secret_key: config.secret_key.is_some(),
+            has_client_id: config.client_id.is_some(),
+            has_client_secret: config.client_secret.is_some(),
+            token_status,
         }
     }
+}
 
+/// The resolved authentication state after examining all credential sources.
+///
+/// Determined by [`resolve_auth`] from the configured method and available
+/// credentials. This is what the auth status tool reports and what the I/O
+/// layer uses to decide which `ApiState` variant to construct.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolvedAuth {
+    /// No usable credentials were found.
+    NotConfigured {
+        /// The configured auth method (for status reporting).
+        configured_method: AuthMethod,
+        /// Human-readable explanation of why nothing was configured.
+        detail: String,
+    },
+    /// Basic (API key) auth is ready.
+    Basic,
+    /// OAuth with tokens — ready to make API calls.
+    OAuthReady {
+        /// When the access token expires, if known.
+        expires_at: Option<DateTime<Utc>>,
+    },
+    /// OAuth client credentials are present but no tokens yet.
+    ///
+    /// The user needs to complete the OAuth authorization flow
+    /// (e.g. via the `OpenCode` plugin) to obtain tokens.
+    OAuthPending,
+}
+
+/// Resolve the authentication state from config method and available credentials.
+///
+/// This is a pure function — no I/O. The I/O layer provides the
+/// [`AuthInventory`] (by probing config and token file), and this function
+/// determines which auth state to use.
+#[must_use]
+pub fn resolve_auth(method: AuthMethod, inventory: &AuthInventory) -> ResolvedAuth {
+    match method {
+        AuthMethod::Auto => resolve_auto(inventory),
+        AuthMethod::OAuth => resolve_oauth(method, inventory),
+        // Basic and future API-key-based methods (e.g., HMAC).
+        _ => resolve_basic(method, inventory),
+    }
+}
+
+/// Auto-detect the best auth method from available credentials.
+///
+/// Priority order:
+/// 1. OAuth with tokens (most secure, scoped, revocable)
+/// 2. Basic auth (API keys present)
+/// 3. OAuth pending (client creds but awaiting token)
+/// 4. Not configured
+fn resolve_auto(inventory: &AuthInventory) -> ResolvedAuth {
+    let has_oauth_client = inventory.has_client_id && inventory.has_client_secret;
+
+    // Priority 1: OAuth with tokens
+    if has_oauth_client && let TokenStatus::Present { expires_at } = inventory.token_status {
+        return ResolvedAuth::OAuthReady { expires_at };
+    }
+
+    // Priority 2: Basic with both keys
+    if inventory.has_access_key && inventory.has_secret_key {
+        return ResolvedAuth::Basic;
+    }
+
+    // Priority 3: OAuth pending (client creds but no tokens)
+    if has_oauth_client {
+        return ResolvedAuth::OAuthPending;
+    }
+
+    // Nothing complete
+    ResolvedAuth::NotConfigured {
+        configured_method: AuthMethod::Auto,
+        detail: not_configured_detail(AuthMethod::Auto, inventory),
+    }
+}
+
+/// Resolve explicit Basic auth method.
+fn resolve_basic(method: AuthMethod, inventory: &AuthInventory) -> ResolvedAuth {
+    if inventory.has_access_key && inventory.has_secret_key {
+        return ResolvedAuth::Basic;
+    }
+    ResolvedAuth::NotConfigured {
+        configured_method: method,
+        detail: not_configured_detail(method, inventory),
+    }
+}
+
+/// Resolve explicit OAuth method.
+fn resolve_oauth(method: AuthMethod, inventory: &AuthInventory) -> ResolvedAuth {
+    let has_oauth_client = inventory.has_client_id && inventory.has_client_secret;
+
+    if has_oauth_client {
+        if let TokenStatus::Present { expires_at } = inventory.token_status {
+            return ResolvedAuth::OAuthReady { expires_at };
+        }
+        return ResolvedAuth::OAuthPending;
+    }
+
+    ResolvedAuth::NotConfigured {
+        configured_method: method,
+        detail: not_configured_detail(method, inventory),
+    }
+}
+
+/// Build a human-readable detail message for the `NotConfigured` state.
+fn not_configured_detail(method: AuthMethod, inventory: &AuthInventory) -> String {
+    match method {
+        AuthMethod::Auto => {
+            let mut missing = Vec::new();
+            if !inventory.has_access_key && !inventory.has_secret_key {
+                missing.push("API keys (access_key + secret_key)");
+            } else if !inventory.has_access_key {
+                missing.push("access_key");
+            } else if !inventory.has_secret_key {
+                missing.push("secret_key");
+            }
+            if !inventory.has_client_id && !inventory.has_client_secret {
+                missing.push("OAuth credentials (client_id + client_secret)");
+            } else if !inventory.has_client_id {
+                missing.push("client_id");
+            } else if !inventory.has_client_secret {
+                missing.push("client_secret");
+            }
+            if missing.is_empty() {
+                "No credentials configured".into()
+            } else {
+                format!(
+                    "No complete credentials found. Missing: {}",
+                    missing.join(", ")
+                )
+            }
+        }
+        AuthMethod::OAuth => {
+            if !inventory.has_client_id && !inventory.has_client_secret {
+                "No credentials configured".into()
+            } else if !inventory.has_client_id {
+                "Incomplete credentials: client_id is not configured".into()
+            } else {
+                "Incomplete credentials: client_secret is not configured".into()
+            }
+        }
+        // Basic and any future API-key-based methods
+        _ => {
+            if !inventory.has_access_key && !inventory.has_secret_key {
+                "No credentials configured".into()
+            } else if !inventory.has_access_key {
+                "Incomplete credentials: access_key is not configured".into()
+            } else {
+                "Incomplete credentials: secret_key is not configured".into()
+            }
+        }
+    }
+}
+
+impl AuthConfig {
     /// Clamps `check_interval` to at least [`MIN_CHECK_INTERVAL`].
     ///
     /// Returns `Some(original)` if the value was below the minimum and was
@@ -136,7 +313,9 @@ impl Default for AuthConfig {
         Self {
             access_key: None,
             secret_key: None,
-            method: default_auth_method(),
+            client_id: None,
+            client_secret: None,
+            method: AuthMethod::Auto,
             check_interval: DEFAULT_CHECK_INTERVAL,
         }
     }
@@ -148,7 +327,7 @@ impl Default for AuthConfig {
 
 /// Default auth method for serde deserialization.
 const fn default_auth_method() -> AuthMethod {
-    AuthMethod::Basic
+    AuthMethod::Auto
 }
 
 /// Default check interval for serde deserialization.
@@ -241,66 +420,248 @@ fn parse_duration_str(s: &str) -> Result<Duration, String> {
 // ============================================================================
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use secrecy::ExposeSecret;
 
     use super::*;
 
+    // ====================================================================
+    // Auth Resolution Tests
+    // ====================================================================
+
+    fn inventory_nothing() -> AuthInventory {
+        AuthInventory {
+            has_access_key: false,
+            has_secret_key: false,
+            has_client_id: false,
+            has_client_secret: false,
+            token_status: TokenStatus::Absent,
+        }
+    }
+
+    fn inventory_basic() -> AuthInventory {
+        AuthInventory {
+            has_access_key: true,
+            has_secret_key: true,
+            ..inventory_nothing()
+        }
+    }
+
+    fn inventory_oauth_with_tokens() -> AuthInventory {
+        AuthInventory {
+            has_client_id: true,
+            has_client_secret: true,
+            token_status: TokenStatus::Present { expires_at: None },
+            ..inventory_nothing()
+        }
+    }
+
+    fn inventory_oauth_no_tokens() -> AuthInventory {
+        AuthInventory {
+            has_client_id: true,
+            has_client_secret: true,
+            token_status: TokenStatus::Absent,
+            ..inventory_nothing()
+        }
+    }
+
+    // --- Auto resolution ---
+
     #[test]
-    fn credential_status_both_present() {
-        let config = AuthConfig {
-            access_key: Some(SecretString::from("ak")),
-            secret_key: Some(SecretString::from("sk")),
-            ..AuthConfig::default()
-        };
-        assert_eq!(config.credential_status(), CredentialStatus::BothPresent);
+    fn auto_with_nothing_returns_not_configured() {
+        let result = resolve_auth(AuthMethod::Auto, &inventory_nothing());
+        assert!(matches!(result, ResolvedAuth::NotConfigured { .. }));
     }
 
     #[test]
-    fn credential_status_none_present() {
-        let config = AuthConfig::default();
-        assert_eq!(config.credential_status(), CredentialStatus::NonePresent);
+    fn auto_with_basic_keys_returns_basic() {
+        let result = resolve_auth(AuthMethod::Auto, &inventory_basic());
+        assert_eq!(result, ResolvedAuth::Basic);
     }
 
     #[test]
-    fn credential_status_missing_secret_key() {
-        let config = AuthConfig {
-            access_key: Some(SecretString::from("ak")),
-            secret_key: None,
-            ..AuthConfig::default()
+    fn auto_with_oauth_tokens_returns_oauth_ready() {
+        let result = resolve_auth(AuthMethod::Auto, &inventory_oauth_with_tokens());
+        assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
+    }
+
+    #[test]
+    fn auto_with_oauth_no_tokens_returns_pending() {
+        let result = resolve_auth(AuthMethod::Auto, &inventory_oauth_no_tokens());
+        assert_eq!(result, ResolvedAuth::OAuthPending);
+    }
+
+    #[test]
+    fn auto_oauth_wins_over_basic_when_tokens_present() {
+        let inv = AuthInventory {
+            has_access_key: true,
+            has_secret_key: true,
+            has_client_id: true,
+            has_client_secret: true,
+            token_status: TokenStatus::Present { expires_at: None },
         };
-        assert_eq!(
-            config.credential_status(),
-            CredentialStatus::Partial {
-                missing: "secret_key"
+        let result = resolve_auth(AuthMethod::Auto, &inv);
+        assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
+    }
+
+    #[test]
+    fn auto_basic_wins_over_oauth_pending() {
+        let inv = AuthInventory {
+            has_access_key: true,
+            has_secret_key: true,
+            has_client_id: true,
+            has_client_secret: true,
+            token_status: TokenStatus::Absent,
+        };
+        let result = resolve_auth(AuthMethod::Auto, &inv);
+        assert_eq!(result, ResolvedAuth::Basic);
+    }
+
+    #[test]
+    fn auto_partial_basic_falls_through_to_not_configured() {
+        let inv = AuthInventory {
+            has_access_key: true,
+            has_secret_key: false,
+            ..inventory_nothing()
+        };
+        let result = resolve_auth(AuthMethod::Auto, &inv);
+        assert!(matches!(result, ResolvedAuth::NotConfigured { .. }));
+    }
+
+    #[test]
+    fn auto_partial_oauth_falls_through_to_not_configured() {
+        let inv = AuthInventory {
+            has_client_id: true,
+            has_client_secret: false,
+            ..inventory_nothing()
+        };
+        let result = resolve_auth(AuthMethod::Auto, &inv);
+        assert!(matches!(result, ResolvedAuth::NotConfigured { .. }));
+    }
+
+    // --- Explicit Basic resolution ---
+
+    #[test]
+    fn basic_with_keys_returns_basic() {
+        let result = resolve_auth(AuthMethod::Basic, &inventory_basic());
+        assert_eq!(result, ResolvedAuth::Basic);
+    }
+
+    #[test]
+    fn basic_without_keys_returns_not_configured() {
+        let result = resolve_auth(AuthMethod::Basic, &inventory_nothing());
+        assert!(matches!(
+            result,
+            ResolvedAuth::NotConfigured {
+                configured_method: AuthMethod::Basic,
+                ..
             }
-        );
+        ));
     }
 
     #[test]
-    fn credential_status_missing_access_key() {
-        let config = AuthConfig {
-            access_key: None,
-            secret_key: Some(SecretString::from("sk")),
-            ..AuthConfig::default()
+    fn basic_missing_secret_key_reports_it() {
+        let inv = AuthInventory {
+            has_access_key: true,
+            ..inventory_nothing()
         };
-        assert_eq!(
-            config.credential_status(),
-            CredentialStatus::Partial {
-                missing: "access_key"
+        let result = resolve_auth(AuthMethod::Basic, &inv);
+        match result {
+            ResolvedAuth::NotConfigured { detail, .. } => {
+                assert!(detail.contains("secret_key"));
             }
-        );
+            other => panic!("expected NotConfigured, got {other:?}"),
+        }
     }
+
+    #[test]
+    fn basic_missing_access_key_reports_it() {
+        let inv = AuthInventory {
+            has_secret_key: true,
+            ..inventory_nothing()
+        };
+        let result = resolve_auth(AuthMethod::Basic, &inv);
+        match result {
+            ResolvedAuth::NotConfigured { detail, .. } => {
+                assert!(detail.contains("access_key"));
+            }
+            other => panic!("expected NotConfigured, got {other:?}"),
+        }
+    }
+
+    // --- Explicit OAuth resolution ---
+
+    #[test]
+    fn oauth_with_tokens_returns_ready() {
+        let result = resolve_auth(AuthMethod::OAuth, &inventory_oauth_with_tokens());
+        assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
+    }
+
+    #[test]
+    fn oauth_without_tokens_returns_pending() {
+        let result = resolve_auth(AuthMethod::OAuth, &inventory_oauth_no_tokens());
+        assert_eq!(result, ResolvedAuth::OAuthPending);
+    }
+
+    #[test]
+    fn oauth_without_client_creds_returns_not_configured() {
+        let result = resolve_auth(AuthMethod::OAuth, &inventory_nothing());
+        assert!(matches!(
+            result,
+            ResolvedAuth::NotConfigured {
+                configured_method: AuthMethod::OAuth,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn oauth_missing_client_secret_reports_it() {
+        let inv = AuthInventory {
+            has_client_id: true,
+            ..inventory_nothing()
+        };
+        let result = resolve_auth(AuthMethod::OAuth, &inv);
+        match result {
+            ResolvedAuth::NotConfigured { detail, .. } => {
+                assert!(detail.contains("client_secret"));
+            }
+            other => panic!("expected NotConfigured, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oauth_missing_client_id_reports_it() {
+        let inv = AuthInventory {
+            has_client_secret: true,
+            ..inventory_nothing()
+        };
+        let result = resolve_auth(AuthMethod::OAuth, &inv);
+        match result {
+            ResolvedAuth::NotConfigured { detail, .. } => {
+                assert!(detail.contains("client_id"));
+            }
+            other => panic!("expected NotConfigured, got {other:?}"),
+        }
+    }
+
+    // ====================================================================
+    // AuthConfig Default Tests
+    // ====================================================================
 
     #[test]
     fn default_auth_config() {
         let config = AuthConfig::default();
         assert!(config.access_key.is_none());
         assert!(config.secret_key.is_none());
-        assert_eq!(config.method, AuthMethod::Basic);
+        assert_eq!(config.method, AuthMethod::Auto);
         assert_eq!(config.check_interval, Duration::from_secs(300));
     }
+
+    // ====================================================================
+    // Duration Parsing Tests
+    // ====================================================================
 
     #[test]
     fn parse_duration_seconds_integer() {
@@ -351,9 +712,12 @@ mod tests {
 
     #[test]
     fn parse_duration_overflow_fails() {
-        // A value that parses as a valid u64 but overflows when multiplied by 3600
         assert!(parse_duration_str("5124095576030432h").is_err());
     }
+
+    // ====================================================================
+    // TOML Deserialization Tests
+    // ====================================================================
 
     #[test]
     fn deserialize_negative_integer_interval_fails() {
@@ -414,7 +778,7 @@ mod tests {
         let config: AuthConfig = toml::from_str(toml_str).expect("should deserialize");
         assert!(config.access_key.is_none());
         assert!(config.secret_key.is_none());
-        assert_eq!(config.method, AuthMethod::Basic);
+        assert_eq!(config.method, AuthMethod::Auto);
         assert_eq!(config.check_interval, Duration::from_secs(300));
     }
 
@@ -426,6 +790,16 @@ mod tests {
 
         let config: AuthConfig = toml::from_str(toml_str).expect("should deserialize");
         assert_eq!(config.method, AuthMethod::Basic);
+    }
+
+    #[test]
+    fn deserialize_auth_config_method_auto() {
+        let toml_str = r#"
+            method = "auto"
+        "#;
+
+        let config: AuthConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.method, AuthMethod::Auto);
     }
 
     #[test]
@@ -447,10 +821,8 @@ mod tests {
         "#;
 
         let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
-        assert_eq!(
-            config.auth.credential_status(),
-            CredentialStatus::BothPresent
-        );
+        let inv = AuthInventory::from_config(&config.auth, TokenStatus::Absent);
+        assert_eq!(resolve_auth(config.auth.method, &inv), ResolvedAuth::Basic);
     }
 
     #[test]
@@ -458,11 +830,14 @@ mod tests {
         let toml_str = "";
 
         let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
-        assert_eq!(
-            config.auth.credential_status(),
-            CredentialStatus::NonePresent
-        );
+        let inv = AuthInventory::from_config(&config.auth, TokenStatus::Absent);
+        let result = resolve_auth(config.auth.method, &inv);
+        assert!(matches!(result, ResolvedAuth::NotConfigured { .. }));
     }
+
+    // ====================================================================
+    // Check Interval Clamping Tests
+    // ====================================================================
 
     #[test]
     fn clamp_check_interval_below_minimum() {
@@ -508,7 +883,46 @@ mod tests {
         assert_eq!(config.check_interval, Duration::from_secs(300));
     }
 
-    // --- HttpConfig tests ---
+    // ====================================================================
+    // OAuth TOML Deserialization Tests
+    // ====================================================================
+
+    #[test]
+    fn deserialize_auth_config_method_oauth() {
+        let toml_str = r#"
+            method = "oauth"
+            client_id = "my-client-id"
+            client_secret = "my-client-secret"
+        "#;
+
+        let config: AuthConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.method, AuthMethod::OAuth);
+        assert_eq!(config.client_id.as_deref(), Some("my-client-id"));
+        assert_eq!(
+            config
+                .client_secret
+                .as_ref()
+                .expect("should have client_secret")
+                .expose_secret(),
+            "my-client-secret"
+        );
+    }
+
+    #[test]
+    fn deserialize_auth_config_oauth_defaults() {
+        let toml_str = r#"
+            method = "oauth"
+        "#;
+
+        let config: AuthConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.method, AuthMethod::OAuth);
+        assert!(config.client_id.is_none());
+        assert!(config.client_secret.is_none());
+    }
+
+    // ====================================================================
+    // HttpConfig Tests
+    // ====================================================================
 
     #[test]
     fn default_http_config() {
@@ -562,10 +976,43 @@ mod tests {
         "#;
 
         let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
-        assert_eq!(
-            config.auth.credential_status(),
-            CredentialStatus::BothPresent
-        );
+        let inv = AuthInventory::from_config(&config.auth, TokenStatus::Absent);
+        assert_eq!(resolve_auth(config.auth.method, &inv), ResolvedAuth::Basic);
         assert_eq!(config.http.timeout, Duration::from_secs(60));
+    }
+
+    // ====================================================================
+    // AuthInventory Construction Tests
+    // ====================================================================
+
+    #[test]
+    fn inventory_from_config_with_basic_keys() {
+        let config = AuthConfig {
+            access_key: Some(SecretString::from("ak")),
+            secret_key: Some(SecretString::from("sk")),
+            ..AuthConfig::default()
+        };
+        let inv = AuthInventory::from_config(&config, TokenStatus::Absent);
+        assert!(inv.has_access_key);
+        assert!(inv.has_secret_key);
+        assert!(!inv.has_client_id);
+        assert!(!inv.has_client_secret);
+        assert_eq!(inv.token_status, TokenStatus::Absent);
+    }
+
+    #[test]
+    fn inventory_from_config_with_oauth_creds() {
+        let config = AuthConfig {
+            client_id: Some("cid".into()),
+            client_secret: Some(SecretString::from("cs")),
+            method: AuthMethod::OAuth,
+            ..AuthConfig::default()
+        };
+        let inv = AuthInventory::from_config(&config, TokenStatus::Present { expires_at: None });
+        assert!(!inv.has_access_key);
+        assert!(!inv.has_secret_key);
+        assert!(inv.has_client_id);
+        assert!(inv.has_client_secret);
+        assert!(matches!(inv.token_status, TokenStatus::Present { .. }));
     }
 }
