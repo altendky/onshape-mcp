@@ -251,6 +251,20 @@ impl ServerHandler for OnshapeMcpServer {
         // OnshapeApiRequestThen (which can chain multiple requests).
         let mut current = result;
         loop {
+            // For variants that need API execution, check if credentials
+            // are available. NotConfigured and OAuthPending cannot execute
+            // API requests, so return informative tool-level errors.
+            if matches!(
+                current,
+                ToolResult::OnshapeApiRequest { .. } | ToolResult::OnshapeApiRequestThen { .. }
+            ) {
+                match &*state {
+                    ApiState::NotConfigured { .. } => return Ok(not_configured_error()),
+                    ApiState::OAuthPending(_) => return Ok(oauth_pending_error()),
+                    ApiState::Basic(_) | ApiState::OAuth(_) => {}
+                }
+            }
+
             match current {
                 ToolResult::Immediate(r) => return r,
                 ToolResult::OnshapeApiRequest { request: api_req } => {
@@ -304,31 +318,58 @@ struct RawResponse {
     body: String,
 }
 
+/// Error response when credentials are not configured.
+fn not_configured_error() -> CallToolResult {
+    CallToolResult {
+        content: vec![rmcp::model::Content::text(
+            "Cannot execute API call: credentials are not configured. \
+             Set access_key and secret_key via config file, environment \
+             variables, or CLI flags. For OAuth, run the authorization flow \
+             to obtain tokens.",
+        )],
+        is_error: Some(true),
+        structured_content: None,
+        meta: None,
+    }
+}
+
+/// Error response when OAuth is pending (client creds present but no tokens).
+fn oauth_pending_error() -> CallToolResult {
+    CallToolResult {
+        content: vec![rmcp::model::Content::text(
+            "Cannot execute API call: OAuth authorization not yet completed. \
+             Complete the OAuth flow in your editor (e.g. via the OpenCode plugin) \
+             to obtain access tokens. The server will automatically detect the \
+             new tokens once they are written.",
+        )],
+        is_error: Some(true),
+        structured_content: None,
+        meta: None,
+    }
+}
+
 /// Execute a raw API request, returning the HTTP status and body.
 ///
 /// Handles authentication (Basic or OAuth with proactive/reactive refresh)
 /// but does not process the response into a `CallToolResult`.
 /// For OAuth, also handles permanent refresh failures by transitioning to
 /// `OAuthPending` state.
+///
+/// Returns `None` for states where no API call can be made (`NotConfigured`,
+/// `OAuthPending`). The caller should handle these with [`not_configured_error`]
+/// or [`oauth_pending_error`] before calling this function.
 async fn execute_raw_api_request(
     state: &mut ApiState,
     api_req: &onshape_client_core::request::ApiRequest,
 ) -> Result<RawResponse, McpError> {
     match state {
-        ApiState::NotConfigured { .. } => Err(McpError::new(
-            rmcp::model::ErrorCode::INTERNAL_ERROR,
-            "Cannot execute API call: credentials are not configured",
-            None,
-        )),
+        ApiState::NotConfigured { .. } | ApiState::OAuthPending(_) => {
+            unreachable!("caller must check state before calling execute_raw_api_request")
+        }
         ApiState::Basic(client) => execute_basic_raw(client, api_req).await,
         // OAuth needs &mut ApiState for the potential state transition,
         // so we handle it at the ApiState level.
         ApiState::OAuth(_) => execute_oauth_raw(state, api_req).await,
-        ApiState::OAuthPending(_) => Err(McpError::new(
-            rmcp::model::ErrorCode::INTERNAL_ERROR,
-            "Cannot execute API call: OAuth authorization not yet completed",
-            None,
-        )),
     }
 }
 
