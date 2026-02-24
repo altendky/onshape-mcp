@@ -139,7 +139,7 @@ struct StoredCredentials {
 /// Fill in missing OAuth client credentials from the credentials file.
 ///
 /// The credentials file (`~/.local/share/onshape-mcp/credentials.json`) is
-/// written by the `OpenCode` plugin during `o auth login`. This allows the MCP
+/// written by the `OpenCode` plugin during `opencode auth login`. This allows the MCP
 /// server to refresh tokens without requiring separate `client_id`/`client_secret`
 /// configuration.
 ///
@@ -230,7 +230,7 @@ fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLo
 ///
 /// **Precedence** (lowest to highest):
 /// 1. Hardcoded defaults
-/// 2. Credentials file (OAuth `client_id`/`client_secret` only, written by `o auth login`)
+/// 2. Credentials file (OAuth `client_id`/`client_secret` only, written by `opencode auth login`)
 /// 3. Config file (TOML) — if it exists and has secure permissions
 /// 4. Environment variables (`ONSHAPE_MCP_` prefix, double underscore for nesting)
 ///

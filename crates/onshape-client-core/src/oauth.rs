@@ -270,7 +270,7 @@ pub fn default_token_file_path() -> Option<PathBuf> {
 /// Returns the default credentials file path for the current platform.
 ///
 /// Stores OAuth client credentials (`client_id` + `client_secret`) written by
-/// the `OpenCode` plugin during `o auth login`, so the MCP server can use them
+/// the `OpenCode` plugin during `opencode auth login`, so the MCP server can use them
 /// for token refresh without requiring separate configuration.
 ///
 /// - **Unix:** `~/.local/share/onshape-mcp/credentials.json`

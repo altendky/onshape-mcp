@@ -75,7 +75,7 @@ client_secret = "..."
 
 ### OAuth Credentials File
 
-When the user completes `o auth login` via the OpenCode plugin, the plugin writes the OAuth client credentials to a local file so the MCP server can use them for token refresh without separate configuration.
+When the user completes `opencode auth login` via the OpenCode plugin, the plugin writes the OAuth client credentials to a local file so the MCP server can use them for token refresh without separate configuration.
 
 | Platform | Location |
 | ---------- | ---------- |
