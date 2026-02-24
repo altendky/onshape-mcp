@@ -363,7 +363,13 @@ impl OAuthSession {
     /// timestamp using the provided `now` value. The caller is responsible
     /// for persisting to disk and rebuilding the HTTP client.
     pub fn apply_refresh(&mut self, response: &BasicTokenResponse, now: DateTime<Utc>) {
-        self.tokens = OAuthTokenData::from_response(response, now);
+        let mut new_tokens = OAuthTokenData::from_response(response, now);
+        // Per RFC 6749 Section 6: if the server omits refresh_token in the
+        // response, the client must keep the existing one.
+        if response.refresh_token().is_none() {
+            new_tokens.refresh_token = self.tokens.refresh_token.clone();
+        }
+        self.tokens = new_tokens;
     }
 
     /// Try adopting externally-refreshed tokens (e.g. from a token file
