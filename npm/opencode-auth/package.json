@@ -1,0 +1,35 @@
+{
+  "name": "@onshape-mcp/opencode-auth",
+  "version": "0.1.0",
+  "description": "OpenCode auth plugin for Onshape OAuth — enables `opencode auth login` for onshape-mcp",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/altendky/onshape-mcp.git",
+    "directory": "npm/opencode-auth"
+  },
+  "homepage": "https://github.com/altendky/onshape-mcp",
+  "bugs": {
+    "url": "https://github.com/altendky/onshape-mcp/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "onshape",
+    "oauth",
+    "mcp",
+    "cad"
+  ],
+  "type": "module",
+  "main": "index.ts",
+  "files": [
+    "index.ts",
+    "src"
+  ],
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
+  },
+  "dependencies": {
+    "oauth4webapi": "^3.0.0"
+  }
+}
