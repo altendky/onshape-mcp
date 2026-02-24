@@ -113,7 +113,16 @@ In this state:
 
 ### OpenCode Plugin
 
-When using OpenCode, the OAuth flow is handled by the `.opencode/plugin.ts` plugin.
+When using OpenCode, the OAuth flow is handled by the `@onshape-mcp/opencode-auth` plugin.
+Add it to your `opencode.json`:
+
+```json
+{
+  "plugin": ["@onshape-mcp/opencode-auth"]
+}
+```
+
+OpenCode installs the plugin automatically at startup. Then run `opencode auth login` to complete the OAuth flow.
 The plugin prompts for client ID and client secret, opens the Onshape authorization page in your browser,
 starts a local callback server, exchanges the authorization code for tokens, and writes them to the token file.
 

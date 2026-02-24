@@ -80,7 +80,7 @@ jobs:
         run: |
           echo "Updating all package.json to version: $VERSION"
 
-          for pkg_dir in npm/onshape-mcp $PLATFORM_DIRS; do
+          for pkg_dir in npm/onshape-mcp npm/opencode-auth $PLATFORM_DIRS; do
             pkg_json="$pkg_dir/package.json"
             echo "Updating $pkg_json to $VERSION"
             # Update version field
@@ -104,6 +104,11 @@ jobs:
             tarball=$(npm pack "./$dir" --pack-destination dist/tarballs --json | jq -r '.[0].filename')
             echo "  -> $tarball"
           done
+
+          # Pack plugin package (no binary dependencies)
+          echo "Packing npm/opencode-auth..."
+          tarball=$(npm pack ./npm/opencode-auth --pack-destination dist/tarballs --json | jq -r '.[0].filename')
+          echo "  -> $tarball"
 
           # Pack main package
           echo "Packing npm/onshape-mcp..."
@@ -260,6 +265,22 @@ jobs:
             echo "Publishing ${tarballs[0]}..."
             npm publish "${tarballs[0]}" --tag "$DIST_TAG" --access public
           done < <(echo "$PLATFORMS" | jq -c '.[]')
+
+      - name: Publish plugin package
+        if: steps.check-auth.outputs.can-publish == 'true'
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ inputs.dist-tag }}
+        run: |
+          shopt -s failglob
+          tarballs=( ./tarballs/onshape-mcp-opencode-auth-* )
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "ERROR: Expected exactly 1 plugin tarball, found ${#tarballs[@]}" >&2
+            exit 1
+          fi
+          echo "Publishing ${tarballs[0]}..."
+          npm publish "${tarballs[0]}" --tag "$DIST_TAG" --access public
 
       - name: Publish main package
         if: steps.check-auth.outputs.can-publish == 'true'

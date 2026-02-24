@@ -54,7 +54,7 @@ jobs:
           now=$(date +%s)
 
           # Derive platform packages from the release matrix in library.yml
-          packages=("onshape-mcp")
+          packages=("onshape-mcp" "@onshape-mcp/opencode-auth")
           while IFS= read -r platform; do
             packages+=("@onshape-mcp/${platform}")
           done < <(yq -r '.release[].npm-platform' .github/actions/library/library.yml)
