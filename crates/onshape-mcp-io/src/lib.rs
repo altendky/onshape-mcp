@@ -588,19 +588,36 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server = OnshapeMcpServer::new(name, version, config)?;
 
-    // Determine if we should watch the token file for changes.
-    // Watching is useful when the state is OAuthPending (waiting for tokens
-    // to appear) or OAuth (detecting external token refreshes).
+    // Watch the token file for changes. This is useful for:
+    // - NotConfigured: detect token file with embedded credentials appearing
+    // - OAuthPending: detect tokens appearing after the user completes auth
+    // - OAuth: detect external token refreshes
+    //
+    // For NotConfigured state, the token file (and its directory) may not
+    // exist yet, so we derive the path from platform defaults and ensure the
+    // directory exists.
     let token_path = {
         let state = server.api_state.lock().await;
         match &*state {
             ApiState::OAuthPending(pending) => Some(pending.token_path.clone()),
             ApiState::OAuth(oauth) => Some(oauth.token_path.clone()),
-            _ => None,
+            ApiState::NotConfigured { .. } => default_token_file_path(),
+            ApiState::Basic(_) => None,
         }
     };
+    let watcher_ctx = token_path.map(|token_path| {
+        // Ensure the data directory exists so the watcher can monitor it.
+        if let Some(parent) = token_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        watcher::WatcherContext {
+            token_path,
+            base_url: server.spec.server_url().to_string(),
+            timeout: server.config.http.timeout,
+        }
+    });
     let watcher_handle =
-        token_path.map(|path| watcher::spawn_token_watcher(path, Arc::clone(&server.api_state)));
+        watcher_ctx.map(|ctx| watcher::spawn_token_watcher(ctx, Arc::clone(&server.api_state)));
 
     // The watcher runs as a fire-and-forget background task. If it exits
     // (e.g. due to initialization failure), the server continues without

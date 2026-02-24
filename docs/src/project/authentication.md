@@ -73,20 +73,6 @@ client_secret = "..."
 | `--client-id <ID>` | OAuth 2.0 client ID |
 | `--client-secret <SECRET>` | OAuth 2.0 client secret |
 
-### OAuth Credentials File
-
-When the user completes `opencode auth login` via the OpenCode plugin, the plugin writes the OAuth client credentials to a local file so the MCP server can use them for token refresh without separate configuration.
-
-| Platform | Location |
-| ---------- | ---------- |
-| Unix | `~/.local/share/onshape-mcp/credentials.json` |
-| macOS | `~/Library/Application Support/onshape-mcp/credentials.json` |
-| Windows | `%LOCALAPPDATA%\onshape-mcp\credentials.json` |
-
-The credentials file has the same permission requirements as the config file (0600 on Unix).
-It contains `client_id` and `client_secret` as a JSON object.
-Explicit configuration (config file, environment variables, CLI flags) always takes precedence over the credentials file.
-
 ### OAuth Token File
 
 OAuth access and refresh tokens are stored in a local JSON file:
@@ -102,14 +88,16 @@ Token refresh is handled automatically: the server proactively refreshes tokens 
 
 The token file includes an optional `scopes` field tracking the OAuth scopes granted by the authorization server. The `token_type` field is validated on load — only `"bearer"` (case-insensitive) is accepted.
 
+The token file may also include `client_id` and `client_secret` fields. When the user completes `opencode auth login` via the OpenCode plugin, the plugin writes these alongside the tokens so the MCP server can refresh tokens without requiring separate client credential configuration. Explicit configuration (config file, environment variables, CLI flags) always takes precedence over credentials embedded in the token file.
+
 ### Token File Watching
 
 The server monitors the token file for changes using OS-native file watching (inotify on Linux, kqueue on macOS, `ReadDirectoryChanges` on Windows) with a polling fallback if native watching is unavailable.
 
-Token file watching is active when the server starts in `OAuthPending` or `OAuth` state:
+Token file watching is active when the server starts in `NotConfigured`, `OAuthPending`, or `OAuth` state:
 
-- **OAuthPending to OAuth transition** — When the user completes the OAuth authorization flow (e.g. via the OpenCode plugin) and the token file appears, the server automatically transitions to `OAuth` state and begins serving API requests.
-No server restart is needed.
+- **NotConfigured to OAuth transition** — When the token file appears with embedded client credentials (e.g. after `opencode auth login`), the server transitions directly from `NotConfigured` to `OAuth` state. No server restart is needed.
+- **OAuthPending to OAuth transition** — When the user completes the OAuth authorization flow and the token file appears, the server automatically transitions to `OAuth` state and begins serving API requests. No server restart is needed.
 - **External token refresh** — When another process (e.g. the OpenCode plugin) refreshes the token and writes it to the file, the server picks up the new token automatically.
 
 The watcher monitors the token file's parent directory (since the file may not exist yet) and debounces events with a 500ms window to handle the multiple filesystem events that a single write can produce.

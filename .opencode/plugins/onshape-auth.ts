@@ -39,16 +39,9 @@ function tokenFilePath(): string {
 }
 
 /**
- * Returns the default credentials file path for the current platform.
- * Stores OAuth client credentials so the MCP server can refresh tokens
+ * Save tokens and client credentials to the token file with secure permissions.
+ * Client credentials are included so the MCP server can refresh tokens
  * without requiring separate configuration.
- */
-function credentialsFilePath(): string {
-  return join(dataDir(), "credentials.json");
-}
-
-/**
- * Save tokens to the token file with secure permissions.
  */
 function saveTokens(tokens: {
   access_token: string;
@@ -56,24 +49,12 @@ function saveTokens(tokens: {
   expires_at: string | null;
   token_type: string;
   scopes: string[] | null;
+  client_id: string;
+  client_secret: string;
 }): void {
   const path = tokenFilePath();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, JSON.stringify(tokens, null, 2), { mode: 0o600 });
-}
-
-/**
- * Save OAuth client credentials so the MCP server can use them
- * for token refresh without requiring separate configuration.
- */
-function saveCredentials(clientId: string, clientSecret: string): void {
-  const path = credentialsFilePath();
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(
-    path,
-    JSON.stringify({ client_id: clientId, client_secret: clientSecret }, null, 2),
-    { mode: 0o600 },
-  );
 }
 
 export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
@@ -208,16 +189,18 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                         ? result.scope.split(" ").filter(Boolean)
                         : null;
 
-                      // Write credentials and tokens for the Rust MCP server.
-                      // Credentials file enables the server to refresh tokens
-                      // without requiring separate client_id/client_secret config.
-                      saveCredentials(clientId, clientSecret);
+                      // Write tokens and client credentials to a single file
+                      // for the Rust MCP server. Including client credentials
+                      // enables the server to refresh tokens without requiring
+                      // separate configuration.
                       saveTokens({
                         access_token: result.access_token,
                         refresh_token: result.refresh_token ?? "",
                         expires_at: expiresAt,
                         token_type: result.token_type || "bearer",
                         scopes,
+                        client_id: clientId,
+                        client_secret: clientSecret,
                       });
 
                       return {

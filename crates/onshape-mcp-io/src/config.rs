@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
-use onshape_client_core::oauth::default_credentials_file_path;
+use onshape_client_core::oauth::default_token_file_path;
 use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
 use secrecy::SecretString;
 
@@ -126,32 +126,25 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
 // ============================================================================
 
 // ============================================================================
-// Credentials File
+// Credentials from Token File
 // ============================================================================
 
-/// OAuth client credentials stored in the credentials file.
-#[derive(serde::Deserialize)]
-struct StoredCredentials {
-    client_id: Option<String>,
-    client_secret: Option<String>,
-}
-
-/// Fill in missing OAuth client credentials from the credentials file.
+/// Fill in missing OAuth client credentials from the token file.
 ///
-/// The credentials file (`~/.local/share/onshape-mcp/credentials.json`) is
-/// written by the `OpenCode` plugin during `opencode auth login`. This allows the MCP
-/// server to refresh tokens without requiring separate `client_id`/`client_secret`
-/// configuration.
+/// The token file (`~/.local/share/onshape-mcp/tokens.json`) may include
+/// `client_id` and `client_secret` fields written by the `OpenCode` plugin
+/// during `opencode auth login`. This allows the MCP server to refresh tokens
+/// without requiring separate `client_id`/`client_secret` configuration.
 ///
 /// Only fills in fields that are `None` in the config — explicit config file,
 /// env var, or CLI values always take precedence.
-fn merge_credentials_file(config: &mut AppConfig) {
+fn merge_credentials_from_token_file(config: &mut AppConfig) {
     // Only try if at least one OAuth field is missing
     if config.auth.client_id.is_some() && config.auth.client_secret.is_some() {
         return;
     }
 
-    let Some(path) = default_credentials_file_path() else {
+    let Some(path) = default_token_file_path() else {
         return;
     };
 
@@ -164,7 +157,7 @@ fn merge_credentials_file(config: &mut AppConfig) {
         // TODO: replace eprintln! with tracing::warn! once tracing is available
         // See: https://github.com/altendky/onshape-mcp/issues/73
         eprintln!(
-            "Warning: credentials file {} has insecure permissions, skipping: {err}",
+            "Warning: token file {} has insecure permissions, skipping credential extraction: {err}",
             path.display(),
         );
         return;
@@ -176,31 +169,32 @@ fn merge_credentials_file(config: &mut AppConfig) {
             // TODO: replace eprintln! with tracing::warn! once tracing is available
             // See: https://github.com/altendky/onshape-mcp/issues/73
             eprintln!(
-                "Warning: could not read credentials file {}: {err}",
+                "Warning: could not read token file {}: {err}",
                 path.display(),
             );
             return;
         }
     };
 
-    let creds = match serde_json::from_str::<StoredCredentials>(&contents) {
-        Ok(c) => c,
-        Err(err) => {
-            // TODO: replace eprintln! with tracing::warn! once tracing is available
-            // See: https://github.com/altendky/onshape-mcp/issues/73
-            eprintln!(
-                "Warning: could not parse credentials file {}: {err}",
-                path.display(),
-            );
-            return;
-        }
-    };
+    let token_data =
+        match serde_json::from_str::<onshape_client_core::oauth::OAuthTokenData>(&contents) {
+            Ok(d) => d,
+            Err(err) => {
+                // TODO: replace eprintln! with tracing::warn! once tracing is available
+                // See: https://github.com/altendky/onshape-mcp/issues/73
+                eprintln!(
+                    "Warning: could not parse token file {}: {err}",
+                    path.display(),
+                );
+                return;
+            }
+        };
 
     if config.auth.client_id.is_none() {
-        config.auth.client_id = creds.client_id;
+        config.auth.client_id = token_data.client_id;
     }
     if config.auth.client_secret.is_none()
-        && let Some(secret) = creds.client_secret
+        && let Some(secret) = token_data.client_secret
     {
         config.auth.client_secret = Some(SecretString::from(secret));
     }
@@ -270,7 +264,7 @@ fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLo
 pub fn load_config(config_path_override: Option<&Path>) -> Result<AppConfig, ConfigLoadError> {
     let figment = base_figment(config_path_override)?;
     let mut config: AppConfig = figment.extract()?;
-    merge_credentials_file(&mut config);
+    merge_credentials_from_token_file(&mut config);
     if let Some(original) = config.auth.clamp_check_interval() {
         // TODO: replace eprintln! with tracing::warn! once tracing is available
         // See: https://github.com/altendky/onshape-mcp/issues/73
@@ -306,7 +300,7 @@ pub fn load_config_with_overrides(
     }
 
     let mut config: AppConfig = figment.extract()?;
-    merge_credentials_file(&mut config);
+    merge_credentials_from_token_file(&mut config);
     if let Some(original) = config.auth.clamp_check_interval() {
         // TODO: replace eprintln! with tracing::warn! once tracing is available
         // See: https://github.com/altendky/onshape-mcp/issues/73

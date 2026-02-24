@@ -90,6 +90,20 @@ pub struct OAuthTokenData {
     /// scope tracking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
+    /// OAuth client ID used to obtain these tokens.
+    ///
+    /// Stored alongside tokens so the MCP server can refresh them without
+    /// requiring separate configuration. Written by the `OpenCode` plugin
+    /// during `opencode auth login`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// OAuth client secret used to obtain these tokens.
+    ///
+    /// Stored alongside tokens so the MCP server can refresh them without
+    /// requiring separate configuration. Written by the `OpenCode` plugin
+    /// during `opencode auth login`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
 }
 
 impl OAuthTokenData {
@@ -139,6 +153,10 @@ impl OAuthTokenData {
             expires_at,
             token_type: response.token_type().as_ref().to_string(),
             scopes,
+            // Client credentials are not in the token response — they are
+            // preserved from the previous token data by the caller.
+            client_id: None,
+            client_secret: None,
         }
     }
 }
@@ -267,22 +285,6 @@ pub fn default_token_file_path() -> Option<PathBuf> {
     default_data_dir().map(|dir| dir.join("tokens.json"))
 }
 
-/// Returns the default credentials file path for the current platform.
-///
-/// Stores OAuth client credentials (`client_id` + `client_secret`) written by
-/// the `OpenCode` plugin during `opencode auth login`, so the MCP server can use them
-/// for token refresh without requiring separate configuration.
-///
-/// - **Unix:** `~/.local/share/onshape-mcp/credentials.json`
-/// - **macOS:** `~/Library/Application Support/onshape-mcp/credentials.json`
-/// - **Windows:** `%LOCALAPPDATA%\onshape-mcp\credentials.json`
-///
-/// Returns `None` if the platform data directory cannot be determined.
-#[must_use]
-pub fn default_credentials_file_path() -> Option<PathBuf> {
-    default_data_dir().map(|dir| dir.join("credentials.json"))
-}
-
 // ============================================================================
 // OAuth Session (Refresh State Machine)
 // ============================================================================
@@ -369,6 +371,12 @@ impl OAuthSession {
         if response.refresh_token().is_none() {
             new_tokens.refresh_token = self.tokens.refresh_token.clone();
         }
+        // Client credentials are not in the token response — preserve them
+        // from the previous token data so they are persisted back to disk.
+        new_tokens.client_id.clone_from(&self.tokens.client_id);
+        new_tokens
+            .client_secret
+            .clone_from(&self.tokens.client_secret);
         self.tokens = new_tokens;
     }
 
@@ -431,6 +439,8 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -467,6 +477,8 @@ mod tests {
             expires_at: Some(expires),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let roundtripped: OAuthTokenData = serde_json::from_str(&json).expect("should deserialize");
@@ -484,6 +496,8 @@ mod tests {
             expires_at: Some(expires),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("should parse")
@@ -502,6 +516,8 @@ mod tests {
             expires_at: Some(expires),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         assert!(tokens.is_expired(expires));
     }
@@ -517,6 +533,8 @@ mod tests {
             expires_at: Some(expires),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("should parse")
@@ -532,6 +550,8 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("should parse")
@@ -620,6 +640,8 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: Some(vec!["OAuth2Read".into(), "OAuth2Write".into()]),
+            client_id: None,
+            client_secret: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -637,6 +659,8 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -757,6 +781,8 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let json = serde_json::to_string_pretty(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -785,6 +811,8 @@ mod tests {
             ),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -805,6 +833,8 @@ mod tests {
             ),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -825,6 +855,8 @@ mod tests {
             ),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -840,6 +872,8 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let now = Utc::now();
         assert!(!tokens.is_expiring_soon(now, chrono::Duration::seconds(60)));
@@ -857,6 +891,8 @@ mod tests {
             ),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -877,6 +913,8 @@ mod tests {
                 expires_at,
                 token_type: "bearer".into(),
                 scopes: None,
+                client_id: None,
+                client_secret: None,
             },
             chrono::Duration::seconds(60),
         )
@@ -990,6 +1028,8 @@ mod tests {
                 expires_at: Some(now + chrono::Duration::seconds(100)),
                 token_type: "bearer".into(),
                 scopes: None,
+                client_id: None,
+                client_secret: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -999,6 +1039,8 @@ mod tests {
             expires_at: Some(now + chrono::Duration::seconds(3600)),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         assert!(session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "new-at");
@@ -1017,6 +1059,8 @@ mod tests {
                 expires_at: Some(now + chrono::Duration::seconds(3600)),
                 token_type: "bearer".into(),
                 scopes: None,
+                client_id: None,
+                client_secret: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1026,6 +1070,8 @@ mod tests {
             expires_at: Some(now + chrono::Duration::seconds(3600)),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1043,6 +1089,8 @@ mod tests {
                 expires_at: Some(now - chrono::Duration::seconds(100)),
                 token_type: "bearer".into(),
                 scopes: None,
+                client_id: None,
+                client_secret: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1052,6 +1100,8 @@ mod tests {
             expires_at: Some(now - chrono::Duration::seconds(50)),
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1067,6 +1117,8 @@ mod tests {
                 expires_at: None,
                 token_type: "bearer".into(),
                 scopes: None,
+                client_id: None,
+                client_secret: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1076,6 +1128,8 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1093,6 +1147,8 @@ mod tests {
                 expires_at: Some(now + chrono::Duration::seconds(100)),
                 token_type: "bearer".into(),
                 scopes: None,
+                client_id: None,
+                client_secret: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1102,6 +1158,8 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");

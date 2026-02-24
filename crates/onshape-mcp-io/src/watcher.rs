@@ -5,9 +5,11 @@
 //! on Windows) with a polling fallback if the native watcher fails.
 //!
 //! When changes are detected, the watcher re-reads the token file and
-//! updates the server's `ApiState` — transitioning from `OAuthPending`
-//! to `OAuth` when tokens appear, or updating existing OAuth state
-//! when tokens are refreshed externally.
+//! updates the server's `ApiState`:
+//!
+//! - `NotConfigured → OAuth` when a token file with client credentials appears.
+//! - `OAuthPending → OAuth` when tokens appear (client creds already known).
+//! - `OAuth → OAuth` when tokens are refreshed externally.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -33,11 +35,26 @@ const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
 /// Only used if the native file watcher fails to initialize.
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Context needed by the watcher to build OAuth states from scratch.
+///
+/// Required for the `NotConfigured → OAuth` transition when a token file
+/// (containing embedded client credentials) appears after the server starts.
+pub(crate) struct WatcherContext {
+    /// Path to the token file to watch.
+    pub token_path: PathBuf,
+    /// Base URL for the Onshape API (from the `OpenAPI` spec).
+    pub base_url: String,
+    /// HTTP request timeout.
+    pub timeout: Duration,
+}
+
 /// Spawn a background task that watches the token file for changes.
 ///
 /// The watcher monitors the token file's parent directory (since the file
 /// may not exist yet). When changes to the token file are detected:
 ///
+/// - If the state is `NotConfigured`, attempts to transition to `OAuth`
+///   using client credentials embedded in the token file.
 /// - If the state is `OAuthPending`, attempts to transition to `OAuth`.
 /// - If the state is `OAuth`, attempts to update tokens if fresher.
 ///
@@ -48,11 +65,11 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// Does not panic. If the watcher cannot be initialized, the task logs
 /// the error and exits gracefully.
 pub(crate) fn spawn_token_watcher(
-    token_path: PathBuf,
+    ctx: WatcherContext,
     api_state: Arc<tokio::sync::Mutex<ApiState>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        if run_watcher(token_path, api_state).await.is_err() {
+        if run_watcher(ctx, api_state).await.is_err() {
             // TODO: replace eprintln! with tracing::warn! once tracing is available
             // See: https://github.com/altendky/onshape-mcp/issues/73
             eprintln!(
@@ -66,15 +83,18 @@ pub(crate) fn spawn_token_watcher(
 
 /// Internal: run the file watcher loop.
 async fn run_watcher(
-    token_path: PathBuf,
+    ctx: WatcherContext,
     api_state: Arc<tokio::sync::Mutex<ApiState>>,
 ) -> Result<(), ()> {
-    let watch_dir = token_path.parent().map(std::path::Path::to_path_buf);
+    let watch_dir = ctx.token_path.parent().map(std::path::Path::to_path_buf);
     let Some(watch_dir) = watch_dir else {
         return Err(());
     };
 
-    let file_name = token_path.file_name().map(std::ffi::OsStr::to_os_string);
+    let file_name = ctx
+        .token_path
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string);
     let Some(file_name) = file_name else {
         return Err(());
     };
@@ -98,7 +118,7 @@ async fn run_watcher(
         while rx.try_recv().is_ok() {}
 
         // Process the change.
-        handle_token_change(&token_path, &api_state).await;
+        handle_token_change(&ctx, &api_state).await;
     }
 }
 
@@ -166,19 +186,32 @@ fn create_watcher(
 /// Handle a token file change event.
 ///
 /// Reads the token file and updates the API state as appropriate.
-async fn handle_token_change(
-    token_path: &std::path::Path,
-    api_state: &Arc<tokio::sync::Mutex<ApiState>>,
-) {
+async fn handle_token_change(ctx: &WatcherContext, api_state: &Arc<tokio::sync::Mutex<ApiState>>) {
     // Try to load the token file. If it fails (e.g., partial write, deleted),
     // just ignore and wait for the next event.
-    let Ok(token_data) = crate::oauth::load_token_file(token_path) else {
+    let Ok(token_data) = crate::oauth::load_token_file(&ctx.token_path) else {
         return;
     };
 
     let mut state = api_state.lock().await;
 
-    // Case 1: Transition from OAuthPending → OAuth.
+    // Case 1: Transition from NotConfigured → OAuth.
+    //
+    // The token file may include embedded client credentials (written by the
+    // OpenCode plugin). If we're not configured and the file has credentials,
+    // transition directly to OAuth.
+    let transition = if matches!(&*state, ApiState::NotConfigured { .. }) {
+        build_oauth_from_token_file(ctx, token_data.clone()).ok()
+    } else {
+        None
+    };
+
+    if let Some(oauth) = transition {
+        *state = ApiState::OAuth(Box::new(oauth));
+        return;
+    }
+
+    // Case 2: Transition from OAuthPending → OAuth.
     let transition = if let ApiState::OAuthPending(pending) = &*state {
         build_oauth_from_pending(pending, token_data.clone()).ok()
     } else {
@@ -190,7 +223,7 @@ async fn handle_token_change(
         return;
     }
 
-    // Case 2: Update existing OAuth state with fresher tokens.
+    // Case 3: Update existing OAuth state with fresher tokens.
     if let ApiState::OAuth(oauth) = &mut *state
         && oauth
             .session
@@ -199,6 +232,50 @@ async fn handle_token_change(
         // Tokens were updated — rebuild the HTTP client.
         let _ = oauth.rebuild_client();
     }
+}
+
+/// Build a full `OAuthApiState` from a token file that contains embedded credentials.
+///
+/// Used for the `NotConfigured → OAuth` transition when the token file
+/// includes `client_id` and `client_secret` fields.
+fn build_oauth_from_token_file(
+    ctx: &WatcherContext,
+    token_data: onshape_client_core::oauth::OAuthTokenData,
+) -> Result<OAuthApiState, Box<dyn std::error::Error + Send + Sync>> {
+    let client_id = token_data
+        .client_id
+        .as_deref()
+        .ok_or("token file missing client_id")?;
+    let client_secret = token_data
+        .client_secret
+        .as_deref()
+        .ok_or("token file missing client_secret")?;
+
+    let oauth_client = onshape_oauth_client(client_id, client_secret);
+    let session = OAuthSession::new(token_data, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
+
+    let client = OnshapeClient::new(ClientConfig {
+        base_url: ctx.base_url.clone(),
+        auth: ClientAuthConfig::Bearer {
+            access_token: AccessToken::new(session.access_token().secret().clone()),
+        },
+        timeout: Some(ctx.timeout),
+    })?;
+
+    let refresh_http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("failed to build refresh HTTP client: {e}"))?;
+
+    Ok(OAuthApiState {
+        session,
+        oauth_client,
+        client,
+        refresh_http,
+        token_path: ctx.token_path.clone(),
+        base_url: ctx.base_url.clone(),
+        timeout: ctx.timeout,
+    })
 }
 
 /// Build a full `OAuthApiState` from a pending state and token data.

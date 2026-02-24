@@ -162,6 +162,8 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
+            client_id: None,
+            client_secret: None,
         }
     }
 
