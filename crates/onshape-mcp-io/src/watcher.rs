@@ -52,10 +52,15 @@ pub(crate) fn spawn_token_watcher(
     api_state: Arc<tokio::sync::Mutex<ApiState>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        // Watcher failed to start — the server continues without
-        // live token detection. Users must restart the server after
-        // completing the OAuth flow.
-        let _ = run_watcher(token_path, api_state).await;
+        if run_watcher(token_path, api_state).await.is_err() {
+            // TODO: replace eprintln! with tracing::warn! once tracing is available
+            // See: https://github.com/altendky/onshape-mcp/issues/73
+            eprintln!(
+                "Warning: token file watcher exited — the server continues without \
+                 live token detection. Users must restart the server after \
+                 completing the OAuth flow.",
+            );
+        }
     })
 }
 

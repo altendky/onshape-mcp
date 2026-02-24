@@ -602,21 +602,13 @@ pub async fn run(
     let watcher_handle =
         token_path.map(|path| watcher::spawn_token_watcher(path, Arc::clone(&server.api_state)));
 
-    let service = server.serve(stdio()).await?;
+    // The watcher runs as a fire-and-forget background task. If it exits
+    // (e.g. due to initialization failure), the server continues without
+    // live token detection. Dropping the JoinHandle does not abort the task.
+    let _watcher_handle = watcher_handle;
 
-    // Run the MCP service. If a watcher is active, run it alongside
-    // the service and stop both when either completes.
-    match watcher_handle {
-        Some(watcher) => {
-            tokio::select! {
-                result = service.waiting() => { result?; }
-                _ = watcher => {}
-            }
-        }
-        None => {
-            service.waiting().await?;
-        }
-    }
+    let service = server.serve(stdio()).await?;
+    service.waiting().await?;
 
     Ok(())
 }
