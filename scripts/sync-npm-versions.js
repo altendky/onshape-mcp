@@ -18,6 +18,7 @@ const NPM_DIR = path.join(ROOT, "npm");
 
 const PACKAGES = [
   "onshape-mcp",
+  "opencode-auth",
   "linux-x64",
   "linux-arm64",
   "darwin-x64",

@@ -8,3 +8,4 @@ npm/*/bin/
 npm/*/node_modules/
 npm/*/coverage/
 npm/*/*.tgz
+npm/*/bun.lock
