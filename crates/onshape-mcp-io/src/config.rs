@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
+use onshape_client_core::oauth::default_credentials_file_path;
 use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
+use secrecy::SecretString;
 
 /// The environment variable prefix used for all configuration.
 ///
@@ -123,13 +125,74 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
 // Config Loading
 // ============================================================================
 
+// ============================================================================
+// Credentials File
+// ============================================================================
+
+/// OAuth client credentials stored in the credentials file.
+#[derive(serde::Deserialize)]
+struct StoredCredentials {
+    client_id: Option<String>,
+    client_secret: Option<String>,
+}
+
+/// Fill in missing OAuth client credentials from the credentials file.
+///
+/// The credentials file (`~/.local/share/onshape-mcp/credentials.json`) is
+/// written by the `OpenCode` plugin during `o auth login`. This allows the MCP
+/// server to refresh tokens without requiring separate `client_id`/`client_secret`
+/// configuration.
+///
+/// Only fills in fields that are `None` in the config — explicit config file,
+/// env var, or CLI values always take precedence.
+fn merge_credentials_file(config: &mut AppConfig) {
+    // Only try if at least one OAuth field is missing
+    if config.auth.client_id.is_some() && config.auth.client_secret.is_some() {
+        return;
+    }
+
+    let Some(path) = default_credentials_file_path() else {
+        return;
+    };
+
+    if !path.exists() {
+        return;
+    }
+
+    // Check permissions (silently skip on failure — this is a fallback source)
+    if check_file_permissions(&path).is_err() {
+        return;
+    }
+
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return;
+    };
+
+    let Ok(creds) = serde_json::from_str::<StoredCredentials>(&contents) else {
+        return;
+    };
+
+    if config.auth.client_id.is_none() {
+        config.auth.client_id = creds.client_id;
+    }
+    if config.auth.client_secret.is_none()
+        && let Some(secret) = creds.client_secret
+    {
+        config.auth.client_secret = Some(SecretString::from(secret));
+    }
+}
+
+// ============================================================================
+// Config Loading
+// ============================================================================
+
 /// Hardcoded defaults as a TOML string.
 ///
 /// This avoids needing `Serialize` on `AppConfig` (which contains `SecretString`
 /// that intentionally doesn't implement `Serialize`).
 const DEFAULTS_TOML: &str = r#"
 [auth]
-method = "basic"
+method = "auto"
 check_interval = 300
 "#;
 
@@ -167,8 +230,9 @@ fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLo
 ///
 /// **Precedence** (lowest to highest):
 /// 1. Hardcoded defaults
-/// 2. Config file (TOML) — if it exists and has secure permissions
-/// 3. Environment variables (`ONSHAPE_MCP_` prefix, double underscore for nesting)
+/// 2. Credentials file (OAuth `client_id`/`client_secret` only, written by `o auth login`)
+/// 3. Config file (TOML) — if it exists and has secure permissions
+/// 4. Environment variables (`ONSHAPE_MCP_` prefix, double underscore for nesting)
 ///
 /// # Arguments
 ///
@@ -182,6 +246,7 @@ fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLo
 pub fn load_config(config_path_override: Option<&Path>) -> Result<AppConfig, ConfigLoadError> {
     let figment = base_figment(config_path_override)?;
     let mut config: AppConfig = figment.extract()?;
+    merge_credentials_file(&mut config);
     if let Some(original) = config.auth.clamp_check_interval() {
         // TODO: replace eprintln! with tracing::warn! once tracing is available
         // See: https://github.com/altendky/onshape-mcp/issues/73
@@ -217,6 +282,7 @@ pub fn load_config_with_overrides(
     }
 
     let mut config: AppConfig = figment.extract()?;
+    merge_credentials_file(&mut config);
     if let Some(original) = config.auth.clamp_check_interval() {
         // TODO: replace eprintln! with tracing::warn! once tracing is available
         // See: https://github.com/altendky/onshape-mcp/issues/73

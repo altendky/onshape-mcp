@@ -150,17 +150,18 @@ pub enum TokenFileError {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
-    use secrecy::{ExposeSecret, SecretString};
+    use oauth2::{AccessToken, RefreshToken};
     use tempfile::TempDir;
 
     use super::*;
 
     fn test_tokens() -> OAuthTokenData {
         OAuthTokenData {
-            access_token: SecretString::from("test-access-token"),
-            refresh_token: SecretString::from("test-refresh-token"),
+            access_token: AccessToken::new("test-access-token".to_string()),
+            refresh_token: RefreshToken::new("test-refresh-token".to_string()),
             expires_at: None,
-            token_type: "Bearer".into(),
+            token_type: "bearer".into(),
+            scopes: None,
         }
     }
 
@@ -173,9 +174,9 @@ mod tests {
         save_token_file(&path, &tokens).expect("should save");
         let loaded = load_token_file(&path).expect("should load");
 
-        assert_eq!(loaded.access_token.expose_secret(), "test-access-token");
-        assert_eq!(loaded.refresh_token.expose_secret(), "test-refresh-token");
-        assert_eq!(loaded.token_type, "Bearer");
+        assert_eq!(loaded.access_token.secret(), "test-access-token");
+        assert_eq!(loaded.refresh_token.secret(), "test-refresh-token");
+        assert_eq!(loaded.token_type, "bearer");
     }
 
     #[test]

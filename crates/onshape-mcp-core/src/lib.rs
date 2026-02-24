@@ -13,6 +13,8 @@ use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::config::ResolvedAuth;
+
 /// Authentication status for the Onshape API connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -43,77 +45,65 @@ pub struct AuthStatusResult {
 }
 
 impl AuthStatusResult {
-    /// Returns a result indicating no credentials are configured.
+    /// Build an auth status result from the resolved auth state.
+    ///
+    /// This is the primary constructor — it maps the core's [`ResolvedAuth`]
+    /// to a user-facing status result. The `now` parameter is needed to
+    /// determine whether OAuth tokens have expired.
     #[must_use]
-    pub fn not_configured(auth_method: AuthMethod) -> Self {
-        Self {
-            status: AuthStatus::NotConfigured,
-            auth_method,
-            last_check: None,
-            message: Some("No credentials configured".into()),
-        }
-    }
-
-    /// Returns a result indicating credentials are configured but not yet validated.
-    #[must_use]
-    pub fn not_validated(auth_method: AuthMethod) -> Self {
-        Self {
-            status: AuthStatus::NotValidated,
-            auth_method,
-            last_check: None,
-            message: Some(
-                "Credentials configured but not yet validated against Onshape API".into(),
-            ),
-        }
-    }
-
-    /// Returns a result indicating only partial credentials are configured.
-    #[must_use]
-    pub fn partial_credentials(missing_field: &str, auth_method: AuthMethod) -> Self {
-        Self {
-            status: AuthStatus::NotConfigured,
-            auth_method,
-            last_check: None,
-            message: Some(format!(
-                "Incomplete credentials: {missing_field} is not configured"
-            )),
-        }
-    }
-
-    /// Returns a result indicating OAuth is configured but no token file is present.
-    #[must_use]
-    pub fn oauth_not_configured() -> Self {
-        Self {
-            status: AuthStatus::NotConfigured,
-            auth_method: AuthMethod::OAuth,
-            last_check: None,
-            message: Some("OAuth client credentials configured but no access token present. Run the OAuth authorization flow to obtain tokens.".into()),
-        }
-    }
-
-    /// Returns a result indicating OAuth tokens are present (not yet validated).
-    #[must_use]
-    pub fn oauth_token_present() -> Self {
-        Self {
-            status: AuthStatus::NotValidated,
-            auth_method: AuthMethod::OAuth,
-            last_check: None,
-            message: Some(
-                "OAuth access token present but not yet validated against Onshape API".into(),
-            ),
-        }
-    }
-
-    /// Returns a result indicating the OAuth access token has expired.
-    #[must_use]
-    pub fn oauth_token_expired() -> Self {
-        Self {
-            status: AuthStatus::Expired,
-            auth_method: AuthMethod::OAuth,
-            last_check: None,
-            message: Some(
-                "OAuth access token has expired. Re-run the OAuth authorization flow to obtain new tokens.".into(),
-            ),
+    pub fn from_resolved(resolved: &ResolvedAuth, now: DateTime<Utc>) -> Self {
+        match resolved {
+            ResolvedAuth::NotConfigured {
+                configured_method,
+                detail,
+            } => Self {
+                status: AuthStatus::NotConfigured,
+                auth_method: *configured_method,
+                last_check: None,
+                message: Some(detail.clone()),
+            },
+            ResolvedAuth::Basic => Self {
+                status: AuthStatus::NotValidated,
+                auth_method: AuthMethod::Basic,
+                last_check: None,
+                message: Some(
+                    "Credentials configured but not yet validated against Onshape API".into(),
+                ),
+            },
+            ResolvedAuth::OAuthReady { expires_at } => {
+                if expires_at.is_some_and(|ea| ea <= now) {
+                    Self {
+                        status: AuthStatus::Expired,
+                        auth_method: AuthMethod::OAuth,
+                        last_check: None,
+                        message: Some(
+                            "OAuth access token has expired. \
+                             Token refresh will be attempted on next API call."
+                                .into(),
+                        ),
+                    }
+                } else {
+                    Self {
+                        status: AuthStatus::NotValidated,
+                        auth_method: AuthMethod::OAuth,
+                        last_check: None,
+                        message: Some(
+                            "OAuth access token present but not yet validated against Onshape API"
+                                .into(),
+                        ),
+                    }
+                }
+            }
+            ResolvedAuth::OAuthPending => Self {
+                status: AuthStatus::NotConfigured,
+                auth_method: AuthMethod::OAuth,
+                last_check: None,
+                message: Some(
+                    "OAuth client credentials configured but no access token present. \
+                     Complete the OAuth authorization flow to obtain tokens."
+                        .into(),
+                ),
+            },
         }
     }
 }
@@ -147,7 +137,15 @@ pub fn server_info(name: &str, version: &str) -> ServerInfo {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
+    use chrono::TimeZone;
+
     use super::*;
+
+    fn now() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2025, 6, 15, 12, 0, 0)
+            .single()
+            .expect("valid datetime")
+    }
 
     #[test]
     fn server_info_sets_name_and_version() {
@@ -173,9 +171,17 @@ mod tests {
         assert!(instructions.contains(CATCH_PHRASE));
     }
 
+    // ====================================================================
+    // AuthStatusResult::from_resolved Tests
+    // ====================================================================
+
     #[test]
-    fn auth_status_result_not_configured() {
-        let result = AuthStatusResult::not_configured(AuthMethod::Basic);
+    fn from_resolved_not_configured_basic() {
+        let resolved = ResolvedAuth::NotConfigured {
+            configured_method: AuthMethod::Basic,
+            detail: "No credentials configured".into(),
+        };
+        let result = AuthStatusResult::from_resolved(&resolved, now());
 
         assert_eq!(result.status, AuthStatus::NotConfigured);
         assert_eq!(result.auth_method, AuthMethod::Basic);
@@ -184,8 +190,24 @@ mod tests {
     }
 
     #[test]
-    fn auth_status_serializes_to_snake_case() {
-        let result = AuthStatusResult::not_configured(AuthMethod::Basic);
+    fn from_resolved_not_configured_auto() {
+        let resolved = ResolvedAuth::NotConfigured {
+            configured_method: AuthMethod::Auto,
+            detail: "No complete credentials found. Missing: API keys".into(),
+        };
+        let result = AuthStatusResult::from_resolved(&resolved, now());
+
+        assert_eq!(result.status, AuthStatus::NotConfigured);
+        assert_eq!(result.auth_method, AuthMethod::Auto);
+    }
+
+    #[test]
+    fn from_resolved_not_configured_serializes() {
+        let resolved = ResolvedAuth::NotConfigured {
+            configured_method: AuthMethod::Basic,
+            detail: "No credentials configured".into(),
+        };
+        let result = AuthStatusResult::from_resolved(&resolved, now());
         let json = serde_json::to_string(&result).expect("should serialize");
 
         assert!(json.contains("\"status\":\"not_configured\""));
@@ -193,12 +215,11 @@ mod tests {
     }
 
     #[test]
-    fn auth_status_not_validated() {
-        let result = AuthStatusResult::not_validated(AuthMethod::Basic);
+    fn from_resolved_basic() {
+        let result = AuthStatusResult::from_resolved(&ResolvedAuth::Basic, now());
 
         assert_eq!(result.status, AuthStatus::NotValidated);
         assert_eq!(result.auth_method, AuthMethod::Basic);
-        assert!(result.last_check.is_none());
         assert!(
             result
                 .message
@@ -208,43 +229,20 @@ mod tests {
     }
 
     #[test]
-    fn auth_status_not_validated_serializes() {
-        let result = AuthStatusResult::not_validated(AuthMethod::Basic);
+    fn from_resolved_basic_serializes() {
+        let result = AuthStatusResult::from_resolved(&ResolvedAuth::Basic, now());
         let json = serde_json::to_string(&result).expect("should serialize");
 
         assert!(json.contains("\"status\":\"not_validated\""));
     }
 
     #[test]
-    fn auth_status_partial_credentials() {
-        let result = AuthStatusResult::partial_credentials("secret_key", AuthMethod::Basic);
-
-        assert_eq!(result.status, AuthStatus::NotConfigured);
-        assert!(
-            result
-                .message
-                .as_deref()
-                .is_some_and(|m| m.contains("secret_key"))
-        );
-    }
-
-    #[test]
-    fn auth_status_oauth_not_configured() {
-        let result = AuthStatusResult::oauth_not_configured();
-
-        assert_eq!(result.status, AuthStatus::NotConfigured);
-        assert_eq!(result.auth_method, AuthMethod::OAuth);
-        assert!(
-            result
-                .message
-                .as_deref()
-                .is_some_and(|m| m.contains("OAuth") && m.contains("no access token"))
-        );
-    }
-
-    #[test]
-    fn auth_status_oauth_token_present() {
-        let result = AuthStatusResult::oauth_token_present();
+    fn from_resolved_oauth_ready_not_expired() {
+        let future = now() + chrono::Duration::hours(1);
+        let resolved = ResolvedAuth::OAuthReady {
+            expires_at: Some(future),
+        };
+        let result = AuthStatusResult::from_resolved(&resolved, now());
 
         assert_eq!(result.status, AuthStatus::NotValidated);
         assert_eq!(result.auth_method, AuthMethod::OAuth);
@@ -257,8 +255,12 @@ mod tests {
     }
 
     #[test]
-    fn auth_status_oauth_token_expired() {
-        let result = AuthStatusResult::oauth_token_expired();
+    fn from_resolved_oauth_ready_expired() {
+        let past = now() - chrono::Duration::hours(1);
+        let resolved = ResolvedAuth::OAuthReady {
+            expires_at: Some(past),
+        };
+        let result = AuthStatusResult::from_resolved(&resolved, now());
 
         assert_eq!(result.status, AuthStatus::Expired);
         assert_eq!(result.auth_method, AuthMethod::OAuth);
@@ -271,8 +273,31 @@ mod tests {
     }
 
     #[test]
-    fn auth_status_oauth_serializes_correctly() {
-        let result = AuthStatusResult::oauth_not_configured();
+    fn from_resolved_oauth_ready_no_expiry() {
+        let resolved = ResolvedAuth::OAuthReady { expires_at: None };
+        let result = AuthStatusResult::from_resolved(&resolved, now());
+
+        assert_eq!(result.status, AuthStatus::NotValidated);
+        assert_eq!(result.auth_method, AuthMethod::OAuth);
+    }
+
+    #[test]
+    fn from_resolved_oauth_pending() {
+        let result = AuthStatusResult::from_resolved(&ResolvedAuth::OAuthPending, now());
+
+        assert_eq!(result.status, AuthStatus::NotConfigured);
+        assert_eq!(result.auth_method, AuthMethod::OAuth);
+        assert!(
+            result
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("no access token"))
+        );
+    }
+
+    #[test]
+    fn from_resolved_oauth_pending_serializes() {
+        let result = AuthStatusResult::from_resolved(&ResolvedAuth::OAuthPending, now());
         let json = serde_json::to_string(&result).expect("should serialize");
 
         assert!(json.contains("\"auth_method\":\"oauth\""));

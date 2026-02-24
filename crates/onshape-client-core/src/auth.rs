@@ -5,6 +5,7 @@
 //! HMAC-SHA256 request signing is planned as a future enhancement.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use oauth2::AccessToken;
 use schemars::JsonSchema;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,14 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AuthMethod {
+    /// Automatic detection: try available credentials in priority order.
+    ///
+    /// Resolution order:
+    /// 1. OAuth with tokens (client credentials + token file present)
+    /// 2. Basic auth (API key pair present)
+    /// 3. OAuth pending (client credentials but no tokens yet)
+    /// 4. Not configured
+    Auto,
     /// HTTP Basic authentication: base64-encoded `access_key:secret_key`.
     ///
     /// Simplest method. Relies on HTTPS for transport security.
@@ -51,7 +60,8 @@ pub struct Credentials {
 // Authorization Header Generation
 // ============================================================================
 
-/// Generates the value for the HTTP `Authorization` header.
+/// Generates the value for the HTTP `Authorization` header for API-key
+/// based authentication methods (currently Basic only).
 ///
 /// The returned string is wrapped in [`SecretString`] because it contains
 /// encoded credentials that should not be logged.
@@ -59,12 +69,11 @@ pub struct Credentials {
 /// # Arguments
 ///
 /// * `credentials` — The API key pair to authenticate with.
-/// * `method` — Which authentication method to use.
 ///
 /// # Examples
 ///
 /// ```
-/// use onshape_client_core::auth::{AuthMethod, Credentials, authorization_header_value};
+/// use onshape_client_core::auth::{Credentials, basic_authorization_header_value};
 /// use secrecy::{ExposeSecret, SecretString};
 ///
 /// let creds = Credentials {
@@ -72,22 +81,15 @@ pub struct Credentials {
 ///     secret_key: SecretString::from("my_secret_key"),
 /// };
 ///
-/// let header = authorization_header_value(&creds, AuthMethod::Basic);
+/// let header = basic_authorization_header_value(&creds);
 /// assert!(header.expose_secret().starts_with("Basic "));
 /// ```
 #[must_use]
-pub fn authorization_header_value(credentials: &Credentials, method: AuthMethod) -> SecretString {
-    match method {
-        AuthMethod::Basic => basic_authorization_header_value(credentials),
-        AuthMethod::OAuth => {
-            // OAuth uses bearer tokens, not API key credentials.
-            // Callers should use `bearer_authorization_header_value()` instead.
-            // This arm exists for exhaustiveness; passing API-key credentials
-            // when OAuth is configured is a caller error, but we produce a
-            // valid (though useless) Basic header rather than panicking.
-            basic_authorization_header_value(credentials)
-        }
-    }
+pub fn basic_authorization_header_value(credentials: &Credentials) -> SecretString {
+    let access = credentials.access_key.expose_secret();
+    let secret = credentials.secret_key.expose_secret();
+    let encoded = BASE64.encode(format!("{access}:{secret}"));
+    SecretString::from(format!("Basic {encoded}"))
 }
 
 /// Generates a Bearer token `Authorization` header value for OAuth 2.0.
@@ -101,18 +103,8 @@ pub fn authorization_header_value(credentials: &Credentials, method: AuthMethod)
 ///
 /// * `access_token` — The OAuth 2.0 access token.
 #[must_use]
-pub fn bearer_authorization_header_value(access_token: &SecretString) -> SecretString {
-    SecretString::from(format!("Bearer {}", access_token.expose_secret()))
-}
-
-/// Generates a Basic auth `Authorization` header value.
-///
-/// Format: `Basic <base64(access_key:secret_key)>`
-fn basic_authorization_header_value(credentials: &Credentials) -> SecretString {
-    let access = credentials.access_key.expose_secret();
-    let secret = credentials.secret_key.expose_secret();
-    let encoded = BASE64.encode(format!("{access}:{secret}"));
-    SecretString::from(format!("Basic {encoded}"))
+pub fn bearer_authorization_header_value(access_token: &AccessToken) -> SecretString {
+    SecretString::from(format!("Bearer {}", access_token.secret()))
 }
 
 // ============================================================================
@@ -134,14 +126,14 @@ mod tests {
     #[test]
     fn basic_auth_starts_with_basic_prefix() {
         let creds = test_credentials();
-        let header = authorization_header_value(&creds, AuthMethod::Basic);
+        let header = basic_authorization_header_value(&creds);
         assert!(header.expose_secret().starts_with("Basic "));
     }
 
     #[test]
     fn basic_auth_encodes_correctly() {
         let creds = test_credentials();
-        let header = authorization_header_value(&creds, AuthMethod::Basic);
+        let header = basic_authorization_header_value(&creds);
         let value = header.expose_secret();
 
         // Strip "Basic " prefix and decode
@@ -162,7 +154,7 @@ mod tests {
             access_key: SecretString::from("access"),
             secret_key: SecretString::from("secret"),
         };
-        let header = authorization_header_value(&creds, AuthMethod::Basic);
+        let header = basic_authorization_header_value(&creds);
         assert_eq!(header.expose_secret(), "Basic YWNjZXNzOnNlY3JldA==");
     }
 
@@ -172,7 +164,7 @@ mod tests {
             access_key: SecretString::from(""),
             secret_key: SecretString::from(""),
         };
-        let header = authorization_header_value(&creds, AuthMethod::Basic);
+        let header = basic_authorization_header_value(&creds);
         let value = header.expose_secret();
 
         let encoded = value
@@ -190,7 +182,7 @@ mod tests {
             access_key: SecretString::from("key+with/special=chars"),
             secret_key: SecretString::from("s3cr3t!@#$%^&*()"),
         };
-        let header = authorization_header_value(&creds, AuthMethod::Basic);
+        let header = basic_authorization_header_value(&creds);
         let value = header.expose_secret();
 
         let encoded = value
@@ -210,7 +202,7 @@ mod tests {
             access_key: SecretString::from("key:with:colons"),
             secret_key: SecretString::from("secret:too"),
         };
-        let header = authorization_header_value(&creds, AuthMethod::Basic);
+        let header = basic_authorization_header_value(&creds);
         let value = header.expose_secret();
 
         let encoded = value
@@ -247,22 +239,34 @@ mod tests {
     }
 
     #[test]
+    fn auth_method_auto_serializes_to_snake_case() {
+        let json = serde_json::to_string(&AuthMethod::Auto).expect("should serialize");
+        assert_eq!(json, "\"auto\"");
+    }
+
+    #[test]
+    fn auth_method_auto_deserializes_from_snake_case() {
+        let method: AuthMethod = serde_json::from_str("\"auto\"").expect("should deserialize");
+        assert_eq!(method, AuthMethod::Auto);
+    }
+
+    #[test]
     fn bearer_auth_starts_with_bearer_prefix() {
-        let token = SecretString::from("test-access-token");
+        let token = AccessToken::new("test-access-token".to_string());
         let header = bearer_authorization_header_value(&token);
         assert!(header.expose_secret().starts_with("Bearer "));
     }
 
     #[test]
     fn bearer_auth_contains_token() {
-        let token = SecretString::from("my-oauth-token-12345");
+        let token = AccessToken::new("my-oauth-token-12345".to_string());
         let header = bearer_authorization_header_value(&token);
         assert_eq!(header.expose_secret(), "Bearer my-oauth-token-12345");
     }
 
     #[test]
     fn bearer_auth_handles_empty_token() {
-        let token = SecretString::from("");
+        let token = AccessToken::new(String::new());
         let header = bearer_authorization_header_value(&token);
         assert_eq!(header.expose_secret(), "Bearer ");
     }

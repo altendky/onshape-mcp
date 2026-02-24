@@ -11,6 +11,7 @@ keywords = ["onshape", "cad", "api", "http"]
 categories = ["api-bindings"]
 
 [dependencies]
+oauth2.workspace = true
 onshape-client-core.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true

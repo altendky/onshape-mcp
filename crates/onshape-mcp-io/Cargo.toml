@@ -14,11 +14,15 @@ categories = ["development-tools"]
 chrono.workspace = true
 dirs.workspace = true
 figment.workspace = true
+notify.workspace = true
+oauth2 = { workspace = true, features = ["reqwest", "rustls-tls"] }
 onshape-client-core.workspace = true
 onshape-client-io.workspace = true
 onshape-mcp-core.workspace = true
+reqwest.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-io"] }
 secrecy.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

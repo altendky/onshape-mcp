@@ -2,28 +2,49 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { mkdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { homedir } from "os";
+import * as oauth from "oauth4webapi";
 
-// Onshape OAuth constants (must match crates/onshape-client-core/src/oauth.rs)
-const ONSHAPE_AUTH_URL = "https://oauth.onshape.com/oauth/authorize";
-const ONSHAPE_TOKEN_URL = "https://oauth.onshape.com/oauth/token";
+// Onshape OAuth server metadata (must match crates/onshape-client-core/src/oauth.rs)
+const as: oauth.AuthorizationServer = {
+  issuer: "https://oauth.onshape.com",
+  authorization_endpoint: "https://oauth.onshape.com/oauth/authorize",
+  token_endpoint: "https://oauth.onshape.com/oauth/token",
+  code_challenge_methods_supported: ["S256"],
+};
 const OAUTH_SCOPES = "OAuth2Read OAuth2Write";
 
 /**
- * Returns the default token file path for the current platform.
- * Mirrors `default_token_file_path()` in onshape-client-core.
+ * Returns the data directory for onshape-mcp on the current platform.
+ * Mirrors `default_token_file_path()` logic in onshape-client-core.
  */
-function tokenFilePath(): string {
+function dataDir(): string {
   const platform = process.platform;
   const home = homedir();
 
   if (platform === "darwin") {
-    return join(home, "Library", "Application Support", "onshape-mcp", "tokens.json");
+    return join(home, "Library", "Application Support", "onshape-mcp");
   } else if (platform === "win32") {
-    return join(process.env.LOCALAPPDATA || join(home, "AppData", "Local"), "onshape-mcp", "tokens.json");
+    return join(process.env.LOCALAPPDATA || join(home, "AppData", "Local"), "onshape-mcp");
   } else {
     // Linux and other Unix
-    return join(process.env.XDG_DATA_HOME || join(home, ".local", "share"), "onshape-mcp", "tokens.json");
+    return join(process.env.XDG_DATA_HOME || join(home, ".local", "share"), "onshape-mcp");
   }
+}
+
+/**
+ * Returns the default token file path for the current platform.
+ */
+function tokenFilePath(): string {
+  return join(dataDir(), "tokens.json");
+}
+
+/**
+ * Returns the default credentials file path for the current platform.
+ * Stores OAuth client credentials so the MCP server can refresh tokens
+ * without requiring separate configuration.
+ */
+function credentialsFilePath(): string {
+  return join(dataDir(), "credentials.json");
 }
 
 /**
@@ -34,16 +55,31 @@ function saveTokens(tokens: {
   refresh_token: string;
   expires_at: string | null;
   token_type: string;
+  scopes: string[] | null;
 }): void {
   const path = tokenFilePath();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, JSON.stringify(tokens, null, 2), { mode: 0o600 });
 }
 
+/**
+ * Save OAuth client credentials so the MCP server can use them
+ * for token refresh without requiring separate configuration.
+ */
+function saveCredentials(clientId: string, clientSecret: string): void {
+  const path = credentialsFilePath();
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(
+    path,
+    JSON.stringify({ client_id: clientId, client_secret: clientSecret }, null, 2),
+    { mode: 0o600 },
+  );
+}
+
 export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
   return {
     auth: {
-      provider: "onshape",
+      provider: "OnShape (onshape-mcp)",
       methods: [
         {
           type: "oauth" as const,
@@ -70,32 +106,39 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
               throw new Error("Client ID and Client Secret are required");
             }
 
+            const client: oauth.Client = { client_id: clientId };
+            const clientAuth = oauth.ClientSecretPost(clientSecret);
+
+            // Generate CSRF state and PKCE verifier/challenge via oauth4webapi
+            const state = oauth.generateRandomState();
+            const codeVerifier = oauth.generateRandomCodeVerifier();
+            const codeChallenge =
+              await oauth.calculatePKCECodeChallenge(codeVerifier);
+
             // Start a local HTTP server for the OAuth callback
             const server = Bun.serve({
-              port: 0, // Auto-assign a free port
+              port: 18338, // Fixed port to match Onshape OAuth app redirect URL registration
               async fetch(req) {
                 const url = new URL(req.url);
                 if (url.pathname === "/callback") {
-                  const code = url.searchParams.get("code");
                   const error = url.searchParams.get("error");
 
                   if (error) {
+                    // Quick check for user-facing HTML; authoritative
+                    // validation happens via oauth4webapi in the polling loop
+                    (server as any)._callbackUrl = url;
                     return new Response(
                       `<html><body><h1>Authorization Failed</h1><p>${error}</p><p>You can close this window.</p></body></html>`,
-                      { headers: { "Content-Type": "text/html" } }
+                      { headers: { "Content-Type": "text/html" } },
                     );
                   }
 
-                  if (code) {
-                    // Store the code for the callback to pick up
-                    (server as any)._authCode = code;
-                    return new Response(
-                      `<html><body><h1>Authorization Successful</h1><p>You can close this window and return to your terminal.</p></body></html>`,
-                      { headers: { "Content-Type": "text/html" } }
-                    );
-                  }
-
-                  return new Response("Missing code parameter", { status: 400 });
+                  // Store the full callback URL for the polling loop to validate
+                  (server as any)._callbackUrl = url;
+                  return new Response(
+                    `<html><body><h1>Authorization Successful</h1><p>You can close this window and return to your terminal.</p></body></html>`,
+                    { headers: { "Content-Type": "text/html" } },
+                  );
                 }
                 return new Response("Not found", { status: 404 });
               },
@@ -104,12 +147,15 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
             const port = server.port;
             const redirectUri = `http://localhost:${port}/callback`;
 
-            // Build the authorization URL
-            const authUrl = new URL(ONSHAPE_AUTH_URL);
+            // Build the authorization URL with CSRF state and PKCE challenge
+            const authUrl = new URL(as.authorization_endpoint!);
             authUrl.searchParams.set("client_id", clientId);
             authUrl.searchParams.set("response_type", "code");
             authUrl.searchParams.set("redirect_uri", redirectUri);
             authUrl.searchParams.set("scope", OAUTH_SCOPES);
+            authUrl.searchParams.set("state", state);
+            authUrl.searchParams.set("code_challenge", codeChallenge);
+            authUrl.searchParams.set("code_challenge_method", "S256");
 
             return {
               url: authUrl.toString(),
@@ -117,63 +163,77 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
               method: "auto" as const,
               async callback() {
                 try {
-                  // Poll for the authorization code
+                  // Poll for the callback URL from the local server
                   const deadline = Date.now() + 120_000; // 2 minute timeout
                   while (Date.now() < deadline) {
-                    const code = (server as any)._authCode;
-                    if (code) {
-                      // Exchange the code for tokens
-                      const tokenResponse = await fetch(ONSHAPE_TOKEN_URL, {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/x-www-form-urlencoded",
-                        },
-                        body: new URLSearchParams({
-                          grant_type: "authorization_code",
-                          code,
-                          redirect_uri: redirectUri,
-                          client_id: clientId,
-                          client_secret: clientSecret,
-                        }).toString(),
-                      });
+                    const callbackUrl: URL | undefined =
+                      (server as any)._callbackUrl;
+                    if (callbackUrl) {
+                      // Validate the authorization response (checks state,
+                      // detects OAuth errors) — throws on failure
+                      const params = oauth.validateAuthResponse(
+                        as,
+                        client,
+                        callbackUrl,
+                        state,
+                      );
 
-                      if (!tokenResponse.ok) {
-                        const errorText = await tokenResponse.text();
-                        console.error("Token exchange failed:", errorText);
-                        return { type: "failed" as const };
-                      }
+                      // Exchange the authorization code for tokens
+                      const response =
+                        await oauth.authorizationCodeGrantRequest(
+                          as,
+                          client,
+                          clientAuth,
+                          params,
+                          redirectUri,
+                          codeVerifier,
+                        );
 
-                      const tokenData = (await tokenResponse.json()) as {
-                        access_token: string;
-                        refresh_token: string;
-                        expires_in?: number;
-                        token_type: string;
-                      };
+                      const result =
+                        await oauth.processAuthorizationCodeResponse(
+                          as,
+                          client,
+                          response,
+                        );
 
                       // Calculate expiration time
-                      const expiresAt = tokenData.expires_in
-                        ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+                      const expiresAt = result.expires_in
+                        ? new Date(
+                            Date.now() + result.expires_in * 1000,
+                          ).toISOString()
                         : null;
 
-                      // Write tokens to the token file for the Rust MCP server
+                      // Parse scopes from space-separated string into array
+                      const scopes = result.scope
+                        ? result.scope.split(" ").filter(Boolean)
+                        : null;
+
+                      // Write credentials and tokens for the Rust MCP server.
+                      // Credentials file enables the server to refresh tokens
+                      // without requiring separate client_id/client_secret config.
+                      saveCredentials(clientId, clientSecret);
                       saveTokens({
-                        access_token: tokenData.access_token,
-                        refresh_token: tokenData.refresh_token,
+                        access_token: result.access_token,
+                        refresh_token: result.refresh_token ?? "",
                         expires_at: expiresAt,
-                        token_type: tokenData.token_type || "Bearer",
+                        token_type: result.token_type || "bearer",
+                        scopes,
                       });
 
                       return {
                         type: "success" as const,
-                        access: tokenData.access_token,
-                        refresh: tokenData.refresh_token,
-                        expires: tokenData.expires_in || 3600,
+                        access: result.access_token,
+                        refresh: result.refresh_token ?? "",
+                        expires: result.expires_in ?? 3600,
                       };
                     }
                     await Bun.sleep(500);
                   }
 
                   // Timeout
+                  return { type: "failed" as const };
+                } catch (err) {
+                  console.error("Authorization failed:", err);
                   return { type: "failed" as const };
                 } finally {
                   server.stop();

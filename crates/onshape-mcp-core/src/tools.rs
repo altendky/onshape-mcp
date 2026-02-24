@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::AuthStatusResult;
-use crate::config::{AuthConfig, CredentialStatus};
+use crate::config::ResolvedAuth;
 use crate::openapi::{ApiRequest, OpenApiSpec, SearchFilters};
 
 // ============================================================================
@@ -104,6 +104,9 @@ pub fn list_tools() -> Vec<Tool> {
 
 /// Dispatches a tool call by name.
 ///
+/// The `resolved_auth` parameter provides the current authentication state,
+/// as determined by the I/O layer from config + token file probe.
+///
 /// # Errors
 ///
 /// Returns an error (via `ToolResult::Immediate`) if the tool is not found
@@ -113,11 +116,11 @@ pub fn list_tools() -> Vec<Tool> {
 pub fn call_tool(
     name: &str,
     arguments: Option<&Map<String, Value>>,
-    auth_config: &AuthConfig,
+    resolved_auth: &ResolvedAuth,
     spec: Option<&OpenApiSpec>,
 ) -> ToolResult {
     match name {
-        "onshape_mcp_auth_status" => ToolResult::Immediate(call_auth_status(auth_config)),
+        "onshape_mcp_auth_status" => ToolResult::Immediate(call_auth_status(resolved_auth)),
         "onshape_api_search" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
@@ -280,21 +283,8 @@ fn tool_api_call_def() -> Tool {
 // Tool Implementations
 // ============================================================================
 
-fn call_auth_status(auth_config: &AuthConfig) -> Result<CallToolResult, ErrorData> {
-    let method = auth_config.method;
-    let result = match auth_config.credential_status() {
-        CredentialStatus::NonePresent => AuthStatusResult::not_configured(method),
-        CredentialStatus::BothPresent => AuthStatusResult::not_validated(method),
-        CredentialStatus::Partial { missing } | CredentialStatus::OAuthPartial { missing } => {
-            AuthStatusResult::partial_credentials(missing, method)
-        }
-        CredentialStatus::OAuthConfigured => {
-            // OAuth client credentials are configured, but we don't know about
-            // tokens here (that's the I/O layer's responsibility).
-            // Report that OAuth is configured but no token status is available.
-            AuthStatusResult::oauth_not_configured()
-        }
-    };
+fn call_auth_status(resolved_auth: &ResolvedAuth) -> Result<CallToolResult, ErrorData> {
+    let result = AuthStatusResult::from_resolved(resolved_auth, chrono::Utc::now());
     let content = Content::json(&result)?;
     Ok(CallToolResult {
         content: vec![content],
@@ -428,36 +418,31 @@ fn parse_arguments<T: serde::de::DeserializeOwned>(
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
-    use secrecy::SecretString;
-
     use super::*;
     use crate::openapi::HttpMethod;
 
-    fn no_creds() -> AuthConfig {
-        AuthConfig::default()
-    }
-
-    fn both_creds() -> AuthConfig {
-        AuthConfig {
-            access_key: Some(SecretString::from("ak")),
-            secret_key: Some(SecretString::from("sk")),
-            ..AuthConfig::default()
+    fn not_configured() -> ResolvedAuth {
+        ResolvedAuth::NotConfigured {
+            configured_method: onshape_client_core::auth::AuthMethod::Auto,
+            detail: "No credentials configured".into(),
         }
     }
 
-    fn partial_creds_missing_secret() -> AuthConfig {
-        AuthConfig {
-            access_key: Some(SecretString::from("ak")),
-            secret_key: None,
-            ..AuthConfig::default()
+    fn basic_ready() -> ResolvedAuth {
+        ResolvedAuth::Basic
+    }
+
+    fn not_configured_partial_secret() -> ResolvedAuth {
+        ResolvedAuth::NotConfigured {
+            configured_method: onshape_client_core::auth::AuthMethod::Basic,
+            detail: "Incomplete credentials: secret_key is not configured".into(),
         }
     }
 
-    fn partial_creds_missing_access() -> AuthConfig {
-        AuthConfig {
-            access_key: None,
-            secret_key: Some(SecretString::from("sk")),
-            ..AuthConfig::default()
+    fn not_configured_partial_access() -> ResolvedAuth {
+        ResolvedAuth::NotConfigured {
+            configured_method: onshape_client_core::auth::AuthMethod::Basic,
+            detail: "Incomplete credentials: access_key is not configured".into(),
         }
     }
 
@@ -593,8 +578,8 @@ mod tests {
 
     #[test]
     fn call_tool_auth_status_returns_not_configured() {
-        let config = no_creds();
-        let result = call_tool("onshape_mcp_auth_status", None, &config, None);
+        let auth = not_configured();
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
         assert_eq!(call_result.content.len(), 1);
@@ -607,8 +592,8 @@ mod tests {
 
     #[test]
     fn call_tool_auth_status_returns_not_validated_with_creds() {
-        let config = both_creds();
-        let result = call_tool("onshape_mcp_auth_status", None, &config, None);
+        let auth = basic_ready();
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -620,8 +605,8 @@ mod tests {
 
     #[test]
     fn call_tool_auth_status_returns_partial_with_missing_key() {
-        let config = partial_creds_missing_secret();
-        let result = call_tool("onshape_mcp_auth_status", None, &config, None);
+        let auth = not_configured_partial_secret();
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -638,8 +623,8 @@ mod tests {
 
     #[test]
     fn call_tool_auth_status_returns_partial_with_missing_access_key() {
-        let config = partial_creds_missing_access();
-        let result = call_tool("onshape_mcp_auth_status", None, &config, None);
+        let auth = not_configured_partial_access();
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -656,15 +641,15 @@ mod tests {
 
     #[test]
     fn call_tool_unknown_returns_not_found() {
-        let config = no_creds();
-        let err = assert_immediate_err(call_tool("unknown_tool", None, &config, None));
+        let auth = not_configured();
+        let err = assert_immediate_err(call_tool("unknown_tool", None, &auth, None));
         assert_eq!(err.code, ErrorCode::METHOD_NOT_FOUND);
         assert!(err.message.contains("unknown_tool"));
     }
 
     #[test]
     fn call_tool_auth_status_ignores_unexpected_arguments() {
-        let config = no_creds();
+        let auth = not_configured();
         let mut args = Map::new();
         args.insert("unexpected".to_string(), Value::String("value".to_string()));
         // Extra arguments are silently ignored, consistent with the API
@@ -672,7 +657,7 @@ mod tests {
         let call_result = assert_immediate_ok(call_tool(
             "onshape_mcp_auth_status",
             Some(&args),
-            &config,
+            &auth,
             None,
         ));
         assert_eq!(call_result.is_error, Some(false));
@@ -694,44 +679,13 @@ mod tests {
     // OAuth Tool Tests
     // ====================================================================
 
-    fn oauth_no_creds() -> AuthConfig {
-        AuthConfig {
-            method: onshape_client_core::auth::AuthMethod::OAuth,
-            ..AuthConfig::default()
-        }
-    }
-
-    fn oauth_configured() -> AuthConfig {
-        AuthConfig {
-            client_id: Some("my-client-id".into()),
-            client_secret: Some(SecretString::from("my-client-secret")),
-            method: onshape_client_core::auth::AuthMethod::OAuth,
-            ..AuthConfig::default()
-        }
-    }
-
-    fn oauth_partial_missing_secret() -> AuthConfig {
-        AuthConfig {
-            client_id: Some("my-client-id".into()),
-            client_secret: None,
-            method: onshape_client_core::auth::AuthMethod::OAuth,
-            ..AuthConfig::default()
-        }
-    }
-
-    fn oauth_partial_missing_id() -> AuthConfig {
-        AuthConfig {
-            client_id: None,
-            client_secret: Some(SecretString::from("my-client-secret")),
-            method: onshape_client_core::auth::AuthMethod::OAuth,
-            ..AuthConfig::default()
-        }
-    }
-
     #[test]
     fn call_tool_auth_status_oauth_not_configured_no_creds() {
-        let config = oauth_no_creds();
-        let result = call_tool("onshape_mcp_auth_status", None, &config, None);
+        let auth = ResolvedAuth::NotConfigured {
+            configured_method: onshape_client_core::auth::AuthMethod::OAuth,
+            detail: "No credentials configured".into(),
+        };
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -743,9 +697,9 @@ mod tests {
     }
 
     #[test]
-    fn call_tool_auth_status_oauth_configured() {
-        let config = oauth_configured();
-        let result = call_tool("onshape_mcp_auth_status", None, &config, None);
+    fn call_tool_auth_status_oauth_pending() {
+        let auth = ResolvedAuth::OAuthPending;
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -762,9 +716,26 @@ mod tests {
     }
 
     #[test]
+    fn call_tool_auth_status_oauth_ready() {
+        let auth = ResolvedAuth::OAuthReady { expires_at: None };
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let call_result = assert_immediate_ok(result);
+        assert_eq!(call_result.is_error, Some(false));
+
+        let content = &call_result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "not_validated");
+        assert_eq!(value["auth_method"], "oauth");
+    }
+
+    #[test]
     fn call_tool_auth_status_oauth_partial_missing_secret() {
-        let config = oauth_partial_missing_secret();
-        let result = call_tool("onshape_mcp_auth_status", None, &config, None);
+        let auth = ResolvedAuth::NotConfigured {
+            configured_method: onshape_client_core::auth::AuthMethod::OAuth,
+            detail: "Incomplete credentials: client_secret is not configured".into(),
+        };
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -781,8 +752,11 @@ mod tests {
 
     #[test]
     fn call_tool_auth_status_oauth_partial_missing_id() {
-        let config = oauth_partial_missing_id();
-        let result = call_tool("onshape_mcp_auth_status", None, &config, None);
+        let auth = ResolvedAuth::NotConfigured {
+            configured_method: onshape_client_core::auth::AuthMethod::OAuth,
+            detail: "Incomplete credentials: client_id is not configured".into(),
+        };
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -801,12 +775,12 @@ mod tests {
 
     #[test]
     fn api_search_returns_results() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert("query".to_string(), Value::String("document".to_string()));
 
-        let result = call_tool("onshape_api_search", Some(&args), &config, Some(&spec));
+        let result = call_tool("onshape_api_search", Some(&args), &auth, Some(&spec));
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -818,12 +792,12 @@ mod tests {
 
     #[test]
     fn api_search_empty_query_returns_all() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert("query".to_string(), Value::String(String::new()));
 
-        let result = call_tool("onshape_api_search", Some(&args), &config, Some(&spec));
+        let result = call_tool("onshape_api_search", Some(&args), &auth, Some(&spec));
         let call_result = assert_immediate_ok(result);
 
         let content = &call_result.content[0];
@@ -834,11 +808,11 @@ mod tests {
 
     #[test]
     fn api_search_without_spec_returns_error() {
-        let config = no_creds();
+        let auth = not_configured();
         let mut args = Map::new();
         args.insert("query".to_string(), Value::String("test".to_string()));
 
-        let err = assert_immediate_err(call_tool("onshape_api_search", Some(&args), &config, None));
+        let err = assert_immediate_err(call_tool("onshape_api_search", Some(&args), &auth, None));
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
     }
 
@@ -846,7 +820,7 @@ mod tests {
 
     #[test]
     fn api_explain_returns_detail() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert(
@@ -854,7 +828,7 @@ mod tests {
             Value::String("getDocuments".to_string()),
         );
 
-        let result = call_tool("onshape_api_explain", Some(&args), &config, Some(&spec));
+        let result = call_tool("onshape_api_explain", Some(&args), &auth, Some(&spec));
         let call_result = assert_immediate_ok(result);
 
         let content = &call_result.content[0];
@@ -866,7 +840,7 @@ mod tests {
 
     #[test]
     fn api_explain_nonexistent_returns_error() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert(
@@ -877,7 +851,7 @@ mod tests {
         let err = assert_immediate_err(call_tool(
             "onshape_api_explain",
             Some(&args),
-            &config,
+            &auth,
             Some(&spec),
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -887,7 +861,7 @@ mod tests {
 
     #[test]
     fn api_call_returns_request_effect() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert(
@@ -898,14 +872,14 @@ mod tests {
         path_params.insert("did".to_string(), Value::String("abc123".to_string()));
         args.insert("path_params".to_string(), Value::Object(path_params));
 
-        let result = call_tool("onshape_api_call", Some(&args), &config, Some(&spec));
+        let result = call_tool("onshape_api_call", Some(&args), &auth, Some(&spec));
         let request = assert_api_request(result);
         assert_eq!(request.path, "/documents/abc123");
     }
 
     #[test]
     fn api_call_missing_required_param_returns_error() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert(
@@ -917,7 +891,7 @@ mod tests {
         let err = assert_immediate_err(call_tool(
             "onshape_api_call",
             Some(&args),
-            &config,
+            &auth,
             Some(&spec),
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -925,20 +899,20 @@ mod tests {
 
     #[test]
     fn api_call_without_spec_returns_error() {
-        let config = no_creds();
+        let auth = not_configured();
         let mut args = Map::new();
         args.insert(
             "endpoint".to_string(),
             Value::String("getDocument".to_string()),
         );
 
-        let err = assert_immediate_err(call_tool("onshape_api_call", Some(&args), &config, None));
+        let err = assert_immediate_err(call_tool("onshape_api_call", Some(&args), &auth, None));
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
     }
 
     #[test]
     fn api_call_with_body_string_returns_request() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert(
@@ -950,7 +924,7 @@ mod tests {
             Value::String(r#"{"rawQuery": "cabinets", "limit": 5}"#.to_string()),
         );
 
-        let result = call_tool("onshape_api_call", Some(&args), &config, Some(&spec));
+        let result = call_tool("onshape_api_call", Some(&args), &auth, Some(&spec));
         let request = assert_api_request(result);
         assert_eq!(request.path, "/documents/search");
 
@@ -965,7 +939,7 @@ mod tests {
 
     #[test]
     fn api_call_with_invalid_body_json_returns_error() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert(
@@ -980,7 +954,7 @@ mod tests {
         let err = assert_immediate_err(call_tool(
             "onshape_api_call",
             Some(&args),
-            &config,
+            &auth,
             Some(&spec),
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -989,7 +963,7 @@ mod tests {
 
     #[test]
     fn api_call_with_null_body_json_returns_error() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert(
@@ -1001,7 +975,7 @@ mod tests {
         let err = assert_immediate_err(call_tool(
             "onshape_api_call",
             Some(&args),
-            &config,
+            &auth,
             Some(&spec),
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -1010,7 +984,7 @@ mod tests {
 
     #[test]
     fn api_call_with_body_for_get_endpoint_passes_through() {
-        let config = no_creds();
+        let auth = not_configured();
         let spec = test_spec();
         let mut args = Map::new();
         args.insert(
@@ -1022,7 +996,7 @@ mod tests {
             Value::String(r#"{"unexpected": "data"}"#.to_string()),
         );
 
-        let result = call_tool("onshape_api_call", Some(&args), &config, Some(&spec));
+        let result = call_tool("onshape_api_call", Some(&args), &auth, Some(&spec));
         let request = assert_api_request(result);
         assert_eq!(request.method, HttpMethod::Get);
         assert_eq!(request.path, "/documents");
