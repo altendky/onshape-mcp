@@ -22,6 +22,8 @@ use secrecy::ExposeSecret;
 use onshape_client_core::oauth::{OAuthSession, onshape_oauth_client};
 use onshape_client_io::{ClientAuthConfig, ClientConfig, OnshapeClient};
 
+use onshape_mcp_core::ValidationState;
+
 use crate::{ApiState, OAuthApiState, OAuthPendingState, REFRESH_MARGIN_SECS};
 
 /// Debounce interval for file change events.
@@ -67,9 +69,10 @@ pub(crate) struct WatcherContext {
 pub(crate) fn spawn_token_watcher(
     ctx: WatcherContext,
     api_state: Arc<tokio::sync::Mutex<ApiState>>,
+    validation: Arc<tokio::sync::Mutex<ValidationState>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        if run_watcher(ctx, api_state).await.is_err() {
+        if run_watcher(ctx, api_state, validation).await.is_err() {
             // TODO: replace eprintln! with tracing::warn! once tracing is available
             // See: https://github.com/altendky/onshape-mcp/issues/73
             eprintln!(
@@ -85,6 +88,7 @@ pub(crate) fn spawn_token_watcher(
 async fn run_watcher(
     ctx: WatcherContext,
     api_state: Arc<tokio::sync::Mutex<ApiState>>,
+    validation: Arc<tokio::sync::Mutex<ValidationState>>,
 ) -> Result<(), ()> {
     let watch_dir = ctx.token_path.parent().map(std::path::Path::to_path_buf);
     let Some(watch_dir) = watch_dir else {
@@ -118,7 +122,7 @@ async fn run_watcher(
         while rx.try_recv().is_ok() {}
 
         // Process the change.
-        handle_token_change(&ctx, &api_state).await;
+        handle_token_change(&ctx, &api_state, &validation).await;
     }
 }
 
@@ -186,7 +190,13 @@ fn create_watcher(
 /// Handle a token file change event.
 ///
 /// Reads the token file and updates the API state as appropriate.
-async fn handle_token_change(ctx: &WatcherContext, api_state: &Arc<tokio::sync::Mutex<ApiState>>) {
+/// Resets validation state to `NotValidated` on any state transition,
+/// since the new credentials need to be re-validated.
+async fn handle_token_change(
+    ctx: &WatcherContext,
+    api_state: &Arc<tokio::sync::Mutex<ApiState>>,
+    validation: &Arc<tokio::sync::Mutex<ValidationState>>,
+) {
     // Try to load the token file. If it fails (e.g., partial write, deleted),
     // just ignore and wait for the next event.
     let Ok(token_data) = crate::oauth::load_token_file(&ctx.token_path) else {
@@ -208,6 +218,8 @@ async fn handle_token_change(ctx: &WatcherContext, api_state: &Arc<tokio::sync::
 
     if let Some(oauth) = transition {
         *state = ApiState::OAuth(Box::new(oauth));
+        // Reset validation — new credentials need re-validation.
+        *validation.lock().await = ValidationState::default();
         return;
     }
 
@@ -220,6 +232,8 @@ async fn handle_token_change(ctx: &WatcherContext, api_state: &Arc<tokio::sync::
 
     if let Some(oauth) = transition {
         *state = ApiState::OAuth(Box::new(oauth));
+        // Reset validation — new credentials need re-validation.
+        *validation.lock().await = ValidationState::default();
         return;
     }
 
@@ -231,6 +245,8 @@ async fn handle_token_change(ctx: &WatcherContext, api_state: &Arc<tokio::sync::
     {
         // Tokens were updated — rebuild the HTTP client.
         let _ = oauth.rebuild_client();
+        // Reset validation — external token refresh means credentials changed.
+        *validation.lock().await = ValidationState::default();
     }
 }
 
@@ -242,16 +258,16 @@ fn build_oauth_from_token_file(
     ctx: &WatcherContext,
     token_data: onshape_client_core::oauth::OAuthTokenData,
 ) -> Result<OAuthApiState, Box<dyn std::error::Error + Send + Sync>> {
-    let client_id = token_data
+    let client_id_str = token_data
         .client_id
-        .as_deref()
+        .clone()
         .ok_or("token file missing client_id")?;
-    let client_secret = token_data
+    let client_secret_str = token_data
         .client_secret
-        .as_deref()
+        .clone()
         .ok_or("token file missing client_secret")?;
 
-    let oauth_client = onshape_oauth_client(client_id, client_secret);
+    let oauth_client = onshape_oauth_client(&client_id_str, &client_secret_str);
     let session = OAuthSession::new(token_data, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
 
     let client = OnshapeClient::new(ClientConfig {
@@ -270,6 +286,8 @@ fn build_oauth_from_token_file(
     Ok(OAuthApiState {
         session,
         oauth_client,
+        client_id: client_id_str,
+        client_secret: secrecy::SecretString::from(client_secret_str),
         client,
         refresh_http,
         token_path: ctx.token_path.clone(),
@@ -303,6 +321,8 @@ fn build_oauth_from_pending(
     Ok(OAuthApiState {
         session,
         oauth_client,
+        client_id: pending.client_id.clone(),
+        client_secret: secrecy::SecretString::from(pending.client_secret.clone()),
         client,
         refresh_http,
         token_path: pending.token_path.clone(),

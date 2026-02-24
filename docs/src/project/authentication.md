@@ -158,12 +158,21 @@ If permissions are too open, the server **blocks access** and informs the user o
 
 | Event | Behavior |
 | ------- | ---------- |
-| Startup | Validate credentials, fail if invalid |
-| Periodic | Re-validate at configured interval (see `auth.check_interval` in [Configuration](configuration.md#all-settings-reference)) |
-| API call | Updates auth status, resets periodic check timer |
-| Invalid credentials | Fail API calls with clear error, emit MCP notification |
+| Startup | Deferred — status starts as `NotValidated` |
+| API call | Updates validation state (`2xx` → `Valid`, `401` → `Invalid`) |
+| Explicit | Use `onshape_mcp_auth_status` with `validate: true` to check credentials on demand |
+| Periodic | Deferred — `check_interval` config is parsed but not yet used |
+| Invalid credentials | API calls return errors; validation state updated to `Invalid` |
 
-**No caching:** If credentials become invalid mid-session, all subsequent API calls fail until credentials are fixed.
+Validation state is runtime-only and resets to `NotValidated` whenever credentials change (e.g. token file update, OAuth flow completion, external token refresh).
+
+### OAuth Permanent Refresh Failure
+
+When the OAuth refresh token is revoked or expired (the token endpoint returns `unauthorized_client` or `invalid_grant`), the server:
+
+1. Transitions from `OAuth` state to `OAuthPending` — signaling that the user must re-authenticate.
+2. Sets validation state to `Invalid` with an actionable error message directing the user to complete the OAuth flow (e.g. `opencode auth login`).
+3. Continues watching for a new token file. Once the user completes re-authorization and tokens are written, the server automatically transitions back to `OAuth` state.
 
 ## MCP Notifications
 

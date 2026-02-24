@@ -20,19 +20,31 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::AuthStatusResult;
 use crate::config::ResolvedAuth;
 use crate::openapi::{ApiRequest, OpenApiSpec, SearchFilters};
+use crate::{AuthStatusResult, ValidationState};
 
 // ============================================================================
 // Effect Type
 // ============================================================================
+
+/// Side effects that a tool callback can request the I/O layer to apply.
+///
+/// Returned alongside a [`ToolResult`] from callbacks in
+/// [`ToolResult::OnshapeApiRequestThen`]. The I/O layer is responsible
+/// for applying these effects after processing the callback's result.
+pub enum SideEffect {
+    /// Update the runtime credential validation state.
+    UpdateValidation(ValidationState),
+}
 
 /// Result of dispatching a tool call.
 ///
 /// Tools that need no I/O return `Immediate`. Tools that need an HTTP request
 /// to the Onshape API return `OnshapeApiRequest`, which the I/O layer must
 /// execute and then pass back through [`process_api_response`].
+/// `OnshapeApiRequestThen` extends this with a callback that processes the
+/// response and can return further results plus side effects.
 pub enum ToolResult {
     /// Tool completed immediately with no I/O needed.
     Immediate(Result<CallToolResult, ErrorData>),
@@ -40,6 +52,16 @@ pub enum ToolResult {
     OnshapeApiRequest {
         /// The HTTP request to execute.
         request: ApiRequest,
+    },
+    /// Tool needs an HTTP request; the response is processed by a callback
+    /// which can return further results and request side effects.
+    OnshapeApiRequestThen {
+        /// The HTTP request to execute.
+        request: ApiRequest,
+        /// Callback receives (`http_status`, `response_body`) and returns
+        /// the next [`ToolResult`] plus any side effects for the I/O layer.
+        #[allow(clippy::type_complexity)]
+        then: Box<dyn FnOnce(u16, &str) -> (Self, Vec<SideEffect>) + Send>,
     },
 }
 
@@ -105,7 +127,8 @@ pub fn list_tools() -> Vec<Tool> {
 /// Dispatches a tool call by name.
 ///
 /// The `resolved_auth` parameter provides the current authentication state,
-/// as determined by the I/O layer from config + token file probe.
+/// as determined by the I/O layer from config + token file probe. The
+/// `validation` parameter provides runtime credential validation state.
 ///
 /// # Errors
 ///
@@ -117,10 +140,11 @@ pub fn call_tool(
     name: &str,
     arguments: Option<&Map<String, Value>>,
     resolved_auth: &ResolvedAuth,
+    validation: &ValidationState,
     spec: Option<&OpenApiSpec>,
 ) -> ToolResult {
     match name {
-        "onshape_mcp_auth_status" => ToolResult::Immediate(call_auth_status(resolved_auth)),
+        "onshape_mcp_auth_status" => call_auth_status(arguments, resolved_auth, validation, spec),
         "onshape_api_search" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
@@ -157,6 +181,16 @@ pub fn call_tool(
 /// Empty input schema for tools with no parameters.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EmptyInput {}
+
+/// Input schema for `onshape_mcp_auth_status`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AuthStatusInput {
+    /// When true, actively validates credentials against the Onshape API
+    /// by calling GET /users/sessioninfo. When false or omitted, returns
+    /// the cached validation state without making any API calls.
+    #[serde(default)]
+    pub validate: Option<bool>,
+}
 
 /// Input schema for `onshape_api_search`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -202,9 +236,9 @@ pub struct ApiCallInput {
 
 #[allow(clippy::expect_used)] // Schema generation should never fail
 fn tool_auth_status_def() -> Tool {
-    let schema = schemars::schema_for!(EmptyInput);
-    let input_schema: Value =
-        serde_json::to_value(schema).expect("EmptyInput schema serialization should never fail");
+    let schema = schemars::schema_for!(AuthStatusInput);
+    let input_schema: Value = serde_json::to_value(schema)
+        .expect("AuthStatusInput schema serialization should never fail");
     let input_schema = input_schema
         .as_object()
         .cloned()
@@ -216,7 +250,7 @@ fn tool_auth_status_def() -> Tool {
          last check time, and a human-readable message",
         Arc::new(input_schema),
     )
-    .annotate(ToolAnnotations::new().read_only(true).destructive(false))
+    .annotate(ToolAnnotations::new().read_only(false).destructive(false))
 }
 
 #[allow(clippy::expect_used)]
@@ -283,15 +317,118 @@ fn tool_api_call_def() -> Tool {
 // Tool Implementations
 // ============================================================================
 
-fn call_auth_status(resolved_auth: &ResolvedAuth) -> Result<CallToolResult, ErrorData> {
-    let result = AuthStatusResult::from_resolved(resolved_auth, chrono::Utc::now());
-    let content = Content::json(&result)?;
-    Ok(CallToolResult {
-        content: vec![content],
-        is_error: Some(false),
-        structured_content: None,
-        meta: None,
-    })
+fn call_auth_status(
+    arguments: Option<&Map<String, Value>>,
+    resolved_auth: &ResolvedAuth,
+    validation: &ValidationState,
+    spec: Option<&OpenApiSpec>,
+) -> ToolResult {
+    let input: AuthStatusInput = match parse_arguments(arguments) {
+        Ok(input) => input,
+        Err(e) => return ToolResult::Immediate(Err(e)),
+    };
+
+    if input.validate != Some(true) {
+        // Return cached validation state — no API call needed.
+        let now = chrono::Utc::now();
+        let result = AuthStatusResult::new(resolved_auth, Some(validation), now);
+        let content = match Content::json(&result) {
+            Ok(c) => c,
+            Err(e) => return ToolResult::Immediate(Err(e)),
+        };
+        return ToolResult::Immediate(Ok(CallToolResult {
+            content: vec![content],
+            is_error: Some(false),
+            structured_content: None,
+            meta: None,
+        }));
+    }
+
+    // validate=true: actively check credentials via GET /users/sessioninfo.
+    let spec = match require_spec(spec) {
+        Ok(s) => s,
+        Err(e) => return ToolResult::Immediate(Err(e)),
+    };
+
+    let empty_map = HashMap::new();
+    let request = match spec.build_request("sessionInfo", &empty_map, &empty_map, None) {
+        Ok(req) => req,
+        Err(e) => {
+            return ToolResult::Immediate(Err(ErrorData::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("failed to build sessionInfo request: {e}"),
+                None,
+            )));
+        }
+    };
+
+    // Capture what we need for the callback closure.
+    let resolved_auth = resolved_auth.clone();
+
+    ToolResult::OnshapeApiRequestThen {
+        request,
+        then: Box::new(move |status, _body| {
+            let now = chrono::Utc::now();
+
+            if (200..300).contains(&status) {
+                let valid_state = ValidationState {
+                    status: crate::ValidationStatus::Valid,
+                    last_check: Some(now),
+                    message: Some("Credentials validated successfully".into()),
+                };
+                let result = AuthStatusResult::new(&resolved_auth, Some(&valid_state), now);
+                let tool_result = match Content::json(&result) {
+                    Ok(c) => ToolResult::Immediate(Ok(CallToolResult {
+                        content: vec![c],
+                        is_error: Some(false),
+                        structured_content: None,
+                        meta: None,
+                    })),
+                    Err(e) => ToolResult::Immediate(Err(e)),
+                };
+                (tool_result, vec![SideEffect::UpdateValidation(valid_state)])
+            } else if status == 401 {
+                let invalid_state = ValidationState {
+                    status: crate::ValidationStatus::Invalid,
+                    last_check: Some(now),
+                    message: Some("API returned 401 Unauthorized — credentials are invalid".into()),
+                };
+                let result = AuthStatusResult::new(&resolved_auth, Some(&invalid_state), now);
+                let tool_result = match Content::json(&result) {
+                    Ok(c) => ToolResult::Immediate(Ok(CallToolResult {
+                        content: vec![c],
+                        is_error: Some(false),
+                        structured_content: None,
+                        meta: None,
+                    })),
+                    Err(e) => ToolResult::Immediate(Err(e)),
+                };
+                (
+                    tool_result,
+                    vec![SideEffect::UpdateValidation(invalid_state)],
+                )
+            } else {
+                // Unexpected status — don't update validation state.
+                let result = AuthStatusResult::new(&resolved_auth, None, now);
+                let mut auth_result = match Content::json(&result) {
+                    Ok(c) => CallToolResult {
+                        content: vec![c],
+                        is_error: Some(false),
+                        structured_content: None,
+                        meta: None,
+                    },
+                    Err(e) => {
+                        return (ToolResult::Immediate(Err(e)), vec![]);
+                    }
+                };
+                // Add a note about the unexpected status.
+                auth_result.content.push(Content::text(format!(
+                    "Warning: credential validation returned unexpected HTTP {status}"
+                )));
+                (ToolResult::Immediate(Ok(auth_result)), vec![])
+            }
+        }),
+    }
 }
 
 fn call_api_search(
@@ -419,7 +556,11 @@ fn parse_arguments<T: serde::de::DeserializeOwned>(
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::openapi::HttpMethod;
+    use crate::{ValidationState, openapi::HttpMethod};
+
+    fn default_validation() -> ValidationState {
+        ValidationState::default()
+    }
 
     fn not_configured() -> ResolvedAuth {
         ResolvedAuth::NotConfigured {
@@ -521,6 +662,9 @@ mod tests {
             ToolResult::Immediate(Ok(r)) => r,
             ToolResult::Immediate(Err(e)) => panic!("expected Ok, got Err: {e:?}"),
             ToolResult::OnshapeApiRequest { .. } => panic!("expected Immediate, got ApiRequest"),
+            ToolResult::OnshapeApiRequestThen { .. } => {
+                panic!("expected Immediate, got ApiRequestThen")
+            }
         }
     }
 
@@ -529,6 +673,9 @@ mod tests {
             ToolResult::Immediate(Err(e)) => e,
             ToolResult::Immediate(Ok(_)) => panic!("expected Err, got Ok"),
             ToolResult::OnshapeApiRequest { .. } => panic!("expected Immediate, got ApiRequest"),
+            ToolResult::OnshapeApiRequestThen { .. } => {
+                panic!("expected Immediate, got ApiRequestThen")
+            }
         }
     }
 
@@ -538,6 +685,9 @@ mod tests {
             ToolResult::Immediate(Ok(_)) => panic!("expected ApiRequest, got Immediate Ok"),
             ToolResult::Immediate(Err(e)) => {
                 panic!("expected ApiRequest, got Immediate Err: {e:?}")
+            }
+            ToolResult::OnshapeApiRequestThen { .. } => {
+                panic!("expected ApiRequest, got ApiRequestThen")
             }
         }
     }
@@ -579,7 +729,13 @@ mod tests {
     #[test]
     fn call_tool_auth_status_returns_not_configured() {
         let auth = not_configured();
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
         assert_eq!(call_result.content.len(), 1);
@@ -593,7 +749,13 @@ mod tests {
     #[test]
     fn call_tool_auth_status_returns_not_validated_with_creds() {
         let auth = basic_ready();
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -606,7 +768,13 @@ mod tests {
     #[test]
     fn call_tool_auth_status_returns_partial_with_missing_key() {
         let auth = not_configured_partial_secret();
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -624,7 +792,13 @@ mod tests {
     #[test]
     fn call_tool_auth_status_returns_partial_with_missing_access_key() {
         let auth = not_configured_partial_access();
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -642,7 +816,13 @@ mod tests {
     #[test]
     fn call_tool_unknown_returns_not_found() {
         let auth = not_configured();
-        let err = assert_immediate_err(call_tool("unknown_tool", None, &auth, None));
+        let err = assert_immediate_err(call_tool(
+            "unknown_tool",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        ));
         assert_eq!(err.code, ErrorCode::METHOD_NOT_FOUND);
         assert!(err.message.contains("unknown_tool"));
     }
@@ -658,6 +838,7 @@ mod tests {
             "onshape_mcp_auth_status",
             Some(&args),
             &auth,
+            &default_validation(),
             None,
         ));
         assert_eq!(call_result.is_error, Some(false));
@@ -685,7 +866,13 @@ mod tests {
             configured_method: onshape_client_core::auth::AuthMethod::OAuth,
             detail: "No credentials configured".into(),
         };
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -699,7 +886,13 @@ mod tests {
     #[test]
     fn call_tool_auth_status_oauth_pending() {
         let auth = ResolvedAuth::OAuthPending;
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -718,7 +911,13 @@ mod tests {
     #[test]
     fn call_tool_auth_status_oauth_ready() {
         let auth = ResolvedAuth::OAuthReady { expires_at: None };
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -735,7 +934,13 @@ mod tests {
             configured_method: onshape_client_core::auth::AuthMethod::OAuth,
             detail: "Incomplete credentials: client_secret is not configured".into(),
         };
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -756,7 +961,13 @@ mod tests {
             configured_method: onshape_client_core::auth::AuthMethod::OAuth,
             detail: "Incomplete credentials: client_id is not configured".into(),
         };
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, None);
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -780,7 +991,13 @@ mod tests {
         let mut args = Map::new();
         args.insert("query".to_string(), Value::String("document".to_string()));
 
-        let result = call_tool("onshape_api_search", Some(&args), &auth, Some(&spec));
+        let result = call_tool(
+            "onshape_api_search",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
         let call_result = assert_immediate_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
@@ -797,7 +1014,13 @@ mod tests {
         let mut args = Map::new();
         args.insert("query".to_string(), Value::String(String::new()));
 
-        let result = call_tool("onshape_api_search", Some(&args), &auth, Some(&spec));
+        let result = call_tool(
+            "onshape_api_search",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
         let call_result = assert_immediate_ok(result);
 
         let content = &call_result.content[0];
@@ -812,7 +1035,13 @@ mod tests {
         let mut args = Map::new();
         args.insert("query".to_string(), Value::String("test".to_string()));
 
-        let err = assert_immediate_err(call_tool("onshape_api_search", Some(&args), &auth, None));
+        let err = assert_immediate_err(call_tool(
+            "onshape_api_search",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
     }
 
@@ -828,7 +1057,13 @@ mod tests {
             Value::String("getDocuments".to_string()),
         );
 
-        let result = call_tool("onshape_api_explain", Some(&args), &auth, Some(&spec));
+        let result = call_tool(
+            "onshape_api_explain",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
         let call_result = assert_immediate_ok(result);
 
         let content = &call_result.content[0];
@@ -852,6 +1087,7 @@ mod tests {
             "onshape_api_explain",
             Some(&args),
             &auth,
+            &default_validation(),
             Some(&spec),
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -872,7 +1108,13 @@ mod tests {
         path_params.insert("did".to_string(), Value::String("abc123".to_string()));
         args.insert("path_params".to_string(), Value::Object(path_params));
 
-        let result = call_tool("onshape_api_call", Some(&args), &auth, Some(&spec));
+        let result = call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
         let request = assert_api_request(result);
         assert_eq!(request.path, "/documents/abc123");
     }
@@ -892,6 +1134,7 @@ mod tests {
             "onshape_api_call",
             Some(&args),
             &auth,
+            &default_validation(),
             Some(&spec),
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -906,7 +1149,13 @@ mod tests {
             Value::String("getDocument".to_string()),
         );
 
-        let err = assert_immediate_err(call_tool("onshape_api_call", Some(&args), &auth, None));
+        let err = assert_immediate_err(call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
     }
 
@@ -924,7 +1173,13 @@ mod tests {
             Value::String(r#"{"rawQuery": "cabinets", "limit": 5}"#.to_string()),
         );
 
-        let result = call_tool("onshape_api_call", Some(&args), &auth, Some(&spec));
+        let result = call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
         let request = assert_api_request(result);
         assert_eq!(request.path, "/documents/search");
 
@@ -955,6 +1210,7 @@ mod tests {
             "onshape_api_call",
             Some(&args),
             &auth,
+            &default_validation(),
             Some(&spec),
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -976,6 +1232,7 @@ mod tests {
             "onshape_api_call",
             Some(&args),
             &auth,
+            &default_validation(),
             Some(&spec),
         ));
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
@@ -996,7 +1253,13 @@ mod tests {
             Value::String(r#"{"unexpected": "data"}"#.to_string()),
         );
 
-        let result = call_tool("onshape_api_call", Some(&args), &auth, Some(&spec));
+        let result = call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
         let request = assert_api_request(result);
         assert_eq!(request.method, HttpMethod::Get);
         assert_eq!(request.path, "/documents");
@@ -1029,5 +1292,227 @@ mod tests {
     fn process_api_response_error() {
         let result = process_api_response(404, "Not found").expect("should succeed");
         assert_eq!(result.is_error, Some(true));
+    }
+
+    // ====================================================================
+    // Auth Status Validate Tests (Feature 3)
+    // ====================================================================
+
+    fn test_spec_with_session_info() -> OpenApiSpec {
+        OpenApiSpec::from_json(
+            r#"{
+                "openapi": "3.0.1",
+                "info": { "title": "Test API", "version": "1.0" },
+                "servers": [{ "url": "https://cad.onshape.com/api/v1" }],
+                "paths": {
+                    "/users/sessioninfo": {
+                        "get": {
+                            "operationId": "sessionInfo",
+                            "summary": "Get current user session info",
+                            "tags": ["User"],
+                            "parameters": [],
+                            "responses": { "200": {} }
+                        }
+                    }
+                },
+                "components": { "schemas": {} }
+            }"#,
+        )
+        .expect("test spec should parse")
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn assert_api_request_then(
+        result: ToolResult,
+    ) -> (
+        ApiRequest,
+        Box<dyn FnOnce(u16, &str) -> (ToolResult, Vec<SideEffect>) + Send>,
+    ) {
+        match result {
+            ToolResult::OnshapeApiRequestThen { request, then } => (request, then),
+            ToolResult::Immediate(Ok(_)) => {
+                panic!("expected ApiRequestThen, got Immediate Ok")
+            }
+            ToolResult::Immediate(Err(e)) => {
+                panic!("expected ApiRequestThen, got Immediate Err: {e:?}")
+            }
+            ToolResult::OnshapeApiRequest { .. } => {
+                panic!("expected ApiRequestThen, got ApiRequest")
+            }
+        }
+    }
+
+    #[test]
+    fn auth_status_validate_false_returns_immediate() {
+        let auth = basic_ready();
+        let mut args = Map::new();
+        args.insert("validate".to_string(), Value::Bool(false));
+
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        );
+        let call_result = assert_immediate_ok(result);
+        assert_eq!(call_result.is_error, Some(false));
+    }
+
+    #[test]
+    fn auth_status_validate_absent_returns_immediate() {
+        let auth = basic_ready();
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
+        let call_result = assert_immediate_ok(result);
+        assert_eq!(call_result.is_error, Some(false));
+    }
+
+    #[test]
+    fn auth_status_validate_true_without_spec_returns_error() {
+        let auth = basic_ready();
+        let mut args = Map::new();
+        args.insert("validate".to_string(), Value::Bool(true));
+
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        );
+        let err = assert_immediate_err(result);
+        assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+    }
+
+    #[test]
+    fn auth_status_validate_true_returns_api_request_then() {
+        let auth = basic_ready();
+        let spec = test_spec_with_session_info();
+        let mut args = Map::new();
+        args.insert("validate".to_string(), Value::Bool(true));
+
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (request, _then) = assert_api_request_then(result);
+        assert_eq!(request.path, "/users/sessioninfo");
+    }
+
+    #[test]
+    fn auth_status_callback_200_returns_valid_with_side_effect() {
+        let auth = basic_ready();
+        let spec = test_spec_with_session_info();
+        let mut args = Map::new();
+        args.insert("validate".to_string(), Value::Bool(true));
+
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (_request, then) = assert_api_request_then(result);
+
+        let (tool_result, side_effects) = then(200, r#"{"id": "user123"}"#);
+
+        // Should return an Immediate result with status: valid.
+        let call_result = assert_immediate_ok(tool_result);
+        assert_eq!(call_result.is_error, Some(false));
+        let content = &call_result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "valid");
+
+        // Should have a side effect to update validation.
+        assert_eq!(side_effects.len(), 1);
+        match &side_effects[0] {
+            SideEffect::UpdateValidation(state) => {
+                assert_eq!(state.status, crate::ValidationStatus::Valid);
+                assert!(state.last_check.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn auth_status_callback_401_returns_invalid_with_side_effect() {
+        let auth = basic_ready();
+        let spec = test_spec_with_session_info();
+        let mut args = Map::new();
+        args.insert("validate".to_string(), Value::Bool(true));
+
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (_request, then) = assert_api_request_then(result);
+
+        let (tool_result, side_effects) = then(401, "Unauthorized");
+
+        let call_result = assert_immediate_ok(tool_result);
+        assert_eq!(call_result.is_error, Some(false));
+        let content = &call_result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "invalid");
+
+        assert_eq!(side_effects.len(), 1);
+        match &side_effects[0] {
+            SideEffect::UpdateValidation(state) => {
+                assert_eq!(state.status, crate::ValidationStatus::Invalid);
+            }
+        }
+    }
+
+    #[test]
+    fn auth_status_callback_500_returns_no_side_effects() {
+        let auth = basic_ready();
+        let spec = test_spec_with_session_info();
+        let mut args = Map::new();
+        args.insert("validate".to_string(), Value::Bool(true));
+
+        let result = call_tool(
+            "onshape_mcp_auth_status",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (_request, then) = assert_api_request_then(result);
+
+        let (tool_result, side_effects) = then(500, "Internal Server Error");
+
+        // Should still return an Immediate result, but no side effects.
+        let _call_result = assert_immediate_ok(tool_result);
+        assert!(side_effects.is_empty());
+    }
+
+    #[test]
+    fn auth_status_validate_false_includes_cached_validation() {
+        let auth = basic_ready();
+        let validation = ValidationState {
+            status: crate::ValidationStatus::Valid,
+            last_check: Some(chrono::Utc::now()),
+            message: Some("previously validated".into()),
+        };
+        let result = call_tool("onshape_mcp_auth_status", None, &auth, &validation, None);
+        let call_result = assert_immediate_ok(result);
+        let content = &call_result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], "valid");
     }
 }

@@ -16,8 +16,7 @@ use oauth2::AccessToken;
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResult, Content, ListToolsResult, PaginatedRequestParams,
-        ServerInfo,
+        CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, ServerInfo,
     },
     service::{RequestContext, RoleServer},
     transport::stdio,
@@ -30,9 +29,10 @@ use onshape_client_core::oauth::{
     onshape_oauth_client,
 };
 use onshape_client_io::{ClientAuthConfig, ClientConfig, OnshapeClient};
+use onshape_mcp_core::ValidationState;
 use onshape_mcp_core::config::{AppConfig, AuthInventory, ResolvedAuth, TokenStatus, resolve_auth};
 use onshape_mcp_core::openapi::OpenApiSpec;
-use onshape_mcp_core::tools::{self, ToolResult};
+use onshape_mcp_core::tools::{self, SideEffect, ToolResult};
 
 /// The embedded Onshape `OpenAPI` specification JSON.
 ///
@@ -118,6 +118,10 @@ pub(crate) struct OAuthApiState {
     pub(crate) session: OAuthSession,
     /// Core: pure OAuth client config (endpoints, client credentials).
     pub(crate) oauth_client: OnshapeOAuthClient,
+    /// OAuth client ID (stored separately for state transition support).
+    pub(crate) client_id: String,
+    /// OAuth client secret (stored separately for state transition support).
+    pub(crate) client_secret: SecretString,
     /// I/O: HTTP client for Onshape API calls (carries the bearer token).
     pub(crate) client: OnshapeClient,
     /// I/O: HTTP client for token endpoint requests (no auth headers).
@@ -168,6 +172,7 @@ pub struct OnshapeMcpServer {
     config: Arc<AppConfig>,
     spec: Arc<OpenApiSpec>,
     api_state: Arc<tokio::sync::Mutex<ApiState>>,
+    validation: Arc<tokio::sync::Mutex<ValidationState>>,
 }
 
 impl OnshapeMcpServer {
@@ -195,6 +200,7 @@ impl OnshapeMcpServer {
             config: Arc::new(config),
             spec: Arc::new(spec),
             api_state: Arc::new(tokio::sync::Mutex::new(api_state)),
+            validation: Arc::new(tokio::sync::Mutex::new(ValidationState::default())),
         })
     }
 }
@@ -225,20 +231,64 @@ impl ServerHandler for OnshapeMcpServer {
     ) -> Result<CallToolResult, McpError> {
         // Lock state to derive resolved auth and potentially execute API requests.
         let mut state = self.api_state.lock().await;
+        let validation = self.validation.lock().await;
         let resolved_auth = state.resolved_auth();
 
-        // Dispatch through core with the resolved auth state.
+        // Dispatch through core with the resolved auth and validation state.
         let result = tools::call_tool(
             &request.name,
             request.arguments.as_ref(),
             &resolved_auth,
+            &validation,
             Some(&self.spec),
         );
 
-        match result {
-            ToolResult::Immediate(r) => r,
-            ToolResult::OnshapeApiRequest { request: api_req } => {
-                execute_api_request(&mut state, &api_req).await
+        // Drop the validation lock before executing I/O — we'll re-lock
+        // if we need to update it via side effects.
+        drop(validation);
+
+        // Dispatch loop: handles Immediate, OnshapeApiRequest, and
+        // OnshapeApiRequestThen (which can chain multiple requests).
+        let mut current = result;
+        loop {
+            match current {
+                ToolResult::Immediate(r) => return r,
+                ToolResult::OnshapeApiRequest { request: api_req } => {
+                    // Simple case: execute and update implicit validation.
+                    let raw = execute_raw_api_request(&mut state, &api_req).await;
+                    match raw {
+                        Ok(raw) => {
+                            update_implicit_validation(&self.validation, raw.status).await;
+                            return tools::process_api_response(raw.status, &raw.body);
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                ToolResult::OnshapeApiRequestThen {
+                    request: api_req,
+                    then,
+                } => {
+                    // Execute the request, get raw response.
+                    let raw = execute_raw_api_request(&mut state, &api_req).await;
+                    match raw {
+                        Ok(raw) => {
+                            // Update implicit validation.
+                            update_implicit_validation(&self.validation, raw.status).await;
+
+                            // Invoke the callback.
+                            let (next_result, side_effects) = then(raw.status, &raw.body);
+
+                            // Apply side effects.
+                            for effect in side_effects {
+                                apply_side_effect(&self.validation, effect).await;
+                            }
+
+                            // Loop with the next result.
+                            current = next_result;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
             }
         }
     }
@@ -248,79 +298,89 @@ impl ServerHandler for OnshapeMcpServer {
 // API Request Execution
 // ============================================================================
 
-/// Execute an API request, handling authentication state and token refresh.
-async fn execute_api_request(
+/// Result of executing a raw API request: HTTP status code and response body.
+struct RawResponse {
+    status: u16,
+    body: String,
+}
+
+/// Execute a raw API request, returning the HTTP status and body.
+///
+/// Handles authentication (Basic or OAuth with proactive/reactive refresh)
+/// but does not process the response into a `CallToolResult`.
+/// For OAuth, also handles permanent refresh failures by transitioning to
+/// `OAuthPending` state.
+async fn execute_raw_api_request(
     state: &mut ApiState,
     api_req: &onshape_client_core::request::ApiRequest,
-) -> Result<CallToolResult, McpError> {
+) -> Result<RawResponse, McpError> {
     match state {
-        ApiState::NotConfigured { .. } => Ok(not_configured_error()),
-        ApiState::Basic(client) => execute_basic(client, api_req).await,
-        ApiState::OAuth(oauth) => execute_oauth(oauth, api_req).await,
-        ApiState::OAuthPending(_) => Ok(oauth_pending_error()),
+        ApiState::NotConfigured { .. } => Err(McpError::new(
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            "Cannot execute API call: credentials are not configured",
+            None,
+        )),
+        ApiState::Basic(client) => execute_basic_raw(client, api_req).await,
+        // OAuth needs &mut ApiState for the potential state transition,
+        // so we handle it at the ApiState level.
+        ApiState::OAuth(_) => execute_oauth_raw(state, api_req).await,
+        ApiState::OAuthPending(_) => Err(McpError::new(
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            "Cannot execute API call: OAuth authorization not yet completed",
+            None,
+        )),
     }
 }
 
-/// Error response when credentials are not configured.
-fn not_configured_error() -> CallToolResult {
-    CallToolResult {
-        content: vec![Content::text(
-            "Cannot execute API call: credentials are not configured. \
-             Set access_key and secret_key via config file, environment \
-             variables, or CLI flags. For OAuth, run the authorization flow \
-             to obtain tokens.",
-        )],
-        is_error: Some(true),
-        structured_content: None,
-        meta: None,
-    }
-}
-
-/// Error response when OAuth is pending (client creds present but no tokens).
-fn oauth_pending_error() -> CallToolResult {
-    CallToolResult {
-        content: vec![Content::text(
-            "Cannot execute API call: OAuth authorization not yet completed. \
-             Complete the OAuth flow in your editor (e.g. via the OpenCode plugin) \
-             to obtain access tokens. The server will automatically detect the \
-             new tokens once they are written.",
-        )],
-        is_error: Some(true),
-        structured_content: None,
-        meta: None,
-    }
-}
-
-/// Execute a request with Basic (API key) auth — no refresh logic.
-async fn execute_basic(
+/// Execute a raw request with Basic auth — returns status and body.
+async fn execute_basic_raw(
     client: &OnshapeClient,
     api_req: &onshape_client_core::request::ApiRequest,
-) -> Result<CallToolResult, McpError> {
+) -> Result<RawResponse, McpError> {
     match client.execute(api_req).await {
-        Ok(response) => tools::process_api_response(response.status, &response.body),
-        Err(e) => Ok(CallToolResult {
-            content: vec![Content::text(format!("HTTP request failed: {e}"))],
-            is_error: Some(true),
-            structured_content: None,
-            meta: None,
+        Ok(response) => Ok(RawResponse {
+            status: response.status,
+            body: response.body,
         }),
+        Err(e) => Err(McpError::new(
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            format!("HTTP request failed: {e}"),
+            None,
+        )),
     }
 }
 
-/// Execute a request with OAuth, including proactive and reactive refresh.
-async fn execute_oauth(
+/// Result of executing an OAuth request.
+///
+/// Separate from `Result` because we need to signal permanent refresh failures
+/// that require the caller to transition the API state.
+enum OAuthExecuteResult {
+    /// Request completed (success or error).
+    Ok(RawResponse),
+    /// Request failed with an error.
+    Err(McpError),
+    /// Refresh token is permanently dead — caller should transition to `OAuthPending`.
+    PermanentRefreshFailure {
+        /// Human-readable error message for the user.
+        message: String,
+    },
+}
+
+/// Execute a raw request with OAuth, including proactive and reactive refresh.
+///
+/// Returns an `OAuthExecuteResult` which may signal permanent refresh failure.
+async fn execute_oauth_inner(
     oauth: &mut OAuthApiState,
     api_req: &onshape_client_core::request::ApiRequest,
-) -> Result<CallToolResult, McpError> {
-    // Proactive: core says whether to refresh before the request.
-    // If refresh fails, proceed with the current token — it might still work.
+) -> OAuthExecuteResult {
+    // Proactive refresh.
     let refreshed = oauth.session.pre_execute_action(chrono::Utc::now())
         == PreExecuteAction::RefreshNeeded
         && try_refresh(oauth).await.is_ok();
 
     let result = oauth.client.execute(api_req).await;
 
-    // Reactive: core says whether to retry on 401.
+    // Reactive: retry on 401.
     if let Ok(ref response) = result
         && oauth
             .session
@@ -328,35 +388,131 @@ async fn execute_oauth(
             == PostExecuteAction::RefreshAndRetry
     {
         if let Err(e) = try_refresh(oauth).await {
-            return Ok(CallToolResult {
-                content: vec![Content::text(format!(
-                    "API returned 401 and token refresh failed: {e}"
-                ))],
-                is_error: Some(true),
-                structured_content: None,
-                meta: None,
-            });
+            if matches!(e, RefreshError::PermanentExchange(_)) {
+                return OAuthExecuteResult::PermanentRefreshFailure {
+                    message: format!(
+                        "OAuth refresh token is expired or revoked ({e}). \
+                         You need to re-authenticate: complete the OAuth flow \
+                         in your editor (e.g. run `opencode auth login`). \
+                         The server will automatically detect new tokens once \
+                         they are written."
+                    ),
+                };
+            }
+            return OAuthExecuteResult::Err(McpError::new(
+                rmcp::model::ErrorCode::INTERNAL_ERROR,
+                format!("API returned 401 and token refresh failed: {e}"),
+                None,
+            ));
         }
-        // Retry with the refreshed token.
         let retry = oauth.client.execute(api_req).await;
-        return format_execute_result(retry);
+        return match retry {
+            Ok(response) => OAuthExecuteResult::Ok(RawResponse {
+                status: response.status,
+                body: response.body,
+            }),
+            Err(e) => OAuthExecuteResult::Err(McpError::new(
+                rmcp::model::ErrorCode::INTERNAL_ERROR,
+                format!("HTTP request failed on retry: {e}"),
+                None,
+            )),
+        };
     }
 
-    format_execute_result(result)
+    match result {
+        Ok(response) => OAuthExecuteResult::Ok(RawResponse {
+            status: response.status,
+            body: response.body,
+        }),
+        Err(e) => OAuthExecuteResult::Err(McpError::new(
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            format!("HTTP request failed: {e}"),
+            None,
+        )),
+    }
 }
 
-/// Format an `OnshapeClient::execute` result into a `CallToolResult`.
-fn format_execute_result(
-    result: Result<onshape_client_core::request::ApiResponse, onshape_client_io::ClientError>,
-) -> Result<CallToolResult, McpError> {
-    match result {
-        Ok(response) => tools::process_api_response(response.status, &response.body),
-        Err(e) => Ok(CallToolResult {
-            content: vec![Content::text(format!("HTTP request failed: {e}"))],
-            is_error: Some(true),
-            structured_content: None,
-            meta: None,
-        }),
+/// Execute a raw OAuth request, handling permanent refresh failures with
+/// state transitions.
+async fn execute_oauth_raw(
+    state: &mut ApiState,
+    api_req: &onshape_client_core::request::ApiRequest,
+) -> Result<RawResponse, McpError> {
+    let ApiState::OAuth(oauth) = state else {
+        return Err(McpError::new(
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            "expected OAuth state",
+            None,
+        ));
+    };
+
+    match execute_oauth_inner(oauth, api_req).await {
+        OAuthExecuteResult::Ok(raw) => Ok(raw),
+        OAuthExecuteResult::Err(e) => Err(e),
+        OAuthExecuteResult::PermanentRefreshFailure { message } => {
+            // Transition OAuth → OAuthPending.
+            let ApiState::OAuth(oauth) = std::mem::replace(
+                state,
+                // Temporary placeholder — immediately replaced below.
+                ApiState::NotConfigured {
+                    configured_method: AuthMethod::OAuth,
+                    detail: String::new(),
+                },
+            ) else {
+                unreachable!("just checked this is OAuth");
+            };
+            *state = ApiState::OAuthPending(Box::new(OAuthPendingState {
+                client_id: oauth.client_id,
+                client_secret: oauth.client_secret,
+                base_url: oauth.base_url,
+                timeout: oauth.timeout,
+                token_path: oauth.token_path,
+            }));
+            // Return the error as a raw 401 response so the caller can
+            // process it appropriately.
+            Ok(RawResponse {
+                status: 401,
+                body: message,
+            })
+        }
+    }
+}
+
+// ============================================================================
+// Validation State Helpers
+// ============================================================================
+
+/// Update implicit validation state based on an HTTP response status.
+///
+/// - 2xx → Valid (credentials confirmed working)
+/// - 401 → Invalid (credentials confirmed bad)
+/// - Other → No change (doesn't tell us about credential validity)
+async fn update_implicit_validation(validation: &tokio::sync::Mutex<ValidationState>, status: u16) {
+    if (200..300).contains(&status) {
+        let mut v = validation.lock().await;
+        *v = ValidationState {
+            status: onshape_mcp_core::ValidationStatus::Valid,
+            last_check: Some(chrono::Utc::now()),
+            message: None,
+        };
+    } else if status == 401 {
+        let mut v = validation.lock().await;
+        *v = ValidationState {
+            status: onshape_mcp_core::ValidationStatus::Invalid,
+            last_check: Some(chrono::Utc::now()),
+            message: Some("API returned 401 Unauthorized".into()),
+        };
+    }
+    // Other statuses: don't change validation state.
+}
+
+/// Apply a side effect requested by a tool callback.
+async fn apply_side_effect(validation: &tokio::sync::Mutex<ValidationState>, effect: SideEffect) {
+    match effect {
+        SideEffect::UpdateValidation(new_state) => {
+            let mut v = validation.lock().await;
+            *v = new_state;
+        }
     }
 }
 
@@ -367,15 +523,27 @@ fn format_execute_result(
 /// Errors that can occur during a token refresh attempt.
 #[derive(Debug, thiserror::Error)]
 enum RefreshError {
-    /// The oauth2 token exchange failed.
+    /// Transient exchange failure (network, server error).
     #[error("token refresh request failed: {0}")]
     Exchange(String),
+    /// Permanent exchange failure (refresh token revoked/expired).
+    #[error("token refresh permanently failed: {0}")]
+    PermanentExchange(String),
     /// Failed to persist the refreshed tokens to disk.
     #[error("failed to save refreshed tokens: {0}")]
     Save(#[from] crate::oauth::TokenFileError),
     /// Failed to rebuild the HTTP client with the new token.
     #[error("failed to rebuild HTTP client: {0}")]
     RebuildClient(#[from] onshape_client_io::ClientError),
+}
+
+/// Check if a refresh error indicates a permanently dead refresh token.
+///
+/// OAuth error codes `unauthorized_client` and `invalid_grant` mean the
+/// refresh token is revoked or expired — the user must re-authenticate.
+fn is_permanent_refresh_failure(error_message: &str) -> bool {
+    let lower = error_message.to_lowercase();
+    lower.contains("unauthorized_client") || lower.contains("invalid_grant")
 }
 
 /// Attempt to refresh the OAuth access token.
@@ -400,7 +568,14 @@ async fn try_refresh(oauth: &mut OAuthApiState) -> Result<(), RefreshError> {
         .exchange_refresh_token(oauth.session.refresh_token())
         .request_async(&oauth.refresh_http)
         .await
-        .map_err(|e| RefreshError::Exchange(e.to_string()))?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            if is_permanent_refresh_failure(&msg) {
+                RefreshError::PermanentExchange(msg)
+            } else {
+                RefreshError::Exchange(msg)
+            }
+        })?;
 
     // 3. Apply response (pure core logic).
     oauth.session.apply_refresh(&response, chrono::Utc::now());
@@ -528,6 +703,8 @@ fn build_oauth_ready_state(
     Ok(ApiState::OAuth(Box::new(OAuthApiState {
         session,
         oauth_client,
+        client_id: client_id.clone(),
+        client_secret: SecretString::from(client_secret.clone()),
         client,
         refresh_http,
         token_path: token_path.to_path_buf(),
@@ -616,8 +793,13 @@ pub async fn run(
             timeout: server.config.http.timeout,
         }
     });
-    let watcher_handle =
-        watcher_ctx.map(|ctx| watcher::spawn_token_watcher(ctx, Arc::clone(&server.api_state)));
+    let watcher_handle = watcher_ctx.map(|ctx| {
+        watcher::spawn_token_watcher(
+            ctx,
+            Arc::clone(&server.api_state),
+            Arc::clone(&server.validation),
+        )
+    });
 
     // The watcher runs as a fire-and-forget background task. If it exits
     // (e.g. due to initialization failure), the server continues without
@@ -628,4 +810,56 @@ pub async fn run(
     service.waiting().await?;
 
     Ok(())
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- is_permanent_refresh_failure tests ---
+
+    #[test]
+    fn permanent_refresh_unauthorized_client() {
+        assert!(is_permanent_refresh_failure(
+            "Server returned error response: unauthorized_client: Could not authenticate client"
+        ));
+    }
+
+    #[test]
+    fn permanent_refresh_invalid_grant() {
+        assert!(is_permanent_refresh_failure(
+            "Server returned error response: invalid_grant: Token has been revoked"
+        ));
+    }
+
+    #[test]
+    fn permanent_refresh_case_insensitive() {
+        assert!(is_permanent_refresh_failure(
+            "UNAUTHORIZED_CLIENT: something"
+        ));
+        assert!(is_permanent_refresh_failure("INVALID_GRANT: something"));
+    }
+
+    #[test]
+    fn transient_refresh_network_error() {
+        assert!(!is_permanent_refresh_failure(
+            "error sending request: connection refused"
+        ));
+    }
+
+    #[test]
+    fn transient_refresh_server_error() {
+        assert!(!is_permanent_refresh_failure(
+            "Server returned error response: server_error: Internal error"
+        ));
+    }
+
+    #[test]
+    fn transient_refresh_generic_error() {
+        assert!(!is_permanent_refresh_failure("something went wrong"));
+    }
 }
