@@ -159,17 +159,41 @@ fn merge_credentials_file(config: &mut AppConfig) {
         return;
     }
 
-    // Check permissions (silently skip on failure — this is a fallback source)
-    if check_file_permissions(&path).is_err() {
+    // Check permissions — warn if the file exists but has problems
+    if let Err(err) = check_file_permissions(&path) {
+        // TODO: replace eprintln! with tracing::warn! once tracing is available
+        // See: https://github.com/altendky/onshape-mcp/issues/73
+        eprintln!(
+            "Warning: credentials file {} has insecure permissions, skipping: {err}",
+            path.display(),
+        );
         return;
     }
 
-    let Ok(contents) = std::fs::read_to_string(&path) else {
-        return;
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(err) => {
+            // TODO: replace eprintln! with tracing::warn! once tracing is available
+            // See: https://github.com/altendky/onshape-mcp/issues/73
+            eprintln!(
+                "Warning: could not read credentials file {}: {err}",
+                path.display(),
+            );
+            return;
+        }
     };
 
-    let Ok(creds) = serde_json::from_str::<StoredCredentials>(&contents) else {
-        return;
+    let creds = match serde_json::from_str::<StoredCredentials>(&contents) {
+        Ok(c) => c,
+        Err(err) => {
+            // TODO: replace eprintln! with tracing::warn! once tracing is available
+            // See: https://github.com/altendky/onshape-mcp/issues/73
+            eprintln!(
+                "Warning: could not parse credentials file {}: {err}",
+                path.display(),
+            );
+            return;
+        }
     };
 
     if config.auth.client_id.is_none() {
