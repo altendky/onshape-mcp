@@ -135,7 +135,7 @@ impl Clone for ClientAuthConfig {
                 credentials: Arc::clone(credentials),
             },
             Self::Bearer { access_token } => Self::Bearer {
-                access_token: AccessToken::new(access_token.secret().clone()),
+                access_token: access_token.clone(),
             },
         }
     }
