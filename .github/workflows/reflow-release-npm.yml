@@ -185,7 +185,7 @@ jobs:
           BINARY_VERSION: ${{ inputs.binary-version }}
         run: |
           cd test-install
-          output=$(npx onshape-mcp --version 2>&1)
+          output=$(npx --yes onshape-mcp --version 2>&1)
           echo "Binary output: $output"
           if echo "$output" | grep -qF "$BINARY_VERSION"; then
             echo "OK: Version matches ($BINARY_VERSION)"
@@ -369,7 +369,7 @@ jobs:
           BINARY_VERSION: ${{ inputs.binary-version }}
         run: |
           cd test-registry-install
-          output=$(npx onshape-mcp --version 2>&1)
+          output=$(npx --yes onshape-mcp --version 2>&1)
           echo "Binary output: $output"
           if echo "$output" | grep -qF "$BINARY_VERSION"; then
             echo "OK: Version matches ($BINARY_VERSION)"

@@ -1,6 +1,6 @@
 # npm Wrapper Package
 
-This document describes the npm wrapper package design that enables installation via `npx onshape-mcp`.
+This document describes the npm wrapper package design that enables installation via `npx --yes onshape-mcp`.
 
 ## Overview
 
@@ -227,7 +227,7 @@ Coverage runs on all 5 platforms in CI and uploads to Codecov with the `npm` fla
 
 ### End-to-end Testing
 
-- Test `npx onshape-mcp` against an MCP client
+- Test `npx --yes onshape-mcp` against an MCP client
 - Verify JSON-RPC communication over stdio
 - Verify graceful shutdown on SIGINT/SIGTERM
 
@@ -236,7 +236,7 @@ Coverage runs on all 5 platforms in CI and uploads to Codecov with the `npm` fla
 Once published, users can run the server directly:
 
 ```bash
-npx onshape-mcp
+npx --yes onshape-mcp
 ```
 
 Or install globally:
