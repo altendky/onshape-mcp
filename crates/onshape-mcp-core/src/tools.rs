@@ -168,7 +168,7 @@ pub fn call_tool(
             };
             call_api_call(arguments, spec)
         }
-        "onshape_list_resources" => ToolResult::Immediate(call_list_resources()),
+        "onshape_list_resources" => ToolResult::Immediate(Ok(call_list_resources())),
         "onshape_read_resource" => ToolResult::Immediate(call_read_resource(arguments)),
         _ => ToolResult::Immediate(Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
@@ -587,33 +587,27 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
     ToolResult::OnshapeApiRequest { request }
 }
 
-fn call_list_resources() -> Result<CallToolResult, ErrorData> {
+fn call_list_resources() -> CallToolResult {
     use std::fmt::Write;
 
     let resources = onshape_mcp_resources::RESOURCES;
     let mut output = format!("Available resources ({}):\n", resources.len());
 
     for entry in resources {
-        write!(
+        // Writing to String is infallible (std::fmt::Write for String always returns Ok).
+        let _ = write!(
             output,
             "\n{} — {}\n  {}\n",
             entry.uri, entry.title, entry.description
-        )
-        .map_err(|e| {
-            ErrorData::new(
-                ErrorCode::INTERNAL_ERROR,
-                format!("failed to format resource list: {e}"),
-                None,
-            )
-        })?;
+        );
     }
 
-    Ok(CallToolResult {
+    CallToolResult {
         content: vec![Content::text(output)],
         is_error: Some(false),
         structured_content: None,
         meta: None,
-    })
+    }
 }
 
 fn call_read_resource(arguments: Option<&Map<String, Value>>) -> Result<CallToolResult, ErrorData> {
