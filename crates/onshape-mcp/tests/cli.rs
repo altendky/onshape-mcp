@@ -920,7 +920,7 @@ fn tools_list_includes_api_tools() {
         .as_array()
         .expect("tools should be an array");
 
-    assert_eq!(tools.len(), 4, "should have 4 tools");
+    assert_eq!(tools.len(), 6, "should have 6 tools");
 
     let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
 
