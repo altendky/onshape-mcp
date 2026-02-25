@@ -920,25 +920,19 @@ fn tools_list_includes_api_tools() {
         .as_array()
         .expect("tools should be an array");
 
-    assert_eq!(tools.len(), 6, "should have 6 tools");
-
-    let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
-
-    assert!(
-        tool_names.contains(&"onshape_api_search"),
-        "should include search"
-    );
-    assert!(
-        tool_names.contains(&"onshape_api_explain"),
-        "should include explain"
-    );
-    assert!(
-        tool_names.contains(&"onshape_api_call"),
-        "should include call"
-    );
-    assert!(
-        tool_names.contains(&"onshape_mcp_auth_status"),
-        "should include auth_status"
+    let mut tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+    tool_names.sort_unstable();
+    assert_eq!(
+        tool_names,
+        vec![
+            "onshape_api_call",
+            "onshape_api_explain",
+            "onshape_api_search",
+            "onshape_list_resources",
+            "onshape_mcp_auth_status",
+            "onshape_read_resource",
+        ],
+        "tool list should contain exactly the expected tools"
     );
 
     client.shutdown();
