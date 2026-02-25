@@ -32,6 +32,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use proc_macro2::Literal;
 use pulldown_cmark::{Event, LinkType, Parser, Tag, TagEnd};
 
 /// A single resource entry extracted from an index.md file.
@@ -146,11 +147,13 @@ fn parse_index(index_path: &Path) -> Vec<ResourceEntry> {
     entries
 }
 
-/// Check whether a string contains the raw string delimiter `"##`.
+/// Format a string as a Rust string literal with proper escaping.
 ///
-/// If true, the generated code uses `r###"..."###` instead of `r##"..."##`.
-fn needs_extra_hashes(s: &str) -> bool {
-    s.contains("\"##")
+/// Uses `proc_macro2::Literal::string()` to produce a correctly escaped
+/// string literal, avoiding the fragility of manually choosing raw string
+/// delimiters.
+fn rust_string_literal(s: &str) -> String {
+    Literal::string(s).to_string()
 }
 
 fn main() {
@@ -218,28 +221,32 @@ fn main() {
     for (group, entry) in &all_entries {
         let uri = format!("{group}:{}", entry.name);
 
-        // Choose raw string delimiter based on content
-        let (open, close) = if needs_extra_hashes(&entry.content) {
-            ("r###\"", "\"###")
-        } else {
-            ("r##\"", "\"##")
-        };
-
         writeln!(generated, "    ResourceEntry {{").expect("write failed");
-        writeln!(generated, "        group: {open}{group}{close},").expect("write failed");
-        writeln!(generated, "        name: {open}{}{close},", entry.name).expect("write failed");
-        writeln!(generated, "        title: {open}{}{close},", entry.title).expect("write failed");
+        writeln!(generated, "        group: {},", rust_string_literal(group))
+            .expect("write failed");
         writeln!(
             generated,
-            "        description: {open}{}{close},",
-            entry.description
+            "        name: {},",
+            rust_string_literal(&entry.name)
         )
         .expect("write failed");
-        writeln!(generated, "        uri: {open}{uri}{close},").expect("write failed");
         writeln!(
             generated,
-            "        content: {open}{}{close},",
-            entry.content
+            "        title: {},",
+            rust_string_literal(&entry.title)
+        )
+        .expect("write failed");
+        writeln!(
+            generated,
+            "        description: {},",
+            rust_string_literal(&entry.description)
+        )
+        .expect("write failed");
+        writeln!(generated, "        uri: {},", rust_string_literal(&uri)).expect("write failed");
+        writeln!(
+            generated,
+            "        content: {},",
+            rust_string_literal(&entry.content)
         )
         .expect("write failed");
         writeln!(generated, "    }},").expect("write failed");

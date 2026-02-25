@@ -1071,6 +1071,7 @@ dependencies = [
 name = "onshape-mcp-resources"
 version = "0.1.0"
 dependencies = [
+ "proc-macro2",
  "pulldown-cmark",
  "rmcp",
 ]
