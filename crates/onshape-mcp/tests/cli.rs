@@ -1035,10 +1035,13 @@ fn api_explain_nonexistent_returns_error() {
         }),
     );
 
-    // The MCP protocol returns errors in the error field for invalid params
     assert!(
-        response["error"].is_object(),
-        "should return an error for nonexistent endpoint"
+        response["error"].is_null(),
+        "should not return a protocol-level error: {response}"
+    );
+    assert_eq!(
+        response["result"]["isError"], true,
+        "should return a tool-level error for nonexistent endpoint"
     );
 
     client.shutdown();
@@ -1325,15 +1328,22 @@ fn tools_call_read_resource_unknown_uri_returns_error() {
     );
 
     assert!(
-        response["error"].is_object(),
-        "should return an error for unknown URI"
+        response["error"].is_null(),
+        "should not return a protocol-level error: {response}"
     );
-    let error_message = response["error"]["message"]
+    assert_eq!(
+        response["result"]["isError"], true,
+        "should return a tool-level error for unknown URI"
+    );
+    let content = response["result"]["content"]
+        .as_array()
+        .expect("content should be an array");
+    let error_text = content[0]["text"]
         .as_str()
-        .expect("error message should be a string");
+        .expect("error text should be a string");
     assert!(
-        error_message.contains("not found"),
-        "error should mention not found, got: {error_message}"
+        error_text.contains("not found"),
+        "error should mention not found, got: {error_text}"
     );
 
     client.shutdown();

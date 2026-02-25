@@ -515,9 +515,17 @@ fn call_api_explain(
     spec: &OpenApiSpec,
 ) -> Result<CallToolResult, ErrorData> {
     let input: ApiExplainInput = parse_arguments(arguments)?;
-    let detail = spec
-        .explain(&input.endpoint)
-        .map_err(|e| ErrorData::new(ErrorCode::INVALID_PARAMS, format!("{e}"), None))?;
+    let detail = match spec.explain(&input.endpoint) {
+        Ok(d) => d,
+        Err(e) => {
+            return Ok(CallToolResult {
+                content: vec![Content::text(format!("{e}"))],
+                is_error: Some(true),
+                structured_content: None,
+                meta: None,
+            });
+        }
+    };
 
     let content = Content::json(&detail).map_err(|e| {
         ErrorData::new(
@@ -627,15 +635,16 @@ fn call_read_resource(arguments: Option<&Map<String, Value>>) -> Result<CallTool
             .iter()
             .map(|e| e.uri)
             .collect();
-        Err(ErrorData::new(
-            ErrorCode::INVALID_PARAMS,
-            format!(
+        Ok(CallToolResult {
+            content: vec![Content::text(format!(
                 "Resource not found: {}. Available URIs: {}",
                 input.uri,
                 available.join(", ")
-            ),
-            None,
-        ))
+            ))],
+            is_error: Some(true),
+            structured_content: None,
+            meta: None,
+        })
     }
 }
 
@@ -1207,14 +1216,14 @@ mod tests {
             Value::String("nonexistent".to_string()),
         );
 
-        let err = assert_immediate_err(call_tool(
+        let result = assert_immediate_ok(call_tool(
             "onshape_api_explain",
             Some(&args),
             &auth,
             &default_validation(),
             Some(&spec),
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(result.is_error, Some(true));
     }
 
     // --- api_call tests ---
@@ -1717,17 +1726,20 @@ mod tests {
             &default_validation(),
             None,
         );
-        let err = assert_immediate_err(result);
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        let result = assert_immediate_ok(result);
+        assert_eq!(result.is_error, Some(true));
+        let text = result.content.first().expect("should have content");
+        let text = match text.raw {
+            rmcp::model::RawContent::Text(ref t) => &t.text,
+            _ => panic!("expected text content"),
+        };
         assert!(
-            err.message.contains("not found"),
-            "error should mention not found: {}",
-            err.message
+            text.contains("not found"),
+            "error should mention not found: {text}",
         );
         assert!(
-            err.message.contains("insights:shaded-views"),
-            "error should list available URIs: {}",
-            err.message
+            text.contains("insights:shaded-views"),
+            "error should list available URIs: {text}",
         );
     }
 }
