@@ -24,7 +24,7 @@ repos:
     rev: 7bf09ac8f919719d36dfc50be15cb26e553a816c
     hooks:
       - id: lychee
-        args: ["--no-progress"]
+        args: ["--no-progress", "--config=.lychee.toml"]
         types: [markdown]
 
   - repo: https://github.com/rhysd/actionlint

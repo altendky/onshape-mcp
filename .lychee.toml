@@ -56,6 +56,10 @@ exclude = [
     # URLs that require authentication or have rate limits
     "^https?://cad\\.onshape\\.com",  # Onshape API requires auth
 
+    # Packages not yet published (badges will 404/403 until first release)
+    "^https://www\\.npmjs\\.com/package/onshape-mcp",
+    "^https://crates\\.io/crates/onshape-mcp",
+
     # URLs containing shell/template variables (not real URLs)
     "\\$\\{",    # Shell variables like ${VERSION}
     "\\$%7B",    # URL-encoded shell variables
