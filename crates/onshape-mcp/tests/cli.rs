@@ -1247,6 +1247,8 @@ fn tools_call_list_resources_returns_entries() {
     let mut client = McpTestClient::spawn();
     client.initialize();
 
+    // Intentionally omit the "arguments" key to verify the server
+    // tolerates absent arguments for no-parameter tools.
     let response = client.send_request(
         "tools/call",
         &serde_json::json!({
