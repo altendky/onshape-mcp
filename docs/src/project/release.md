@@ -6,7 +6,7 @@ Users can install the server via:
 
 | Method | Description |
 | -------- | ------------- |
-| `npx onshape-mcp` | Via npm wrapper package (see [npm Wrapper](npm-wrapper.md)) |
+| `npx --yes onshape-mcp` | Via npm wrapper package (see [npm Wrapper](npm-wrapper.md)) |
 | `cargo install` | From crates.io |
 | Pre-built binaries | GitHub releases for all supported platforms |
 
@@ -142,7 +142,7 @@ package ──► test-tarballs (5 platforms) ──► publish ──► test-p
 **2. test-tarballs** (matrix: 5 platforms, needs: package)
 
 - Install from tarballs in temp directory
-- Run `npx onshape-mcp --version`, verify output matches `binary-version`
+- Run `npx --yes onshape-mcp --version`, verify output matches `binary-version`
 
 **3. publish** (ubuntu-latest, needs: test-tarballs)
 
@@ -154,7 +154,7 @@ package ──► test-tarballs (5 platforms) ──► publish ──► test-p
 
 - Skip if publish was skipped
 - `npm install onshape-mcp@{version}` in temp directory
-- Run `npx onshape-mcp --version`, verify output
+- Run `npx --yes onshape-mcp --version`, verify output
 
 Staging versions are only used for tarball naming in CI — they are not published to npm.
 Only tag pushes (real releases) publish to the npm registry.

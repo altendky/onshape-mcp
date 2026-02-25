@@ -37,7 +37,7 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
   "mcpServers": {
     "onshape": {
       "command": "npx",
-      "args": ["onshape-mcp"],
+      "args": ["--yes", "onshape-mcp"],
       "env": {
         "ONSHAPE_MCP_AUTH__ACCESS_KEY": "your-access-key",
         "ONSHAPE_MCP_AUTH__SECRET_KEY": "your-secret-key"
@@ -56,7 +56,7 @@ Add to your `opencode.json`:
   "mcp": {
     "onshape": {
       "type": "local",
-      "command": ["npx", "onshape-mcp"],
+      "command": ["npx", "--yes", "onshape-mcp"],
       "environment": {
         "ONSHAPE_MCP_AUTH__ACCESS_KEY": "your-access-key",
         "ONSHAPE_MCP_AUTH__SECRET_KEY": "your-secret-key"
@@ -73,7 +73,7 @@ For OAuth 2.0 with OpenCode, use the auth plugin instead (see [OAuth 2.0](#oauth
   "mcp": {
     "onshape": {
       "type": "local",
-      "command": ["npx", "onshape-mcp"]
+      "command": ["npx", "--yes", "onshape-mcp"]
     }
   },
   "plugin": ["@onshape-mcp/opencode-auth"]
@@ -84,7 +84,7 @@ Then run `opencode auth login` to complete the OAuth flow.
 
 ### Other MCP Clients
 
-Any MCP client that supports stdio transport can launch this server. The command is `npx onshape-mcp`. Pass credentials as environment variables (see [Authentication](#authentication)).
+Any MCP client that supports stdio transport can launch this server. The command is `npx --yes onshape-mcp`. Pass credentials as environment variables (see [Authentication](#authentication)).
 
 ## Authentication
 

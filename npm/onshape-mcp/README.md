@@ -7,7 +7,7 @@ MCP (Model Context Protocol) server for Onshape CAD integration.
 Run directly with npx:
 
 ```bash
-npx onshape-mcp
+npx --yes onshape-mcp
 ```
 
 Or install globally:
