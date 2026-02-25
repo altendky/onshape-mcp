@@ -208,6 +208,11 @@ fn main() {
                 all_entries.push((group_name.clone(), entry));
             }
         }
+    } else {
+        panic!(
+            "mcp-resources directory not found at {}",
+            resources_dir.display()
+        );
     }
 
     // Generate Rust source
