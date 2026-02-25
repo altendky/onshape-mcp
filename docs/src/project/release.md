@@ -21,7 +21,7 @@ The pipeline is composed of three reusable workflows plus two inline jobs:
 | `reflow-release-version.yml` | Extract version from Cargo.toml, verify tag match |
 | `reflow-release-build.yml` | Build release binaries on 5 platforms |
 | `reflow-release-npm.yml` | Package, publish, and test npm packages (parameterized by version and dist-tag) |
-| `cargo-publish` job | Publish workspace crates to crates.io (or `--dry-run` validation) |
+| `cargo-publish` job | Publish workspace crates to crates.io (or `cargo package` validation) |
 | `github-release` job | Package archives, generate SHA256SUMS, create GitHub Release |
 
 ### Trigger Behavior
@@ -136,7 +136,7 @@ package ──► test-tarballs (5 platforms) ──► publish ──► test-p
 - Download all 5 binary artifacts (from the build workflow)
 - Copy each into `npm/{platform}/bin/onshape-mcp` (`.exe` for win32)
 - Update all `package.json` to the input `version`
-- `npm pack` all 6 packages
+- `npm pack` all 7 packages (5 platform + opencode-auth plugin + main)
 - Upload as `npm-tarballs` artifact
 
 **2. test-tarballs** (matrix: 5 platforms, needs: package)
@@ -148,6 +148,7 @@ package ──► test-tarballs (5 platforms) ──► publish ──► test-p
 
 - Skip if no npm credentials available (fork PRs)
 - `npm publish --tag {dist-tag} <tarball>` for 5 platform packages first
+- `npm publish --tag {dist-tag} <plugin-tarball>` for opencode-auth plugin
 - `npm publish --tag {dist-tag} <main-tarball>` last
 
 **4. test-published** (matrix: 5 platforms, needs: publish)
@@ -229,7 +230,7 @@ Artifacts are shared across workflow runs via GitHub Actions upload/download.
 | Artifact | Created by | Consumed by |
 | -------- | ---------- | ----------- |
 | `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `github-release` job |
-| `npm-tarballs` (6) | `reflow-release-npm.yml` package job | npm test-tarballs, npm publish, npm test-published |
+| `npm-tarballs` (7) | `reflow-release-npm.yml` package job | npm test-tarballs, npm publish, npm test-published |
 
 ## Crate Naming and Publish Order
 
@@ -306,7 +307,7 @@ It is generated in the `github-release` job on every CI run (validating the gene
 | Secret | Used by | Purpose |
 | ------ | ------- | ------- |
 | `NPM_TOKEN` | npm publish (fallback) + cleanup | npm publish (fork PRs), npm unpublish (cleanup) |
-| `CARGO_REGISTRY_TOKEN` | `ci.yml` cargo-publish job | crates.io publish (not needed for `--dry-run`) |
+| `CARGO_REGISTRY_TOKEN` | `ci.yml` cargo-publish job | crates.io publish (not needed for `cargo package`) |
 | `GITHUB_TOKEN` | `ci.yml` github-release job | GitHub release (automatic, not a manual secret) |
 
 | Permission | Job | Purpose |
@@ -363,4 +364,4 @@ Items requiring further discussion before or during implementation.
 
 ### Workflow Inputs
 
-- [x] `workflow_dispatch` inputs: ~~determine whether to accept parameters~~ Resolved: removed. Release is triggered only by tag push. The unified `ci.yml` pipeline exercises the full release flow on every PR — including `cargo publish --dry-run`, archive packaging, and SHA256SUMS generation — providing comprehensive coverage without a manual dispatch trigger. See [#88](https://github.com/altendky/onshape-mcp/issues/88)
+- [x] `workflow_dispatch` inputs: ~~determine whether to accept parameters~~ Resolved: removed. Release is triggered only by tag push. The unified `ci.yml` pipeline exercises the full release flow on every PR — including `cargo package --workspace`, archive packaging, and SHA256SUMS generation — providing comprehensive coverage without a manual dispatch trigger. See [#88](https://github.com/altendky/onshape-mcp/issues/88)
