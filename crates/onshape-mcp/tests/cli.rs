@@ -1089,3 +1089,256 @@ fn api_call_without_credentials_returns_not_configured_error() {
 
     client.shutdown();
 }
+
+// ============================================================================
+// Resource Tests
+// ============================================================================
+
+#[test]
+fn initialization_advertises_resources_capability() {
+    let mut client = McpTestClient::spawn();
+    let response = client.initialize();
+
+    assert!(
+        response["result"]["capabilities"]["resources"].is_object(),
+        "resources capability should be enabled"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn resources_list_returns_insight_resources() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request("resources/list", &serde_json::json!({}));
+
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+
+    let resources = response["result"]["resources"]
+        .as_array()
+        .expect("resources should be an array");
+
+    assert!(
+        resources.len() >= 2,
+        "should have at least 2 resources, got {}",
+        resources.len()
+    );
+
+    // Check that shaded-views is present
+    let shaded_views = resources
+        .iter()
+        .find(|r| r["uri"] == "insights:shaded-views")
+        .expect("should have insights:shaded-views resource");
+    assert_eq!(shaded_views["name"], "shaded-views");
+    assert_eq!(shaded_views["mimeType"], "text/markdown");
+    assert!(
+        shaded_views["annotations"]["audience"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|v| v == "assistant")),
+        "audience should include assistant"
+    );
+
+    // Check that sketch-constraints is present
+    let sketch_constraints = resources
+        .iter()
+        .find(|r| r["uri"] == "insights:sketch-constraints")
+        .expect("should have insights:sketch-constraints resource");
+    assert_eq!(sketch_constraints["name"], "sketch-constraints");
+
+    client.shutdown();
+}
+
+#[test]
+fn resources_read_returns_content_for_valid_uri() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request(
+        "resources/read",
+        &serde_json::json!({
+            "uri": "insights:shaded-views"
+        }),
+    );
+
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+
+    let contents = response["result"]["contents"]
+        .as_array()
+        .expect("contents should be an array");
+    assert_eq!(contents.len(), 1, "should have exactly one content entry");
+
+    let content = &contents[0];
+    assert_eq!(content["uri"], "insights:shaded-views");
+    assert_eq!(content["mimeType"], "text/markdown");
+
+    let text = content["text"].as_str().expect("text should be a string");
+    assert!(
+        text.contains("Part Studio Shaded Views"),
+        "content should contain the document title"
+    );
+    assert!(
+        text.contains("pixelSize"),
+        "content should contain pixelSize information"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn resources_read_returns_error_for_unknown_uri() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request(
+        "resources/read",
+        &serde_json::json!({
+            "uri": "nonexistent:nothing"
+        }),
+    );
+
+    assert!(
+        response["error"].is_object(),
+        "should return an error for unknown URI"
+    );
+    let error_message = response["error"]["message"]
+        .as_str()
+        .expect("error message should be a string");
+    assert!(
+        error_message.contains("not found"),
+        "error should mention not found, got: {error_message}"
+    );
+
+    client.shutdown();
+}
+
+// ============================================================================
+// Resource Tool Tests
+// ============================================================================
+
+#[test]
+fn tools_list_includes_resource_tools() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request("tools/list", &serde_json::json!({}));
+
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+
+    let tools = response["result"]["tools"]
+        .as_array()
+        .expect("tools should be an array");
+
+    assert!(
+        tools.iter().any(|t| t["name"] == "onshape_list_resources"),
+        "should include onshape_list_resources tool"
+    );
+    assert!(
+        tools.iter().any(|t| t["name"] == "onshape_read_resource"),
+        "should include onshape_read_resource tool"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn tools_call_list_resources_returns_entries() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request(
+        "tools/call",
+        &serde_json::json!({
+            "name": "onshape_list_resources"
+        }),
+    );
+
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+    assert_eq!(response["result"]["isError"], false);
+
+    let content = response["result"]["content"]
+        .as_array()
+        .expect("content should be an array");
+    let text = content[0]["text"]
+        .as_str()
+        .expect("text should be a string");
+
+    assert!(
+        text.contains("insights:shaded-views"),
+        "should list shaded-views URI, got: {text}"
+    );
+    assert!(
+        text.contains("insights:sketch-constraints"),
+        "should list sketch-constraints URI, got: {text}"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn tools_call_read_resource_returns_content() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request(
+        "tools/call",
+        &serde_json::json!({
+            "name": "onshape_read_resource",
+            "arguments": {
+                "uri": "insights:shaded-views"
+            }
+        }),
+    );
+
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+    assert_eq!(response["result"]["isError"], false);
+
+    let content = response["result"]["content"]
+        .as_array()
+        .expect("content should be an array");
+    let text = content[0]["text"]
+        .as_str()
+        .expect("text should be a string");
+
+    assert!(
+        text.contains("Part Studio Shaded Views"),
+        "should contain the document title"
+    );
+    assert!(
+        text.contains("pixelSize"),
+        "should contain pixelSize guidance"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn tools_call_read_resource_unknown_uri_returns_error() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let response = client.send_request(
+        "tools/call",
+        &serde_json::json!({
+            "name": "onshape_read_resource",
+            "arguments": {
+                "uri": "nonexistent:nothing"
+            }
+        }),
+    );
+
+    assert!(
+        response["error"].is_object(),
+        "should return an error for unknown URI"
+    );
+    let error_message = response["error"]["message"]
+        .as_str()
+        .expect("error message should be a string");
+    assert!(
+        error_message.contains("not found"),
+        "error should mention not found, got: {error_message}"
+    );
+
+    client.shutdown();
+}

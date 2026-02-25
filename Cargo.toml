@@ -18,6 +18,7 @@ onshape-client-core = { path = "crates/onshape-client-core", version = "0.1.0" }
 onshape-client-io = { path = "crates/onshape-client-io", version = "0.1.0" }
 onshape-mcp-core = { path = "crates/onshape-mcp-core", version = "0.1.0" }
 onshape-mcp-io = { path = "crates/onshape-mcp-io", version = "0.1.0" }
+onshape-mcp-resources = { path = "crates/onshape-mcp-resources", version = "0.1.0" }
 
 # External dependencies
 base64 = "0.22"
@@ -36,6 +37,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+pulldown-cmark = "0.13"
 tempfile = "3"
 toml = "1.0"
 
