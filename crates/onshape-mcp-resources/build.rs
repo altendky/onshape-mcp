@@ -86,6 +86,18 @@ fn parse_index(index_path: &Path) -> Vec<ResourceEntry> {
                         .unwrap_or(&current_link_url)
                         .to_string();
 
+                    // Reject absolute or parent-traversal URLs to prevent
+                    // reading files outside the group directory at build time.
+                    let link_path = Path::new(&current_link_url);
+                    assert!(
+                        !link_path.is_absolute()
+                            && !link_path
+                                .components()
+                                .any(|c| matches!(c, std::path::Component::ParentDir)),
+                        "Resource link URL must be relative and non-traversal, \
+                         got: {current_link_url}"
+                    );
+
                     // Read the referenced markdown file
                     let content_path = dir.join(&current_link_url);
                     let content = fs::read_to_string(&content_path).unwrap_or_else(|e| {
