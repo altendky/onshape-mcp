@@ -28,6 +28,21 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml', 'mise.toml', 'mise.lock') }}
 
+      - name: Mise diagnostics
+        env:
+          RUST_BACKTRACE: 1
+          MISE_VERBOSE: 1
+        run: |
+          echo "=== mise doctor ==="
+          mise doctor
+          echo "=== mise config ls ==="
+          mise config ls
+          echo "=== mise which pre-commit ==="
+          mise which pre-commit
+          echo "=== mise where pre-commit ==="
+          mise where pre-commit
+
       - env:
+          RUST_BACKTRACE: 1
           MISE_VERBOSE: 1
         run: pre-commit run --show-diff-on-failure --color=always --all-files
