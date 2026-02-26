@@ -208,7 +208,9 @@ fn main() {
                 )
             })
             .filter_map(|entry| {
-                let entry = entry.ok()?;
+                let entry = entry.unwrap_or_else(|e| {
+                    panic!("Failed to read entry in {}: {e}", resources_dir.display())
+                });
                 let path = entry.path();
                 if path.is_dir() && path.join("index.md").is_file() {
                     Some(path)
