@@ -28,19 +28,4 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml', 'mise.toml', 'mise.lock') }}
 
-      # Workaround: mise's aqua backend downloads pre-commit as a .pyz
-      # (Python zipapp) without any extension on Windows. Create a .cmd
-      # wrapper in the install dir that invokes it through Python. Since
-      # the install dir is on PATH before the shims dir and .CMD is in
-      # PATHEXT, this wrapper is found first — bypassing the broken shim.
-      - name: Fix pre-commit binary name on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $dir = mise where pre-commit
-          $pythonDir = mise where python
-          $python = Join-Path $pythonDir "python.exe"
-          $wrapper = Join-Path $dir "pre-commit.cmd"
-          Set-Content -Path $wrapper -Value "@`"$python`" `"%~dp0pre-commit`" %*"
-
       - run: pre-commit run --show-diff-on-failure --color=always --all-files
