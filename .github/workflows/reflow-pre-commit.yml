@@ -28,24 +28,17 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml', 'mise.toml', 'mise.lock') }}
 
-      - name: Mise diagnostics
+      # Workaround: mise's aqua backend installs pre-commit without .exe
+      # extension on Windows, so mise exec can't find the binary path.
+      - name: Fix pre-commit binary name on Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          RUST_BACKTRACE: 1
-          MISE_VERBOSE: 1
         run: |
-          echo "=== mise bin-paths ==="
-          mise bin-paths
-          echo "=== pre-commit install dir contents ==="
           $dir = mise where pre-commit
-          echo "Install dir: $dir"
-          Get-ChildItem -Recurse $dir
-          echo "=== where.exe pre-commit ==="
-          where.exe pre-commit
-          echo "=== mise ls ==="
-          mise ls --json
+          $src = Join-Path $dir "pre-commit"
+          $dst = Join-Path $dir "pre-commit.exe"
+          if ((Test-Path $src) -and !(Test-Path $dst)) {
+            Copy-Item $src $dst
+          }
 
-      - env:
-          MISE_VERBOSE: 1
-        run: pre-commit run --show-diff-on-failure --color=always --all-files
+      - run: pre-commit run --show-diff-on-failure --color=always --all-files
