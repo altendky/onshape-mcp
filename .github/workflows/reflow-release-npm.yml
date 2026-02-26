@@ -31,15 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
         with:
           node-version: "22"
 
       - name: Download all binary artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: binary-*
           path: binaries
@@ -119,7 +119,7 @@ jobs:
           ls -la dist/tarballs/
 
       - name: Upload tarballs
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: npm-tarballs
           path: dist/tarballs/
@@ -135,12 +135,12 @@ jobs:
         platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
     steps:
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
         with:
           node-version: "22"
 
       - name: Download tarballs
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: npm-tarballs
           path: tarballs
@@ -234,14 +234,14 @@ jobs:
 
       - name: Setup Node.js
         if: steps.check-auth.outputs.can-publish == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
       - name: Download tarballs
         if: steps.check-auth.outputs.can-publish == 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: npm-tarballs
           path: tarballs
@@ -309,7 +309,7 @@ jobs:
         platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
     steps:
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
         with:
           node-version: "22"
 
