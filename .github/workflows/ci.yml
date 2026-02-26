@@ -13,6 +13,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mise:
+    name: Mise
+    uses: ./.github/workflows/reflow-mise.yml
+
   pre-commit:
     name: Pre-commit
     uses: ./.github/workflows/reflow-pre-commit.yml
@@ -46,7 +50,7 @@ jobs:
   checks:
     name: checks
     if: always()
-    needs: [pre-commit, rust, coverage, npm]
+    needs: [mise, pre-commit, rust, coverage, npm]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@release/v1

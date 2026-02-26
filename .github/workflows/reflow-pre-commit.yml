@@ -20,10 +20,14 @@ jobs:
         exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+
+      - uses: jdx/mise-action@v3
+        env:
+          RUSTUP_TOOLCHAIN: stable
+
+      - uses: actions/cache@v4
         with:
-          python-version: '3.x'
-      - uses: ./.github/actions/setup-lychee
-        with:
-          token: ${{ github.token }}
-      - uses: pre-commit/action@v3.0.1
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml', 'mise.toml', 'mise.lock') }}
+
+      - run: pre-commit run --show-diff-on-failure --color=always --all-files
