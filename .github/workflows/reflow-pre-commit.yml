@@ -28,15 +28,17 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml', 'mise.toml', 'mise.lock') }}
 
-      # Workaround: mise's aqua backend installs pre-commit without .exe
-      # extension on Windows, so mise exec can't find the binary path.
+      # Workaround: mise's aqua backend downloads pre-commit as a .pyz
+      # (Python zipapp) without any extension on Windows. The py launcher
+      # handles .pyz natively, so give the file its proper extension.
       - name: Fix pre-commit binary name on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          echo "PATHEXT: $env:PATHEXT"
           $dir = mise where pre-commit
           $src = Join-Path $dir "pre-commit"
-          $dst = Join-Path $dir "pre-commit.exe"
+          $dst = Join-Path $dir "pre-commit.pyz"
           if ((Test-Path $src) -and !(Test-Path $dst)) {
             Copy-Item $src $dst
           }
