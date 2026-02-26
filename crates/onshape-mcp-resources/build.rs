@@ -43,6 +43,55 @@ struct ResourceEntry {
     content: String,
 }
 
+/// Read a markdown file referenced by a list-item link and build a [`ResourceEntry`].
+fn read_resource_entry(
+    dir: &Path,
+    link_url: &str,
+    link_title: &str,
+    item_text: &str,
+) -> ResourceEntry {
+    // Extract description: text after " — " (em dash)
+    let full_text = item_text.trim();
+    let description = full_text
+        .split(" — ")
+        .nth(1)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    // Derive name from filename: "shaded-views.md" -> "shaded-views"
+    let name = link_url.strip_suffix(".md").unwrap_or(link_url).to_string();
+
+    // Reject absolute or parent-traversal URLs to prevent
+    // reading files outside the group directory at build time.
+    let link_path = Path::new(link_url);
+    assert!(
+        !link_path.is_absolute()
+            && !link_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir)),
+        "Resource link URL must be relative and non-traversal, got: {link_url}"
+    );
+
+    // Read the referenced markdown file
+    let content_path = dir.join(link_url);
+    let content = fs::read_to_string(&content_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read resource file {}: {e}",
+            content_path.display()
+        )
+    });
+
+    // Emit rerun-if-changed for the content file
+    println!("cargo:rerun-if-changed={}", content_path.display());
+
+    ResourceEntry {
+        title: link_title.to_string(),
+        name,
+        description,
+        content,
+    }
+}
+
 /// Parse an index.md file to extract resource entries, then read each
 /// referenced markdown file from the same directory.
 fn parse_index(index_path: &Path) -> Vec<ResourceEntry> {
@@ -72,61 +121,31 @@ fn parse_index(index_path: &Path) -> Vec<ResourceEntry> {
             }
             Event::End(TagEnd::Item) => {
                 if in_list_item && !current_link_url.is_empty() {
-                    // Extract description: text after " — " (em dash)
-                    let full_text = current_item_text.trim().to_string();
-                    let description = full_text
-                        .split(" — ")
-                        .nth(1)
-                        .map(|s| s.trim().to_string())
-                        .unwrap_or_default();
-
-                    // Derive name from filename: "shaded-views.md" -> "shaded-views"
-                    let name = current_link_url
-                        .strip_suffix(".md")
-                        .unwrap_or(&current_link_url)
-                        .to_string();
-
-                    // Reject absolute or parent-traversal URLs to prevent
-                    // reading files outside the group directory at build time.
-                    let link_path = Path::new(&current_link_url);
-                    assert!(
-                        !link_path.is_absolute()
-                            && !link_path
-                                .components()
-                                .any(|c| matches!(c, std::path::Component::ParentDir)),
-                        "Resource link URL must be relative and non-traversal, \
-                         got: {current_link_url}"
-                    );
-
-                    // Read the referenced markdown file
-                    let content_path = dir.join(&current_link_url);
-                    let content = fs::read_to_string(&content_path).unwrap_or_else(|e| {
-                        panic!(
-                            "Failed to read resource file {}: {e}",
-                            content_path.display()
-                        )
-                    });
-
-                    // Emit rerun-if-changed for the content file
-                    println!("cargo:rerun-if-changed={}", content_path.display());
-
-                    entries.push(ResourceEntry {
-                        title: current_link_title.clone(),
-                        name,
-                        description,
-                        content,
-                    });
+                    entries.push(read_resource_entry(
+                        dir,
+                        &current_link_url,
+                        &current_link_title,
+                        &current_item_text,
+                    ));
                 }
                 in_list_item = false;
             }
             Event::Start(Tag::Link {
-                link_type: LinkType::Inline,
+                link_type,
                 dest_url,
                 ..
             }) => {
                 if in_list_item {
-                    in_link = true;
-                    current_link_url = dest_url.to_string();
+                    if link_type == LinkType::Inline {
+                        in_link = true;
+                        current_link_url = dest_url.to_string();
+                    } else {
+                        panic!(
+                            "Non-inline link type {link_type:?} in list item is \
+                             not supported, use inline links [text](url) instead: {}",
+                            index_path.display()
+                        );
+                    }
                 }
             }
             Event::End(TagEnd::Link) => {
