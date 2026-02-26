@@ -61,14 +61,17 @@ fn read_resource_entry(
     // Derive name from filename: "shaded-views.md" -> "shaded-views"
     let name = link_url.strip_suffix(".md").unwrap_or(link_url).to_string();
 
-    // Reject absolute or parent-traversal URLs to prevent
+    // Reject anything other than normal/curdir path components to prevent
     // reading files outside the group directory at build time.
+    // A whitelist is used instead of a blacklist because on Windows,
+    // paths like `\foo` or `C:foo` bypass `is_absolute()` yet cause
+    // `PathBuf::join` to replace the base path.
     let link_path = Path::new(link_url);
     assert!(
-        !link_path.is_absolute()
-            && !link_path
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir)),
+        link_path.components().all(|c| matches!(
+            c,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )),
         "Resource link URL must be relative and non-traversal, got: {link_url}"
     );
 
