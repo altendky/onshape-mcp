@@ -121,6 +121,8 @@ pub fn list_tools() -> Vec<Tool> {
         tool_api_search_def(),
         tool_api_explain_def(),
         tool_api_call_def(),
+        tool_list_resources_def(),
+        tool_read_resource_def(),
     ]
 }
 
@@ -166,6 +168,8 @@ pub fn call_tool(
             };
             call_api_call(arguments, spec)
         }
+        "onshape_list_resources" => ToolResult::Immediate(Ok(call_list_resources())),
+        "onshape_read_resource" => ToolResult::Immediate(call_read_resource(arguments)),
         _ => ToolResult::Immediate(Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
             format!("Unknown tool: {name}"),
@@ -228,6 +232,14 @@ pub struct ApiCallInput {
     /// Use `onshape_api_explain` to see the expected schema for each endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+}
+
+/// Input schema for `onshape_read_resource`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ReadResourceInput {
+    /// The URI of the resource to read (e.g., `"insights:shaded-views"`).
+    /// Use `onshape_list_resources` to discover available URIs.
+    pub uri: String,
 }
 
 // ============================================================================
@@ -311,6 +323,46 @@ fn tool_api_call_def() -> Tool {
         Arc::new(input_schema),
     )
     .annotate(ToolAnnotations::new().read_only(false).destructive(true))
+}
+
+#[allow(clippy::expect_used)]
+fn tool_list_resources_def() -> Tool {
+    let schema = schemars::schema_for!(EmptyInput);
+    let input_schema: Value =
+        serde_json::to_value(schema).expect("EmptyInput schema serialization should never fail");
+    let input_schema = input_schema
+        .as_object()
+        .cloned()
+        .expect("Schema should be a JSON object");
+
+    Tool::new(
+        "onshape_list_resources",
+        "List available resource documents with practical Onshape API guidance. \
+         Returns URIs, titles, and descriptions. Use onshape_read_resource to \
+         read a specific resource by URI.",
+        Arc::new(input_schema),
+    )
+    .annotate(ToolAnnotations::new().read_only(true).destructive(false))
+}
+
+#[allow(clippy::expect_used)]
+fn tool_read_resource_def() -> Tool {
+    let schema = schemars::schema_for!(ReadResourceInput);
+    let input_schema: Value = serde_json::to_value(schema)
+        .expect("ReadResourceInput schema serialization should never fail");
+    let input_schema = input_schema
+        .as_object()
+        .cloned()
+        .expect("Schema should be a JSON object");
+
+    Tool::new(
+        "onshape_read_resource",
+        "Read a specific resource document by URI. Returns the full markdown content \
+         with practical guidance for Onshape API usage. Use onshape_list_resources \
+         to discover available URIs.",
+        Arc::new(input_schema),
+    )
+    .annotate(ToolAnnotations::new().read_only(true).destructive(false))
 }
 
 // ============================================================================
@@ -463,9 +515,17 @@ fn call_api_explain(
     spec: &OpenApiSpec,
 ) -> Result<CallToolResult, ErrorData> {
     let input: ApiExplainInput = parse_arguments(arguments)?;
-    let detail = spec
-        .explain(&input.endpoint)
-        .map_err(|e| ErrorData::new(ErrorCode::INVALID_PARAMS, format!("{e}"), None))?;
+    let detail = match spec.explain(&input.endpoint) {
+        Ok(d) => d,
+        Err(e) => {
+            return Ok(CallToolResult {
+                content: vec![Content::text(format!("{e}"))],
+                is_error: Some(true),
+                structured_content: None,
+                meta: None,
+            });
+        }
+    };
 
     let content = Content::json(&detail).map_err(|e| {
         ErrorData::new(
@@ -525,6 +585,61 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
     };
 
     ToolResult::OnshapeApiRequest { request }
+}
+
+fn call_list_resources() -> CallToolResult {
+    use std::fmt::Write;
+
+    let resources = onshape_mcp_resources::RESOURCES;
+    let mut output = format!("Available resources ({}):\n", resources.len());
+
+    for entry in resources {
+        // Writing to String is infallible (std::fmt::Write for String always returns Ok).
+        let _ = write!(
+            output,
+            "\n{} — {}\n  {}\n",
+            entry.uri, entry.title, entry.description
+        );
+    }
+
+    CallToolResult {
+        content: vec![Content::text(output)],
+        is_error: Some(false),
+        structured_content: None,
+        meta: None,
+    }
+}
+
+fn call_read_resource(arguments: Option<&Map<String, Value>>) -> Result<CallToolResult, ErrorData> {
+    let input: ReadResourceInput = parse_arguments(arguments)?;
+
+    let entry = onshape_mcp_resources::RESOURCES
+        .iter()
+        .find(|e| e.uri == input.uri);
+
+    if let Some(entry) = entry {
+        Ok(CallToolResult {
+            content: vec![Content::text(entry.content)],
+            is_error: Some(false),
+            structured_content: None,
+            meta: None,
+        })
+    } else {
+        let available: Vec<&str> = onshape_mcp_resources::RESOURCES
+            .iter()
+            .map(|e| e.uri)
+            .collect();
+        Ok(CallToolResult {
+            content: vec![Content::text(format!(
+                "Resource not found: {}. Available URIs: {}",
+                input.uri,
+                available.join(", ")
+            ))],
+            is_error: Some(true),
+            structured_content: None,
+            meta: None,
+        })
+    }
 }
 
 /// Unwrap the `OpenAPI` spec reference or return an internal error.
@@ -719,9 +834,21 @@ mod tests {
     }
 
     #[test]
-    fn list_tools_has_four_tools() {
+    fn list_tools_includes_list_resources() {
         let tools = list_tools();
-        assert_eq!(tools.len(), 4);
+        assert!(tools.iter().any(|t| t.name == "onshape_list_resources"));
+    }
+
+    #[test]
+    fn list_tools_includes_read_resource() {
+        let tools = list_tools();
+        assert!(tools.iter().any(|t| t.name == "onshape_read_resource"));
+    }
+
+    #[test]
+    fn list_tools_has_six_tools() {
+        let tools = list_tools();
+        assert_eq!(tools.len(), 6);
     }
 
     // --- auth_status tests ---
@@ -1083,14 +1210,14 @@ mod tests {
             Value::String("nonexistent".to_string()),
         );
 
-        let err = assert_immediate_err(call_tool(
+        let result = assert_immediate_ok(call_tool(
             "onshape_api_explain",
             Some(&args),
             &auth,
             &default_validation(),
             Some(&spec),
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(result.is_error, Some(true));
     }
 
     // --- api_call tests ---
@@ -1514,5 +1641,99 @@ mod tests {
         let text = content.raw.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "valid");
+    }
+
+    // --- list_resources / read_resource tool tests ---
+
+    #[test]
+    fn call_tool_list_resources_returns_all_entries() {
+        let auth = not_configured();
+        let result = call_tool(
+            "onshape_list_resources",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
+        let call_result = assert_immediate_ok(result);
+        assert_eq!(call_result.is_error, Some(false));
+
+        let text = call_result.content[0]
+            .raw
+            .as_text()
+            .expect("should be text content");
+        assert!(
+            text.text.contains("insights:shaded-views"),
+            "should list shaded-views URI"
+        );
+        assert!(
+            text.text.contains("insights:sketch-constraints"),
+            "should list sketch-constraints URI"
+        );
+        assert!(text.text.contains("Shaded Views"), "should include title");
+    }
+
+    #[test]
+    fn call_tool_read_resource_returns_content() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "uri".to_string(),
+            Value::String("insights:shaded-views".to_string()),
+        );
+        let result = call_tool(
+            "onshape_read_resource",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        );
+        let call_result = assert_immediate_ok(result);
+        assert_eq!(call_result.is_error, Some(false));
+
+        let text = call_result.content[0]
+            .raw
+            .as_text()
+            .expect("should be text content");
+        assert!(
+            text.text.contains("Part Studio Shaded Views"),
+            "should contain the document title"
+        );
+        assert!(
+            text.text.contains("pixelSize"),
+            "should contain pixelSize guidance"
+        );
+    }
+
+    #[test]
+    fn call_tool_read_resource_unknown_uri_returns_error() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "uri".to_string(),
+            Value::String("nonexistent:nothing".to_string()),
+        );
+        let result = call_tool(
+            "onshape_read_resource",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        );
+        let result = assert_immediate_ok(result);
+        assert_eq!(result.is_error, Some(true));
+        let text = result.content.first().expect("should have content");
+        let text = match text.raw {
+            rmcp::model::RawContent::Text(ref t) => &t.text,
+            _ => panic!("expected text content"),
+        };
+        assert!(
+            text.contains("not found"),
+            "error should mention not found: {text}",
+        );
+        assert!(
+            text.contains("insights:shaded-views"),
+            "error should list available URIs: {text}",
+        );
     }
 }

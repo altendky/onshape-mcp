@@ -25,6 +25,11 @@
 - [Release](project/release.md)
 - [npm Wrapper](project/npm-wrapper.md)
 
+# Insights
+
+- [Shaded Views](mcp-resources/insights/shaded-views.md)
+- [Sketch Constraints](mcp-resources/insights/sketch-constraints.md)
+
 # Project Management
 
 - [Implementation](project/implementation.md)

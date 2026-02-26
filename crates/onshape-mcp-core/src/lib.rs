@@ -213,14 +213,21 @@ pub const CATCH_PHRASE: &str =
 #[must_use]
 pub fn server_info(name: &str, version: &str) -> ServerInfo {
     ServerInfo {
-        capabilities: ServerCapabilities::builder().enable_tools().build(),
+        capabilities: ServerCapabilities::builder()
+            .enable_tools()
+            .enable_resources()
+            .build(),
         server_info: Implementation {
             name: name.into(),
             version: version.into(),
             ..Default::default()
         },
         instructions: Some(format!(
-            "Onshape MCP server for CAD integration. {CATCH_PHRASE}"
+            "Onshape MCP server for CAD integration. \
+             This server provides insight resources with practical Onshape API \
+             guidance. Before calling endpoints for the first time, list and \
+             read relevant resources to avoid common pitfalls. \
+             {CATCH_PHRASE}"
         )),
         ..Default::default()
     }
@@ -255,11 +262,19 @@ mod tests {
     }
 
     #[test]
+    fn server_info_enables_resources_capability() {
+        let info = server_info("test", "0.0.0");
+
+        assert!(info.capabilities.resources.is_some());
+    }
+
+    #[test]
     fn server_info_includes_instructions() {
         let info = server_info("test", "0.0.0");
 
         let instructions = info.instructions.expect("instructions should be set");
         assert!(instructions.contains("Onshape MCP server"));
+        assert!(instructions.contains("insight resources"));
         assert!(instructions.contains(CATCH_PHRASE));
     }
 

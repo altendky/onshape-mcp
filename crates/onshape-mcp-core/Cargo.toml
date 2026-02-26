@@ -13,6 +13,7 @@ categories = ["development-tools"]
 [dependencies]
 chrono.workspace = true
 onshape-client-core.workspace = true
+onshape-mcp-resources.workspace = true
 # Note: Using default features (base64, macros, server) for full type support.
 # This pulls in tokio as a transitive dep, but core doesn't perform any I/O.
 rmcp.workspace = true

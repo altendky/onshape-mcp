@@ -16,7 +16,8 @@ use oauth2::AccessToken;
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, ServerInfo,
+        CallToolRequestParams, CallToolResult, ErrorCode, ListResourcesResult, ListToolsResult,
+        PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, ServerInfo,
     },
     service::{RequestContext, RoleServer},
     transport::stdio,
@@ -221,6 +222,36 @@ impl ServerHandler for OnshapeMcpServer {
             next_cursor: None,
             meta: None,
         }))
+    }
+
+    fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
+        std::future::ready(Ok(ListResourcesResult {
+            resources: onshape_mcp_resources::list_resources(),
+            next_cursor: None,
+            meta: None,
+        }))
+    }
+
+    fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
+        let result = onshape_mcp_resources::read_resource(&request.uri);
+        std::future::ready(match result {
+            onshape_mcp_resources::ResourceResult::Immediate(Ok(read_result)) => Ok(read_result),
+            onshape_mcp_resources::ResourceResult::Immediate(Err(
+                onshape_mcp_resources::ResourceError::NotFound(uri),
+            )) => Err(McpError::new(
+                ErrorCode::INVALID_PARAMS,
+                format!("Resource not found: {uri}"),
+                None::<serde_json::Value>,
+            )),
+        })
     }
 
     #[allow(clippy::significant_drop_tightening)]

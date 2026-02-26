@@ -1,0 +1,21 @@
+[package]
+name = "onshape-mcp-resources"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "MCP resource definitions for Onshape integration (generated from docs)"
+keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
+categories = ["development-tools"]
+
+[dependencies]
+rmcp.workspace = true
+
+[build-dependencies]
+proc-macro2.workspace = true
+pulldown-cmark.workspace = true
+
+[lints]
+workspace = true
