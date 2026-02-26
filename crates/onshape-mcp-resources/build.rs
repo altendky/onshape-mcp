@@ -193,7 +193,7 @@ fn rust_string_literal(s: &str) -> String {
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
-    let resources_dir = manifest_dir.join("../../docs/src/mcp-resources");
+    let resources_dir = manifest_dir.join("resources");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
 
     // Watch the top-level mcp-resources directory for new groups
