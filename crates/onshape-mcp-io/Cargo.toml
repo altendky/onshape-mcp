@@ -19,6 +19,7 @@ oauth2 = { workspace = true, features = ["reqwest", "rustls-tls"] }
 onshape-client-core.workspace = true
 onshape-client-io.workspace = true
 onshape-mcp-core.workspace = true
+onshape-mcp-resources.workspace = true
 reqwest.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-io"] }
 secrecy.workspace = true
