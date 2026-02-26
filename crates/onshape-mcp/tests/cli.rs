@@ -1259,6 +1259,7 @@ fn tools_call_list_resources_returns_entries() {
     let content = response["result"]["content"]
         .as_array()
         .expect("content should be an array");
+    assert!(!content.is_empty(), "content should not be empty");
     let text = content[0]["text"]
         .as_str()
         .expect("text should be a string");
@@ -1296,6 +1297,7 @@ fn tools_call_read_resource_returns_content() {
     let content = response["result"]["content"]
         .as_array()
         .expect("content should be an array");
+    assert!(!content.is_empty(), "content should not be empty");
     let text = content[0]["text"]
         .as_str()
         .expect("text should be a string");
@@ -1338,6 +1340,10 @@ fn tools_call_read_resource_unknown_uri_returns_error() {
     let content = response["result"]["content"]
         .as_array()
         .expect("content should be an array");
+    assert!(
+        !content.is_empty(),
+        "content should contain at least one error entry"
+    );
     let error_text = content[0]["text"]
         .as_str()
         .expect("error text should be a string");
