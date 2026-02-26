@@ -26,6 +26,8 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml', 'mise.toml', 'mise.lock') }}
 
-      - run: pre-commit run --show-diff-on-failure --color=always --all-files
+      - env:
+          MISE_VERBOSE: 1
+        run: pre-commit run --show-diff-on-failure --color=always --all-files
