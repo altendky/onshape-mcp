@@ -16,7 +16,7 @@ jobs:
       stable: ${{ steps.resolve.outputs.stable }}
       beta: ${{ steps.resolve.outputs.beta }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Resolve versions
         id: resolve
@@ -30,9 +30,9 @@ jobs:
     needs: [library, resolve-versions]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: jdx/mise-action@v3
+      - uses: jdx/mise-action@6d1e696aa24c1aa1bcc1adea0212707c71ab78a8 # v3
         env:
           RUSTUP_TOOLCHAIN: stable
 
@@ -72,9 +72,9 @@ jobs:
         rust: ${{ fromJSON(needs.library.outputs.matrix).axes.rust }}
         exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.windows-arm }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: jdx/mise-action@v3
+      - uses: jdx/mise-action@6d1e696aa24c1aa1bcc1adea0212707c71ab78a8 # v3
         env:
           RUSTUP_TOOLCHAIN: stable
 
@@ -128,7 +128,7 @@ jobs:
         run: cargo nextest archive --all-features --archive-file target/nextest-archive.tar.zst
 
       - name: Upload test archive
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: nextest-archive-${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}-${{ matrix.rust.matrix }}
           path: target/nextest-archive.tar.zst
@@ -150,10 +150,10 @@ jobs:
         libc: ${{ fromJSON(needs.library.outputs.matrix).axes.libc }}
         exclude: ${{ fromJSON(needs.library.outputs.matrix).exclude.test }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Download test archive
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: nextest-archive-${{ matrix.os.matrix }}-${{ matrix.arch.matrix }}-${{ matrix.rust.matrix }}
 
@@ -168,7 +168,7 @@ jobs:
       # Non-musl: Install nextest via mise and run tests
       - name: Setup mise
         if: matrix.libc.matrix != 'musl'
-        uses: jdx/mise-action@v3
+        uses: jdx/mise-action@6d1e696aa24c1aa1bcc1adea0212707c71ab78a8 # v3
         env:
           RUSTUP_TOOLCHAIN: stable
 
