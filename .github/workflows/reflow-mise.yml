@@ -13,3 +13,5 @@ jobs:
       - uses: jdx/mise-action@v3
         with:
           install_args: --locked --dry-run
+        env:
+          RUSTUP_TOOLCHAIN: stable
