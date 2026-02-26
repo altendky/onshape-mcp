@@ -1,0 +1,58 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  // Extend recommended defaults + SHA pinning for GitHub Actions
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+
+  // Automerge PRs after approval + CI pass (uses GitHub native auto-merge)
+  "automerge": true,
+  "automergeStrategy": "merge-commit",
+
+  // Enable the beta pre-commit manager
+  "pre-commit": {
+    "enabled": true
+  },
+
+  // Custom managers for Rust toolchain version (rust-toolchain.toml + Cargo.toml MSRV)
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^rust-toolchain\\.toml$/"],
+      "matchStrings": ["channel\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+)\""],
+      "depNameTemplate": "rust-lang/rust",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+)\\.\\d+$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^Cargo\\.toml$/"],
+      "matchStrings": ["rust-version\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+)\""],
+      "depNameTemplate": "rust-lang/rust",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+)\\.\\d+$"
+    }
+  ],
+
+  "packageRules": [
+    // Group Rust toolchain updates (rust-toolchain.toml + Cargo.toml MSRV)
+    {
+      "matchDepNames": ["rust-lang/rust"],
+      "groupName": "Rust toolchain"
+    },
+
+    // Group GitHub Actions updates
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    },
+
+    // Override extractVersion for nextest (version_prefix workaround)
+    {
+      "matchDepNames": ["github:nextest-rs/nextest"],
+      "extractVersion": "^cargo-nextest-(?<version>.+)$"
+    }
+  ]
+}
