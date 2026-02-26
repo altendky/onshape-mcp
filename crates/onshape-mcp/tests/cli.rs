@@ -17,6 +17,8 @@ struct McpTestClient {
     stdin: std::process::ChildStdin,
     response_rx: mpsc::Receiver<std::io::Result<String>>,
     next_id: i64,
+    /// Temp directory for XDG isolation — kept alive for the lifetime of the client.
+    _isolation_dir: tempfile::TempDir,
 }
 
 impl McpTestClient {
@@ -33,24 +35,20 @@ impl McpTestClient {
     }
 
     fn spawn_with_env_and_args(env: &HashMap<&str, &str>, args: &[&str]) -> Self {
-        let binary_path = find_binary();
-        let mut cmd = Command::new(&binary_path);
+        let isolation_dir = tempfile::tempdir().expect("should create isolation temp dir");
+        let mut cmd = isolated_command(isolation_dir.path());
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        // Clear all ONSHAPE_MCP_ env vars to isolate tests
-        for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with(ENV_PREFIX)) {
-            cmd.env_remove(&key);
-        }
         for (key, value) in env {
             cmd.env(key, value);
         }
         for arg in args {
             cmd.arg(arg);
         }
-        let mut child = cmd
-            .spawn()
-            .unwrap_or_else(|e| panic!("failed to spawn binary at {}: {e}", binary_path.display()));
+        let mut child = cmd.spawn().unwrap_or_else(|e| {
+            panic!("failed to spawn binary at {}: {e}", find_binary().display())
+        });
 
         let stdin = child.stdin.take().expect("failed to open stdin");
         let stdout = child.stdout.take().expect("failed to open stdout");
@@ -81,6 +79,7 @@ impl McpTestClient {
             stdin,
             response_rx,
             next_id: 1,
+            _isolation_dir: isolation_dir,
         }
     }
 
@@ -183,6 +182,33 @@ impl McpTestClient {
     }
 }
 
+/// Create a [`Command`] for the server binary with environment isolation.
+///
+/// Sets up XDG overrides and clears `ONSHAPE_MCP_*` env vars so the spawned
+/// process cannot pick up the developer's local config/token files or env-based
+/// credentials.
+///
+/// The caller must keep the `isolation_dir` alive for the lifetime of the process.
+fn isolated_command(isolation_dir: &std::path::Path) -> Command {
+    let binary_path = find_binary();
+    let mut cmd = Command::new(&binary_path);
+
+    // Clear all ONSHAPE_MCP_ env vars to isolate tests
+    for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with(ENV_PREFIX)) {
+        cmd.env_remove(&key);
+    }
+
+    // Override XDG directories so dirs::data_dir() and dirs::config_dir()
+    // resolve to empty temp directories instead of the user's real ones.
+    cmd.env("XDG_DATA_HOME", isolation_dir.join("data"));
+    cmd.env("XDG_CONFIG_HOME", isolation_dir.join("config"));
+    // Belt-and-suspenders: override HOME for platforms where dirs uses it
+    // as a fallback (e.g., if XDG vars are somehow not respected).
+    cmd.env("HOME", isolation_dir.join("home"));
+
+    cmd
+}
+
 /// Find the binary path, handling both normal cargo test and nextest archive contexts.
 ///
 /// # Panics
@@ -212,58 +238,11 @@ fn find_binary() -> PathBuf {
 
 #[test]
 fn mcp_initialization_returns_server_info() {
-    let binary_path = find_binary();
-
-    // Spawn the MCP server with stdin/stdout pipes
-    let mut child = Command::new(&binary_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap_or_else(|e| panic!("failed to spawn binary at {binary_path:?}: {e}"));
-
-    let mut stdin = child.stdin.take().expect("failed to open stdin");
-    let stdout = child.stdout.take().expect("failed to open stdout");
-    let mut reader = BufReader::new(stdout);
-
-    // Send MCP initialize request (JSON-RPC over stdio)
-    let init_request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {
-                "name": "test-client",
-                "version": "0.0.1"
-            }
-        }
-    });
-
-    let request_str = serde_json::to_string(&init_request).unwrap();
-    writeln!(stdin, "{request_str}").expect("failed to write to stdin");
-    stdin.flush().expect("failed to flush stdin");
-
-    // Read the response (one line of JSON) with timeout
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut response_line = String::new();
-        let res = reader.read_line(&mut response_line).map(|_| response_line);
-        let _ = tx.send(res);
-    });
-    let response_line = rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("timeout waiting for response")
-        .expect("failed to read response");
-
-    // Parse and verify the response
-    let response: serde_json::Value =
-        serde_json::from_str(&response_line).expect("failed to parse JSON response");
+    let mut client = McpTestClient::spawn();
+    let response = client.initialize();
 
     // Verify JSON-RPC structure
     assert_eq!(response["jsonrpc"], "2.0");
-    assert_eq!(response["id"], 1);
     assert!(response["error"].is_null(), "unexpected error: {response}");
 
     // Verify server info in result
@@ -285,31 +264,7 @@ fn mcp_initialization_returns_server_info() {
         "tools capability should be enabled"
     );
 
-    // Send the initialized notification (required by MCP protocol)
-    let initialized_notification = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized"
-    });
-    let notification_str = serde_json::to_string(&initialized_notification).unwrap();
-    writeln!(stdin, "{notification_str}").expect("failed to write initialized notification");
-    stdin.flush().expect("failed to flush stdin");
-
-    // Close stdin to signal shutdown
-    drop(stdin);
-
-    // Wait for the process to exit with timeout
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let status = loop {
-        if let Some(status) = child.try_wait().expect("failed to wait for child") {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            panic!("timed out waiting for MCP server to exit");
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    assert!(status.success(), "process exited with error: {status}");
+    client.shutdown();
 }
 
 #[test]
@@ -491,8 +446,8 @@ fn server_rejects_insecure_config_file() {
         .expect("should set permissions");
 
     let config_arg = format!("--config={}", config_path.display());
-    let binary_path = find_binary();
-    let output = Command::new(&binary_path)
+    let isolation_dir = tempfile::tempdir().expect("should create isolation temp dir");
+    let output = isolated_command(isolation_dir.path())
         .arg(&config_arg)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -607,26 +562,21 @@ fn auth_method_basic_via_config_file() {
 
 #[test]
 fn server_rejects_invalid_auth_method_via_cli_flag() {
-    let binary_path = find_binary();
-    let mut cmd = Command::new(&binary_path);
-    cmd.args([
-        "--access-key",
-        "ak",
-        "--secret-key",
-        "sk",
-        "--auth-method",
-        "nonsense",
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-
-    // Clear all ONSHAPE_MCP_ env vars to isolate the test
-    for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with(ENV_PREFIX)) {
-        cmd.env_remove(&key);
-    }
-
-    let output = cmd.output().expect("should run binary");
+    let isolation_dir = tempfile::tempdir().expect("should create isolation temp dir");
+    let output = isolated_command(isolation_dir.path())
+        .args([
+            "--access-key",
+            "ak",
+            "--secret-key",
+            "sk",
+            "--auth-method",
+            "nonsense",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("should run binary");
 
     assert!(
         !output.status.success(),
@@ -643,21 +593,16 @@ fn server_rejects_invalid_auth_method_via_cli_flag() {
 
 #[test]
 fn server_rejects_invalid_auth_method_via_env_var() {
-    let binary_path = find_binary();
-    let mut cmd = Command::new(&binary_path);
-    cmd.stdin(Stdio::null())
+    let isolation_dir = tempfile::tempdir().expect("should create isolation temp dir");
+    let output = isolated_command(isolation_dir.path())
+        .env("ONSHAPE_MCP_AUTH__ACCESS_KEY", "ak")
+        .env("ONSHAPE_MCP_AUTH__SECRET_KEY", "sk")
+        .env("ONSHAPE_MCP_AUTH__METHOD", "nonsense")
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    // Clear all ONSHAPE_MCP_ env vars to isolate the test
-    for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with(ENV_PREFIX)) {
-        cmd.env_remove(&key);
-    }
-    cmd.env("ONSHAPE_MCP_AUTH__ACCESS_KEY", "ak");
-    cmd.env("ONSHAPE_MCP_AUTH__SECRET_KEY", "sk");
-    cmd.env("ONSHAPE_MCP_AUTH__METHOD", "nonsense");
-
-    let output = cmd.output().expect("should run binary");
+        .stderr(Stdio::piped())
+        .output()
+        .expect("should run binary");
 
     assert!(
         !output.status.success(),
@@ -691,19 +636,14 @@ fn server_rejects_invalid_auth_method_via_config_file() {
     }
 
     let config_arg = format!("--config={}", config_path.display());
-    let binary_path = find_binary();
-    let mut cmd = Command::new(&binary_path);
-    cmd.arg(&config_arg)
+    let isolation_dir = tempfile::tempdir().expect("should create isolation temp dir");
+    let output = isolated_command(isolation_dir.path())
+        .arg(&config_arg)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    // Clear all ONSHAPE_MCP_ env vars to isolate the test
-    for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with(ENV_PREFIX)) {
-        cmd.env_remove(&key);
-    }
-
-    let output = cmd.output().expect("should run binary");
+        .stderr(Stdio::piped())
+        .output()
+        .expect("should run binary");
 
     assert!(
         !output.status.success(),
@@ -800,16 +740,10 @@ fn auth_status_oauth_configured_with_client_credentials() {
 
     let auth_result = call_auth_status(&mut client);
     assert_eq!(auth_result["auth_method"], "oauth");
-    // Status depends on the default token file:
-    // - No token file: "not_configured" (OAuthPending)
-    // - Token file present, not expired: "not_validated" (OAuthReady)
-    // - Token file present, expired: "expired" (OAuthReady with expired token)
-    let status = auth_result["status"]
-        .as_str()
-        .expect("status should be a string");
-    assert!(
-        status == "not_configured" || status == "not_validated" || status == "expired",
-        "expected 'not_configured', 'not_validated', or 'expired', got: {status}"
+    // With test isolation, no token file exists → OAuthPending → "not_configured"
+    assert_eq!(
+        auth_result["status"], "not_configured",
+        "expected 'not_configured' (OAuthPending) with no token file"
     );
 
     client.shutdown();
@@ -864,14 +798,10 @@ fn auth_method_oauth_via_config_file() {
 
     let auth_result = call_auth_status(&mut client);
     assert_eq!(auth_result["auth_method"], "oauth");
-    // If a token file exists at the default path, the status is "not_validated"
-    // (OAuthReady). Otherwise "not_configured" (OAuthPending).
-    let status = auth_result["status"]
-        .as_str()
-        .expect("status should be a string");
-    assert!(
-        status == "not_configured" || status == "not_validated" || status == "expired",
-        "expected 'not_configured', 'not_validated', or 'expired', got: {status}"
+    // With test isolation, no token file exists → OAuthPending → "not_configured"
+    assert_eq!(
+        auth_result["status"], "not_configured",
+        "expected 'not_configured' (OAuthPending) with no token file"
     );
 
     client.shutdown();
@@ -891,14 +821,10 @@ fn oauth_client_credentials_via_cli_flags() {
 
     let auth_result = call_auth_status(&mut client);
     assert_eq!(auth_result["auth_method"], "oauth");
-    // If a token file exists at the default path, the status is "not_validated"
-    // (OAuthReady). Otherwise "not_configured" (OAuthPending).
-    let status = auth_result["status"]
-        .as_str()
-        .expect("status should be a string");
-    assert!(
-        status == "not_configured" || status == "not_validated" || status == "expired",
-        "expected 'not_configured', 'not_validated', or 'expired', got: {status}"
+    // With test isolation, no token file exists → OAuthPending → "not_configured"
+    assert_eq!(
+        auth_result["status"], "not_configured",
+        "expected 'not_configured' (OAuthPending) with no token file"
     );
 
     client.shutdown();
