@@ -29,20 +29,23 @@ jobs:
           key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml', 'mise.toml', 'mise.lock') }}
 
       - name: Mise diagnostics
+        if: runner.os == 'Windows'
+        shell: pwsh
         env:
           RUST_BACKTRACE: 1
           MISE_VERBOSE: 1
         run: |
-          echo "=== mise doctor ==="
-          mise doctor
-          echo "=== mise config ls ==="
-          mise config ls
-          echo "=== mise which pre-commit ==="
-          mise which pre-commit
-          echo "=== mise where pre-commit ==="
-          mise where pre-commit
+          echo "=== mise bin-paths ==="
+          mise bin-paths
+          echo "=== pre-commit install dir contents ==="
+          $dir = mise where pre-commit
+          echo "Install dir: $dir"
+          Get-ChildItem -Recurse $dir
+          echo "=== where.exe pre-commit ==="
+          where.exe pre-commit
+          echo "=== mise ls ==="
+          mise ls --json
 
       - env:
-          RUST_BACKTRACE: 1
           MISE_VERBOSE: 1
         run: pre-commit run --show-diff-on-failure --color=always --all-files
