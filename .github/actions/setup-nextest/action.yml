@@ -1,27 +1,9 @@
-name: Setup Nextest
-description: Install cargo-nextest, works in both containers and bare runners
-
-inputs:
-  use-musl:
-    description: >
-      Use musl-compatible installation method. Set to 'true' for musl-based
-      environments (e.g., Alpine containers) where glibc binaries won't work.
-      Downloads prebuilt musl binary on x86_64, builds from source on ARM.
-    required: false
-    default: "false"
+name: Setup Nextest (musl)
+description: Install cargo-nextest for musl-based environments (e.g., Alpine containers) where mise cannot be used
 
 runs:
   using: composite
   steps:
-    # Method 1: Use musl installation (for musl-based environments like Alpine)
     - name: Install cargo-nextest (musl)
-      if: inputs.use-musl == 'true'
       shell: sh
       run: "${{ github.action_path }}/setup.sh"
-
-    # Method 2: Use taiki-e/install-action (for glibc-based runners)
-    - name: Install cargo-nextest
-      if: inputs.use-musl != 'true'
-      uses: taiki-e/install-action@v2
-      with:
-        tool: cargo-nextest

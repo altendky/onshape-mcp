@@ -1,0 +1,15 @@
+name: Mise
+
+on:
+  workflow_call:
+
+jobs:
+  check:
+    name: Lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: --locked --dry-run

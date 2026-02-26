@@ -1,0 +1,35 @@
+[[tools."aqua:EmbarkStudios/cargo-deny"]]
+version = "0.19.0"
+backend = "aqua:EmbarkStudios/cargo-deny"
+
+[[tools."aqua:taiki-e/cargo-llvm-cov"]]
+version = "0.8.4"
+backend = "aqua:taiki-e/cargo-llvm-cov"
+
+[[tools."cargo:lychee"]]
+version = "0.23.0"
+backend = "cargo:lychee"
+
+[[tools."github:nextest-rs/nextest"]]
+version = "0.9.129"
+backend = "github:nextest-rs/nextest"
+"platforms.linux-arm64" = { checksum = "sha256:27f6a395baa53a98c0d817104dcef4795d493dd41f33348f49f45ac616a1bfa7", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-aarch64-unknown-linux-gnu.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360384455"}
+"platforms.linux-x64" = { checksum = "sha256:92365076068c60c2e571445a34521c32f18dc0f0230cf35301415fab52ce39bb", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-x86_64-unknown-linux-gnu.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360382483"}
+"platforms.macos-arm64" = { checksum = "sha256:13219deec49e5ded0d334f42b2b968f83b99ecb4fa84397b04a74213dcae1427", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-universal-apple-darwin.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360381603"}
+"platforms.macos-x64" = { checksum = "sha256:13219deec49e5ded0d334f42b2b968f83b99ecb4fa84397b04a74213dcae1427", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-universal-apple-darwin.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360381603"}
+"platforms.windows-x64" = { checksum = "sha256:2e417a5cb993feb0bea6b5beee7450948c02aecf13800936ae196dc7dfb49c38", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-x86_64-pc-windows-msvc.zip", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360383606"}
+
+[tools."github:nextest-rs/nextest".options]
+version_prefix = "cargo-nextest-"
+
+[[tools.node]]
+version = "22.22.0"
+backend = "core:node"
+
+[[tools.pre-commit]]
+version = "4.5.1"
+backend = "aqua:pre-commit/pre-commit"
+
+[[tools.python]]
+version = "3.14.3"
+backend = "core:python"

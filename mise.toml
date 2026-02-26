@@ -1,0 +1,14 @@
+[tools]
+node = "22"
+python = "3"
+pre-commit = "4.5.1"
+# Non-core tools: use explicit backend prefix (aqua:/github:) for Renovate compatibility
+"aqua:taiki-e/cargo-llvm-cov" = "0.8.4"
+"aqua:EmbarkStudios/cargo-deny" = "0.19.0"
+"github:nextest-rs/nextest" = { version = "0.9.129", version_prefix = "cargo-nextest-" }
+# lychee uses the cargo backend with binstall support so that pre-built binaries
+# are downloaded where available (Linux, Windows x64, macOS ARM64), and source
+# compilation is used as a fallback on platforms without pre-built binaries
+# (macOS Intel). The lychee project dropped macOS Intel binaries after v0.15.1
+# (April 2024), so the aqua backend cannot cover all CI platforms.
+"cargo:lychee" = "0.23.0"
