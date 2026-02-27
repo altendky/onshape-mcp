@@ -1,0 +1,6 @@
+name = "onshape-oauth-proxy"
+main = "src/index.ts"
+compatibility_date = "2025-02-24"
+
+# Deployed to workers.dev — no custom domain needed.
+# URL: https://onshape-oauth-proxy.<subdomain>.workers.dev

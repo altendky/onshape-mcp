@@ -48,6 +48,10 @@ secret_key = "..."
 
 OAuth requires a client ID and client secret from an Onshape OAuth application, plus access tokens obtained through the authorization code flow.
 
+The client secret can be provided directly to the CLI (via config file, environment variable, or CLI flag) or held by the [OAuth token exchange proxy](oauth-proxy.md).
+When using the proxy, the CLI only needs the client ID (which is public) — the proxy adds the client secret when forwarding token requests to Onshape.
+See [OAuth Proxy](oauth-proxy.md) for details on this deployment model.
+
 **Config file example:**
 
 ```toml
