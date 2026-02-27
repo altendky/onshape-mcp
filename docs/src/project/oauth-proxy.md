@@ -171,6 +171,28 @@ Example: `ALLOWED_SOURCES=home.fstab.net,10.0.0.5`
 This handles dynamic DNS automatically — if the IP for `home.fstab.net` changes, the worker resolves the new IP on the next request.
 The DNS-over-HTTPS lookup adds approximately 5–20ms of latency (Cloudflare-internal).
 
+### Automatic IPv4 Retry
+
+On dual-stack networks the OS may prefer IPv6, causing the proxy to see an IPv6 source IP even when `ALLOWED_SOURCES` only contains IPv4 addresses (or hostnames that resolve to IPv4).
+Both the Rust MCP server and the OpenCode auth plugin detect this situation and retry with the other address family automatically.
+
+**Rust MCP server** (token refresh):
+
+1. Sends the refresh request with the default HTTP client.
+2. If the proxy returns 403 with an IPv6 `source_ip`, builds a new `reqwest::Client` with `local_address` set to `0.0.0.0` (`Ipv4Addr::UNSPECIFIED`) and retries.
+
+**OpenCode auth plugin** (token exchange):
+
+Bun's `fetch` ignores both `localAddress` (undici) and `family: 4` (node:https), so the plugin resolves the proxy hostname to all IPv6 (AAAA) and IPv4 (A) records via `dns.resolve6` / `dns.resolve4` and connects to each resolved IP directly using `node:https` with `servername` for TLS SNI and `Host` for HTTP routing.
+
+1. Resolves the proxy hostname to all AAAA and A records in parallel.
+2. Tries each IPv6 address — within a family, only connection errors advance to the next address; any HTTP response (even 403) is a definitive answer.
+3. If IPv6 yields 403 or all IPv6 addresses fail to connect, tries each IPv4 address the same way.
+4. If both families fail with 403, the error message includes all `source_ip` values seen, giving the user the information needed to update `ALLOWED_SOURCES`.
+5. If every address in both families fails to connect, reports the total number of addresses attempted.
+
+This is transparent to the user — no manual IP configuration is needed as long as one of IPv4 or IPv6 is allowed.
+
 ### Exempt Endpoints
 
 `GET /health` is not IP-restricted, allowing external monitoring without whitelisting the monitoring service's IP.
@@ -231,6 +253,9 @@ The plugin still runs a localhost callback server and handles PKCE.
    ```json
    { "access_token": "...", "refresh_token": "...", "expires_in": 3600, ... }
    ```
+
+   If the proxy returns 403, the plugin automatically retries with the other address family (see [Automatic IPv4 Retry](#automatic-ipv4-retry) above).
+   If both families fail, the error message includes all source IPs that were tried.
 
 9. Plugin saves tokens to the token file with `proxy_url` (not `client_secret`):
 

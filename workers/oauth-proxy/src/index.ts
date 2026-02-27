@@ -56,13 +56,28 @@ async function executeEffect(effect: Effect): Promise<Response> {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
       });
 
-      // Return Onshape's response as-is (status + body).
-      return new Response(upstream.body, {
+      // Always return JSON.  Onshape's token endpoint normally returns
+      // JSON, but if it ever returns something else (HTML error page,
+      // empty body, etc.) we wrap it so clients can rely on JSON.
+      const upstreamBody = await upstream.text();
+      let jsonBody: string;
+      try {
+        // Validate it's actually JSON by parsing, then pass through
+        // the original text to avoid any re-serialisation changes.
+        JSON.parse(upstreamBody);
+        jsonBody = upstreamBody;
+      } catch {
+        // Not JSON — wrap the raw body in a JSON error envelope.
+        jsonBody = JSON.stringify({
+          error: "upstream_error",
+          upstream_status: upstream.status,
+          upstream_body: upstreamBody,
+        });
+      }
+
+      return new Response(jsonBody, {
         status: upstream.status,
-        headers: {
-          "Content-Type":
-            upstream.headers.get("Content-Type") ?? "application/json",
-        },
+        headers: JSON_HEADERS,
       });
     }
   }
