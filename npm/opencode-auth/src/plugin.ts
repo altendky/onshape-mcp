@@ -199,8 +199,7 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
               preflightBody,
             );
 
-            const preflightPassed =
-              ipv6Preflight && ipv6Preflight.status !== 403;
+            const preflightPassed = ipv6Preflight?.status === 400;
 
             if (!preflightPassed) {
               if (ipv6Preflight?.status === 403) {
@@ -213,7 +212,7 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                 preflightBody,
               );
 
-              if (ipv4Preflight && ipv4Preflight.status !== 403) {
+              if (ipv4Preflight?.status === 400) {
                 // IPv4 is allowed — proceed (the exchange will also
                 // need to use IPv4, which the exchange block handles).
               } else {
