@@ -24,6 +24,7 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 - [Development](development.md) — Local development, pre-commit hooks, testing
 - [Release](release.md) — Distribution, versioning, publishing
 - [npm Wrapper](npm-wrapper.md) — npm package design for `npx` installation
+- [OAuth Proxy](oauth-proxy.md) — Cloudflare Worker token exchange proxy for OAuth2
 
 ### Project Management
 

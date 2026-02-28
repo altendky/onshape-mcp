@@ -44,6 +44,13 @@ pub struct AuthConfig {
     /// OAuth 2.0 client secret (for OAuth auth).
     #[serde(default)]
     pub client_secret: Option<SecretString>,
+    /// OAuth token exchange proxy URL (for proxy-based OAuth auth).
+    ///
+    /// When set, the server uses this proxy for token refresh instead of
+    /// contacting Onshape directly. The proxy holds the client secret.
+    /// Mutually exclusive with `client_secret` — use one or the other.
+    #[serde(default)]
+    pub proxy_url: Option<String>,
     /// Authentication method to use for Onshape API requests.
     #[serde(default = "default_auth_method")]
     pub method: AuthMethod,
@@ -93,7 +100,7 @@ pub struct AppConfig {
 ///
 /// This is a lightweight summary of what was found on disk — no secrets,
 /// just enough for the core to make decisions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenStatus {
     /// No token file found (or the file could not be read).
     Absent,
@@ -101,6 +108,8 @@ pub enum TokenStatus {
     Present {
         /// When the access token expires, if known.
         expires_at: Option<DateTime<Utc>>,
+        /// Whether the token file contains a proxy URL for token refresh.
+        proxy_url: Option<String>,
     },
 }
 
@@ -119,6 +128,8 @@ pub struct AuthInventory {
     pub has_client_id: bool,
     /// Whether an OAuth client secret is configured.
     pub has_client_secret: bool,
+    /// Whether an OAuth token exchange proxy URL is configured.
+    pub has_proxy_url: bool,
     /// Status of the OAuth token file on disk.
     pub token_status: TokenStatus,
 }
@@ -128,11 +139,22 @@ impl AuthInventory {
     #[must_use]
     #[allow(clippy::missing_const_for_fn)]
     pub fn from_config(config: &AuthConfig, token_status: TokenStatus) -> Self {
+        // proxy_url can come from config OR from the token file.
+        let has_proxy_url = config.proxy_url.is_some()
+            || matches!(
+                &token_status,
+                TokenStatus::Present {
+                    proxy_url: Some(_),
+                    ..
+                }
+            );
+
         Self {
             has_access_key: config.access_key.is_some(),
             has_secret_key: config.secret_key.is_some(),
             has_client_id: config.client_id.is_some(),
             has_client_secret: config.client_secret.is_some(),
+            has_proxy_url,
             token_status,
         }
     }
@@ -181,6 +203,15 @@ pub fn resolve_auth(method: AuthMethod, inventory: &AuthInventory) -> ResolvedAu
     }
 }
 
+/// Whether the inventory has enough OAuth configuration to operate.
+///
+/// True when either:
+/// - Direct mode: `client_id` + `client_secret` are both present
+/// - Proxy mode: `proxy_url` is present (the proxy knows its own `client_id`/secret)
+const fn has_oauth_capability(inventory: &AuthInventory) -> bool {
+    (inventory.has_client_id && inventory.has_client_secret) || inventory.has_proxy_url
+}
+
 /// Auto-detect the best auth method from available credentials.
 ///
 /// Priority order:
@@ -189,11 +220,13 @@ pub fn resolve_auth(method: AuthMethod, inventory: &AuthInventory) -> ResolvedAu
 /// 3. OAuth pending (client creds but awaiting token)
 /// 4. Not configured
 fn resolve_auto(inventory: &AuthInventory) -> ResolvedAuth {
-    let has_oauth_client = inventory.has_client_id && inventory.has_client_secret;
+    let has_oauth = has_oauth_capability(inventory);
 
     // Priority 1: OAuth with tokens
-    if has_oauth_client && let TokenStatus::Present { expires_at } = inventory.token_status {
-        return ResolvedAuth::OAuthReady { expires_at };
+    if has_oauth && let TokenStatus::Present { expires_at, .. } = &inventory.token_status {
+        return ResolvedAuth::OAuthReady {
+            expires_at: *expires_at,
+        };
     }
 
     // Priority 2: Basic with both keys
@@ -202,7 +235,7 @@ fn resolve_auto(inventory: &AuthInventory) -> ResolvedAuth {
     }
 
     // Priority 3: OAuth pending (client creds but no tokens)
-    if has_oauth_client {
+    if has_oauth {
         return ResolvedAuth::OAuthPending;
     }
 
@@ -226,11 +259,13 @@ fn resolve_basic(method: AuthMethod, inventory: &AuthInventory) -> ResolvedAuth 
 
 /// Resolve explicit OAuth method.
 fn resolve_oauth(method: AuthMethod, inventory: &AuthInventory) -> ResolvedAuth {
-    let has_oauth_client = inventory.has_client_id && inventory.has_client_secret;
+    let has_oauth = has_oauth_capability(inventory);
 
-    if has_oauth_client {
-        if let TokenStatus::Present { expires_at } = inventory.token_status {
-            return ResolvedAuth::OAuthReady { expires_at };
+    if has_oauth {
+        if let TokenStatus::Present { expires_at, .. } = &inventory.token_status {
+            return ResolvedAuth::OAuthReady {
+                expires_at: *expires_at,
+            };
         }
         return ResolvedAuth::OAuthPending;
     }
@@ -270,12 +305,16 @@ fn not_configured_detail(method: AuthMethod, inventory: &AuthInventory) -> Strin
             }
         }
         AuthMethod::OAuth => {
-            if !inventory.has_client_id && !inventory.has_client_secret {
-                "No credentials configured".into()
+            if inventory.has_proxy_url {
+                // proxy_url is set — this shouldn't reach NotConfigured, but
+                // handle gracefully.
+                "OAuth proxy configured but tokens not available".into()
+            } else if !inventory.has_client_id && !inventory.has_client_secret {
+                "No credentials configured (set client_id + client_secret, or proxy_url)".into()
             } else if !inventory.has_client_id {
                 "Incomplete credentials: client_id is not configured".into()
             } else {
-                "Incomplete credentials: client_secret is not configured".into()
+                "Incomplete credentials: client_secret is not configured (or set proxy_url)".into()
             }
         }
         // Basic and any future API-key-based methods
@@ -315,6 +354,7 @@ impl Default for AuthConfig {
             secret_key: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
             method: AuthMethod::Auto,
             check_interval: DEFAULT_CHECK_INTERVAL,
         }
@@ -436,6 +476,7 @@ mod tests {
             has_secret_key: false,
             has_client_id: false,
             has_client_secret: false,
+            has_proxy_url: false,
             token_status: TokenStatus::Absent,
         }
     }
@@ -452,7 +493,10 @@ mod tests {
         AuthInventory {
             has_client_id: true,
             has_client_secret: true,
-            token_status: TokenStatus::Present { expires_at: None },
+            token_status: TokenStatus::Present {
+                expires_at: None,
+                proxy_url: None,
+            },
             ..inventory_nothing()
         }
     }
@@ -499,7 +543,11 @@ mod tests {
             has_secret_key: true,
             has_client_id: true,
             has_client_secret: true,
-            token_status: TokenStatus::Present { expires_at: None },
+            has_proxy_url: false,
+            token_status: TokenStatus::Present {
+                expires_at: None,
+                proxy_url: None,
+            },
         };
         let result = resolve_auth(AuthMethod::Auto, &inv);
         assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
@@ -512,6 +560,7 @@ mod tests {
             has_secret_key: true,
             has_client_id: true,
             has_client_secret: true,
+            has_proxy_url: false,
             token_status: TokenStatus::Absent,
         };
         let result = resolve_auth(AuthMethod::Auto, &inv);
@@ -1008,11 +1057,123 @@ mod tests {
             method: AuthMethod::OAuth,
             ..AuthConfig::default()
         };
-        let inv = AuthInventory::from_config(&config, TokenStatus::Present { expires_at: None });
+        let inv = AuthInventory::from_config(
+            &config,
+            TokenStatus::Present {
+                expires_at: None,
+                proxy_url: None,
+            },
+        );
         assert!(!inv.has_access_key);
         assert!(!inv.has_secret_key);
         assert!(inv.has_client_id);
         assert!(inv.has_client_secret);
         assert!(matches!(inv.token_status, TokenStatus::Present { .. }));
+    }
+
+    // ====================================================================
+    // Proxy URL Auth Resolution Tests
+    // ====================================================================
+
+    fn inventory_proxy_with_tokens() -> AuthInventory {
+        AuthInventory {
+            has_proxy_url: true,
+            token_status: TokenStatus::Present {
+                expires_at: None,
+                proxy_url: Some("https://proxy.example.com".into()),
+            },
+            ..inventory_nothing()
+        }
+    }
+
+    fn inventory_proxy_no_tokens() -> AuthInventory {
+        AuthInventory {
+            has_proxy_url: true,
+            token_status: TokenStatus::Absent,
+            ..inventory_nothing()
+        }
+    }
+
+    #[test]
+    fn auto_proxy_with_tokens_returns_oauth_ready() {
+        let result = resolve_auth(AuthMethod::Auto, &inventory_proxy_with_tokens());
+        assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
+    }
+
+    #[test]
+    fn auto_proxy_without_tokens_returns_pending() {
+        let result = resolve_auth(AuthMethod::Auto, &inventory_proxy_no_tokens());
+        assert_eq!(result, ResolvedAuth::OAuthPending);
+    }
+
+    #[test]
+    fn oauth_proxy_with_tokens_returns_ready() {
+        let result = resolve_auth(AuthMethod::OAuth, &inventory_proxy_with_tokens());
+        assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
+    }
+
+    #[test]
+    fn oauth_proxy_without_tokens_returns_pending() {
+        let result = resolve_auth(AuthMethod::OAuth, &inventory_proxy_no_tokens());
+        assert_eq!(result, ResolvedAuth::OAuthPending);
+    }
+
+    #[test]
+    fn proxy_url_without_client_secret_resolves_to_oauth() {
+        // proxy_url alone is sufficient — no client_id or client_secret needed.
+        let inv = AuthInventory {
+            has_proxy_url: true,
+            token_status: TokenStatus::Present {
+                expires_at: None,
+                proxy_url: None,
+            },
+            ..inventory_nothing()
+        };
+        let result = resolve_auth(AuthMethod::Auto, &inv);
+        assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
+    }
+
+    #[test]
+    fn inventory_from_config_detects_proxy_url_in_config() {
+        let config = AuthConfig {
+            proxy_url: Some("https://proxy.example.com".into()),
+            ..AuthConfig::default()
+        };
+        let inv = AuthInventory::from_config(&config, TokenStatus::Absent);
+        assert!(inv.has_proxy_url);
+    }
+
+    #[test]
+    fn inventory_from_config_detects_proxy_url_in_token_file() {
+        let config = AuthConfig::default();
+        let token_status = TokenStatus::Present {
+            expires_at: None,
+            proxy_url: Some("https://proxy.example.com".into()),
+        };
+        let inv = AuthInventory::from_config(&config, token_status);
+        assert!(inv.has_proxy_url);
+    }
+
+    #[test]
+    fn inventory_from_config_no_proxy_url_anywhere() {
+        let config = AuthConfig::default();
+        let inv = AuthInventory::from_config(&config, TokenStatus::Absent);
+        assert!(!inv.has_proxy_url);
+    }
+
+    #[test]
+    fn oauth_missing_client_secret_with_proxy_url_succeeds() {
+        // Only client_id is set (no client_secret), but proxy_url is set.
+        let inv = AuthInventory {
+            has_client_id: true,
+            has_proxy_url: true,
+            token_status: TokenStatus::Present {
+                expires_at: None,
+                proxy_url: None,
+            },
+            ..inventory_nothing()
+        };
+        let result = resolve_auth(AuthMethod::OAuth, &inv);
+        assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
     }
 }

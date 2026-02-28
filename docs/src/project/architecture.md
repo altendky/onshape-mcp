@@ -26,6 +26,24 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+## External Services
+
+```text
+┌──────────────────────────────────────────────────────────────────┐
+│                     OAuth Token Exchange Proxy                    │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │              workers/oauth-proxy (TypeScript)               │  │
+│  │      Cloudflare Worker — forwards token requests to         │  │
+│  │      Onshape with client_secret, returns responses          │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│  onshape-oauth-proxy.fstab.workers.dev                             │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+The OAuth proxy is a Cloudflare Worker, separate from the Rust workspace.
+It holds the OAuth2 client secret and exposes `/token/exchange` and `/token/refresh` endpoints that the CLI calls instead of contacting Onshape's token endpoint directly.
+See [OAuth Proxy](oauth-proxy.md) for details.
+
 ## Workspace Layout
 
 ```text
