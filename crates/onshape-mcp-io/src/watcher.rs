@@ -253,21 +253,13 @@ async fn handle_token_change(
 /// Build a full `OAuthApiState` from a token file that contains embedded credentials.
 ///
 /// Used for the `NotConfigured → OAuth` transition when the token file
-/// includes `client_id` and `client_secret` fields.
+/// includes either `client_id` + `client_secret` (direct mode) or
+/// `proxy_url` (proxy mode).
 fn build_oauth_from_token_file(
     ctx: &WatcherContext,
     token_data: onshape_client_core::oauth::OAuthTokenData,
 ) -> Result<OAuthApiState, Box<dyn std::error::Error + Send + Sync>> {
-    let client_id_str = token_data
-        .client_id
-        .clone()
-        .ok_or("token file missing client_id")?;
-    let client_secret_str = token_data
-        .client_secret
-        .clone()
-        .ok_or("token file missing client_secret")?;
-
-    let oauth_client = onshape_oauth_client(&client_id_str, &client_secret_str);
+    let refresh_method = refresh_method_from_token_data(&token_data)?;
     let session = OAuthSession::new(token_data, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
 
     let client = OnshapeClient::new(ClientConfig {
@@ -285,9 +277,7 @@ fn build_oauth_from_token_file(
 
     Ok(OAuthApiState {
         session,
-        oauth_client,
-        client_id: client_id_str,
-        client_secret: secrecy::SecretString::from(client_secret_str),
+        refresh_method,
         client,
         refresh_http,
         token_path: ctx.token_path.clone(),
@@ -296,13 +286,57 @@ fn build_oauth_from_token_file(
     })
 }
 
+/// Determine the refresh method from token file data.
+fn refresh_method_from_token_data(
+    token_data: &onshape_client_core::oauth::OAuthTokenData,
+) -> Result<crate::RefreshMethod, Box<dyn std::error::Error + Send + Sync>> {
+    // Proxy mode: token file has proxy_url.
+    if let Some(proxy_url) = &token_data.proxy_url {
+        return Ok(crate::RefreshMethod::Proxy {
+            proxy_url: proxy_url.clone(),
+        });
+    }
+
+    // Direct mode: token file has client_id + client_secret.
+    let client_id = token_data
+        .client_id
+        .clone()
+        .ok_or("token file missing client_id and proxy_url")?;
+    let client_secret = token_data
+        .client_secret
+        .clone()
+        .ok_or("token file missing client_secret and proxy_url")?;
+
+    let oauth_client = onshape_oauth_client(&client_id, &client_secret);
+    Ok(crate::RefreshMethod::Direct {
+        oauth_client: Box::new(oauth_client),
+        client_id,
+        client_secret: secrecy::SecretString::from(client_secret),
+    })
+}
+
 /// Build a full `OAuthApiState` from a pending state and token data.
 fn build_oauth_from_pending(
     pending: &OAuthPendingState,
     token_data: onshape_client_core::oauth::OAuthTokenData,
 ) -> Result<OAuthApiState, Box<dyn std::error::Error + Send + Sync>> {
-    let oauth_client =
-        onshape_oauth_client(&pending.client_id, pending.client_secret.expose_secret());
+    let refresh_method = match &pending.refresh_method {
+        crate::PendingRefreshMethod::Direct {
+            client_id,
+            client_secret,
+        } => {
+            let oauth_client = onshape_oauth_client(client_id, client_secret.expose_secret());
+            crate::RefreshMethod::Direct {
+                oauth_client: Box::new(oauth_client),
+                client_id: client_id.clone(),
+                client_secret: secrecy::SecretString::from(client_secret.clone()),
+            }
+        }
+        crate::PendingRefreshMethod::Proxy { proxy_url } => crate::RefreshMethod::Proxy {
+            proxy_url: proxy_url.clone(),
+        },
+    };
+
     let session = OAuthSession::new(token_data, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
 
     let client = OnshapeClient::new(ClientConfig {
@@ -320,9 +354,7 @@ fn build_oauth_from_pending(
 
     Ok(OAuthApiState {
         session,
-        oauth_client,
-        client_id: pending.client_id.clone(),
-        client_secret: secrecy::SecretString::from(pending.client_secret.clone()),
+        refresh_method,
         client,
         refresh_http,
         token_path: pending.token_path.clone(),

@@ -102,8 +102,21 @@ pub struct OAuthTokenData {
     /// Stored alongside tokens so the MCP server can refresh them without
     /// requiring separate configuration. Written by the `OpenCode` plugin
     /// during `opencode auth login`.
+    ///
+    /// Mutually exclusive with `proxy_url` — tokens use either direct
+    /// (`client_secret`) or proxy-based refresh.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
+    /// OAuth token exchange proxy URL.
+    ///
+    /// When present, the MCP server refreshes tokens via this proxy
+    /// (which holds the client secret) instead of contacting Onshape
+    /// directly.  Written by the `OpenCode` plugin when the user
+    /// authenticates via the proxy flow.
+    ///
+    /// Mutually exclusive with `client_secret`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
 }
 
 impl OAuthTokenData {
@@ -153,10 +166,37 @@ impl OAuthTokenData {
             expires_at,
             token_type: response.token_type().as_ref().to_string(),
             scopes,
-            // Client credentials are not in the token response — they are
-            // preserved from the previous token data by the caller.
+            // Client credentials and proxy URL are not in the token response —
+            // they are preserved from the previous token data by the caller.
             client_id: None,
             client_secret: None,
+            proxy_url: None,
+        }
+    }
+}
+
+impl OAuthTokenData {
+    /// Build token data from raw field values (e.g. parsed from a proxy response).
+    ///
+    /// The caller is responsible for preserving `client_id`, `client_secret`,
+    /// and `proxy_url` from the previous token data.
+    #[must_use]
+    pub fn from_raw(
+        access_token: String,
+        refresh_token: String,
+        expires_at: Option<DateTime<Utc>>,
+        token_type: String,
+        scopes: Option<Vec<String>>,
+    ) -> Self {
+        Self {
+            access_token: AccessToken::new(access_token),
+            refresh_token: RefreshToken::new(refresh_token),
+            expires_at,
+            token_type,
+            scopes,
+            client_id: None,
+            client_secret: None,
+            proxy_url: None,
         }
     }
 }
@@ -441,6 +481,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -479,6 +520,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let roundtripped: OAuthTokenData = serde_json::from_str(&json).expect("should deserialize");
@@ -498,6 +540,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("should parse")
@@ -518,6 +561,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         assert!(tokens.is_expired(expires));
     }
@@ -535,6 +579,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("should parse")
@@ -552,6 +597,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("should parse")
@@ -642,6 +688,7 @@ mod tests {
             scopes: Some(vec!["OAuth2Read".into(), "OAuth2Write".into()]),
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -661,6 +708,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -783,6 +831,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let json = serde_json::to_string_pretty(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -813,6 +862,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -835,6 +885,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -857,6 +908,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -874,6 +926,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let now = Utc::now();
         assert!(!tokens.is_expiring_soon(now, chrono::Duration::seconds(60)));
@@ -893,6 +946,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -915,6 +969,7 @@ mod tests {
                 scopes: None,
                 client_id: None,
                 client_secret: None,
+                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         )
@@ -1030,6 +1085,7 @@ mod tests {
                 scopes: None,
                 client_id: None,
                 client_secret: None,
+                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1041,6 +1097,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         assert!(session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "new-at");
@@ -1061,6 +1118,7 @@ mod tests {
                 scopes: None,
                 client_id: None,
                 client_secret: None,
+                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1072,6 +1130,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1091,6 +1150,7 @@ mod tests {
                 scopes: None,
                 client_id: None,
                 client_secret: None,
+                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1102,6 +1162,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1119,6 +1180,7 @@ mod tests {
                 scopes: None,
                 client_id: None,
                 client_secret: None,
+                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1130,6 +1192,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1149,6 +1212,7 @@ mod tests {
                 scopes: None,
                 client_id: None,
                 client_secret: None,
+                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1160,6 +1224,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1210,5 +1275,86 @@ mod tests {
 
         assert_eq!(session.access_token().secret(), "new-at");
         assert!(session.tokens.expires_at.is_none());
+    }
+
+    // ====================================================================
+    // Proxy URL serde tests
+    // ====================================================================
+
+    #[test]
+    fn token_data_roundtrips_with_proxy_url() {
+        let tokens = OAuthTokenData {
+            access_token: AccessToken::new("at".to_string()),
+            refresh_token: RefreshToken::new("rt".to_string()),
+            expires_at: None,
+            token_type: "bearer".into(),
+            scopes: None,
+            client_id: Some("cid".into()),
+            client_secret: None,
+            proxy_url: Some("https://proxy.example.com".into()),
+        };
+        let json = serde_json::to_string(&tokens).expect("should serialize");
+        let roundtripped: OAuthTokenData = serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(
+            roundtripped.proxy_url.as_deref(),
+            Some("https://proxy.example.com")
+        );
+        assert_eq!(roundtripped.client_id.as_deref(), Some("cid"));
+        assert!(roundtripped.client_secret.is_none());
+    }
+
+    #[test]
+    fn token_data_backward_compat_without_proxy_url() {
+        // Old token files don't have proxy_url — should deserialize to None.
+        let json = r#"{
+            "access_token": "at",
+            "refresh_token": "rt",
+            "token_type": "bearer",
+            "client_id": "cid",
+            "client_secret": "cs"
+        }"#;
+        let tokens: OAuthTokenData = serde_json::from_str(json).expect("should deserialize");
+        assert!(tokens.proxy_url.is_none());
+        assert_eq!(tokens.client_id.as_deref(), Some("cid"));
+        assert_eq!(tokens.client_secret.as_deref(), Some("cs"));
+    }
+
+    #[test]
+    fn token_data_proxy_url_omitted_from_json_when_none() {
+        let tokens = OAuthTokenData {
+            access_token: AccessToken::new("at".to_string()),
+            refresh_token: RefreshToken::new("rt".to_string()),
+            expires_at: None,
+            token_type: "bearer".into(),
+            scopes: None,
+            client_id: None,
+            client_secret: None,
+            proxy_url: None,
+        };
+        let json = serde_json::to_string(&tokens).expect("should serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
+        assert!(value.get("proxy_url").is_none());
+    }
+
+    #[test]
+    fn from_raw_creates_token_data() {
+        let tokens = OAuthTokenData::from_raw(
+            "access-token".into(),
+            "refresh-token".into(),
+            None,
+            "bearer".into(),
+            Some(vec!["OAuth2Read".into(), "OAuth2Write".into()]),
+        );
+        assert_eq!(tokens.access_token.secret(), "access-token");
+        assert_eq!(tokens.refresh_token.secret(), "refresh-token");
+        assert!(tokens.expires_at.is_none());
+        assert_eq!(tokens.token_type, "bearer");
+        assert_eq!(
+            tokens.scopes,
+            Some(vec!["OAuth2Read".into(), "OAuth2Write".into()])
+        );
+        assert!(tokens.client_id.is_none());
+        assert!(tokens.client_secret.is_none());
+        assert!(tokens.proxy_url.is_none());
     }
 }

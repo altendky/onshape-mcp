@@ -50,6 +50,26 @@
 - [ ] Add integration tests
 - [ ] Performance testing
 
-## Phase 5: FeatureScript (Future)
+## Phase 5: OAuth Token Exchange Proxy
+
+- [x] Create `workers/oauth-proxy/` project structure (wrangler.toml, package.json, tsconfig.json)
+- [x] Implement pure handler (`src/handler.ts`) with request routing and validation
+- [x] Implement I/O entry point (`src/index.ts`) as thin effect executor
+- [x] Implement `POST /token/exchange` endpoint (with `code_verifier` for PKCE)
+- [x] Implement `POST /token/refresh` endpoint
+- [x] Implement `GET /health` endpoint
+- [x] Implement `GET /config` endpoint (returns client_id)
+- [x] Implement `ALLOWED_SOURCES` IP check with DNS-over-HTTPS hostname resolution
+- [x] Implement sans-IO test suite (`test/handler.test.ts`)
+- [x] Add `proxy_url` support to Rust token data, config, and auth resolution
+- [x] Implement `RefreshMethod` enum (Direct/Proxy) in MCP server
+- [x] Implement proxy token refresh in `onshape-mcp-io`
+- [x] Add proxy-mode auth method to OpenCode plugin
+- [x] Deploy to Cloudflare (`onshape-oauth-proxy.fstab.workers.dev`)
+- [x] Set secrets via `wrangler secret put` (ONSHAPE_CLIENT_ID, ONSHAPE_CLIENT_SECRET)
+- [ ] Configure `ALLOWED_SOURCES` in Cloudflare dashboard
+- [ ] Verify all endpoints with curl
+
+## Phase 6: FeatureScript (Future)
 
 - [ ] Implement FeatureScript-related API endpoints (accessible via `onshape_api_call`)

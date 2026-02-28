@@ -91,9 +91,11 @@ impl AuthStatusResult {
     /// tokens have expired.
     ///
     /// Validation can override the status for states where credentials are
-    /// present (`Basic`, `OAuthReady` with non-expired tokens). States like
-    /// `NotConfigured`, `Expired`, and `OAuthPending` take precedence over
-    /// validation results because they represent structural issues.
+    /// present (`Basic`, `OAuthReady`).  `Expired` can also be overridden
+    /// because the I/O layer proactively refreshes tokens before executing
+    /// the validation request.  `NotConfigured` and `OAuthPending` take
+    /// precedence over validation results because they represent structural
+    /// issues where no credentials exist to validate.
     #[must_use]
     pub fn new(
         resolved: &ResolvedAuth,
@@ -155,10 +157,19 @@ impl AuthStatusResult {
         };
 
         // Overlay validation state for states where credentials are present.
-        // NotConfigured, Expired, and OAuthPending take precedence — those
-        // represent structural issues that validation cannot override.
+        // NotConfigured and OAuthPending take precedence — those represent
+        // structural issues that validation cannot override.
+        //
+        // Expired CAN be overridden by Valid: the I/O layer proactively
+        // refreshes expired tokens before executing the validation request
+        // (GET /users/sessioninfo).  If that request succeeds (200), the
+        // token was refreshed and the session is valid — reporting Expired
+        // would be misleading.
         if let Some(v) = validation {
-            let can_override = matches!(result.status, AuthStatus::NotValidated);
+            let can_override = matches!(
+                result.status,
+                AuthStatus::NotValidated | AuthStatus::Expired
+            );
             if can_override {
                 match v.status {
                     ValidationStatus::Valid => {
@@ -527,13 +538,38 @@ mod tests {
     }
 
     #[test]
-    fn new_oauth_ready_expired_not_overridden_by_valid() {
+    fn new_oauth_ready_expired_overridden_by_valid() {
         let past = now() - chrono::Duration::hours(1);
         let resolved = ResolvedAuth::OAuthReady {
             expires_at: Some(past),
         };
         let result = AuthStatusResult::new(&resolved, Some(&valid_validation()), now());
-        // Expired takes precedence — validation cannot override it.
+        // The I/O layer proactively refreshes expired tokens before the
+        // validation request.  If validation succeeded (Valid), the token
+        // was refreshed — report Valid, not Expired.
+        assert_eq!(result.status, AuthStatus::Valid);
+    }
+
+    #[test]
+    fn new_oauth_ready_expired_not_overridden_by_invalid() {
+        let past = now() - chrono::Duration::hours(1);
+        let resolved = ResolvedAuth::OAuthReady {
+            expires_at: Some(past),
+        };
+        let result = AuthStatusResult::new(&resolved, Some(&invalid_validation()), now());
+        // If validation returned Invalid, the refresh failed — Expired
+        // is still the most accurate status.
+        assert_eq!(result.status, AuthStatus::Invalid);
+    }
+
+    #[test]
+    fn new_oauth_ready_expired_not_overridden_by_not_validated() {
+        let past = now() - chrono::Duration::hours(1);
+        let resolved = ResolvedAuth::OAuthReady {
+            expires_at: Some(past),
+        };
+        let result = AuthStatusResult::new(&resolved, Some(&not_validated_validation()), now());
+        // No validation result — Expired status preserved.
         assert_eq!(result.status, AuthStatus::Expired);
     }
 
