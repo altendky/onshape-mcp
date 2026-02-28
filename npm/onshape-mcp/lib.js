@@ -23,20 +23,7 @@ function getBinaryPath(baseDir = __dirname) {
   const ext = process.platform === "win32" ? ".exe" : "";
   const binName = `onshape-mcp${ext}`;
 
-  // 1. Try npm-installed package (production path)
-  if (pkg) {
-    try {
-      const pkgJsonPath = require.resolve(`${pkg}/package.json`);
-      const binPath = join(dirname(pkgJsonPath), "bin", binName);
-      if (existsSync(binPath)) {
-        return binPath;
-      }
-    } catch {
-      // Package not installed via npm
-    }
-  }
-
-  // 2. Local development: check target/ directory
+  // 1. Local development: check target/ directory first
   //    Try debug first, then release
   const repoRoot = join(baseDir, "../..");
   if (existsSync(join(repoRoot, "Cargo.toml"))) {
@@ -47,6 +34,19 @@ function getBinaryPath(baseDir = __dirname) {
     const releaseBin = join(repoRoot, "target", "release", binName);
     if (existsSync(releaseBin)) {
       return releaseBin;
+    }
+  }
+
+  // 2. Try npm-installed package (production path)
+  if (pkg) {
+    try {
+      const pkgJsonPath = require.resolve(`${pkg}/package.json`);
+      const binPath = join(dirname(pkgJsonPath), "bin", binName);
+      if (existsSync(binPath)) {
+        return binPath;
+      }
+    } catch {
+      // Package not installed via npm
     }
   }
 
