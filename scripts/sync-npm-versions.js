@@ -139,6 +139,9 @@ function updateLockfile(pkgDir) {
       "WARNING: Failed to update package-lock.json:",
       err.message,
     );
+    if (err.stderr) {
+      console.error("npm output:", err.stderr.toString());
+    }
     console.error(
       "  Run 'npm install' in npm/onshape-mcp/ manually to fix.",
     );
