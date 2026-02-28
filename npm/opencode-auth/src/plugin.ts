@@ -75,6 +75,16 @@ function saveTokens(tokens: TokenFile): void {
 // Shared helpers
 // ============================================================================
 
+/** Escape the five HTML-special characters to prevent injection. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /**
  * Start a localhost HTTP server to receive the OAuth callback.
  * Returns the Bun server instance with a `_callbackUrl` property
@@ -91,7 +101,7 @@ function startCallbackServer() {
         if (error) {
           (server as any)._callbackUrl = url;
           return new Response(
-            `<html><body><h1>Authorization Failed</h1><p>${error}</p><p>You can close this window.</p></body></html>`,
+            `<html><body><h1>Authorization Failed</h1><p>${escapeHtml(error)}</p><p>You can close this window.</p></body></html>`,
             { headers: { "Content-Type": "text/html" } },
           );
         }
