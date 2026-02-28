@@ -408,6 +408,15 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                     scope?: string;
                   };
 
+                  if (
+                    typeof result.access_token !== "string" ||
+                    result.access_token === ""
+                  ) {
+                    throw new Error(
+                      "Proxy token exchange returned invalid token payload: missing or empty access_token",
+                    );
+                  }
+
                   const expiresAt = result.expires_in
                     ? new Date(
                         Date.now() + result.expires_in * 1000,
