@@ -155,10 +155,22 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
             },
           ],
           async authorize(inputs) {
-            const proxyUrl = (inputs?.proxy_url || DEFAULT_PROXY_URL).replace(
-              /\/$/,
-              "",
+            const parsedProxyUrl = new URL(
+              (inputs?.proxy_url || DEFAULT_PROXY_URL).trim(),
             );
+            const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(
+              parsedProxyUrl.hostname,
+            );
+            if (
+              parsedProxyUrl.protocol !== "https:" &&
+              !(parsedProxyUrl.protocol === "http:" && isLocalhost)
+            ) {
+              throw new Error(
+                "OAuth Proxy URL must use https:// (http:// is only allowed for localhost)",
+              );
+            }
+            const proxyUrl = parsedProxyUrl.origin + parsedProxyUrl.pathname
+              .replace(/\/$/, "");
 
             // 1. Fetch client_id from the proxy's /config endpoint.
             const configResp = await fetch(`${proxyUrl}/config`);
