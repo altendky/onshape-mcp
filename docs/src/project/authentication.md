@@ -115,6 +115,39 @@ In this state:
 - API calls return an error explaining that OAuth authorization is not yet complete.
 - The token file watcher is active, waiting for tokens to appear.
 
+### Standalone OAuth Flow
+
+The MCP server includes a built-in OAuth authorization flow, accessible via:
+
+1. **CLI subcommand:** `onshape-mcp auth login`
+2. **MCP tool:** `onshape_mcp_auth_login`
+
+Both methods support two modes:
+
+| Mode | Description | Client secret |
+| ------ | ------------- | --------------- |
+| Proxy (default) | Token exchange via the [OAuth proxy](oauth-proxy.md) | Held by the proxy |
+| Direct | Token exchange directly with Onshape | Provided by the user |
+
+#### CLI Usage
+
+```bash
+# Proxy mode (default) — no client secret needed
+onshape-mcp auth login
+
+# Proxy mode with custom proxy URL
+onshape-mcp auth login --proxy-url https://my-proxy.example.com
+
+# Direct mode — requires client_id and client_secret
+onshape-mcp auth login --direct --client-id YOUR_ID --client-secret YOUR_SECRET
+```
+
+The CLI opens your browser to the Onshape authorization page, starts a local callback server on `127.0.0.1:18338`, exchanges the authorization code for tokens, and saves them to the token file. The MCP server automatically detects the new tokens via the file watcher.
+
+#### MCP Tool Usage
+
+The `onshape_mcp_auth_login` tool can be invoked by an LLM to start the OAuth flow. It returns a URL for the user to open in their browser. See [MCP Tools](mcp-tools.md#onshape_mcp_auth_login) for details.
+
 ### OpenCode Plugin
 
 When using OpenCode, the OAuth flow is handled by the `@onshape-mcp/opencode-auth` plugin.
