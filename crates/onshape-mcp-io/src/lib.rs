@@ -75,22 +75,58 @@ pub(crate) enum ApiState {
     OAuthPending(Box<OAuthPendingState>),
 }
 
+/// How the server refreshes OAuth tokens.
+///
+/// - `Direct`: the server contacts Onshape's token endpoint using the
+///   `client_id` and `client_secret` (via the `oauth2` crate).
+/// - `Proxy`: the server sends the refresh token to an OAuth proxy
+///   (e.g. `onshape-oauth-proxy.fstab.workers.dev`) which adds the client credentials
+///   and forwards to Onshape.
+pub(crate) enum RefreshMethod {
+    /// Direct refresh — client secret held locally.
+    Direct {
+        /// Pre-configured `OAuth2` client (endpoints + credentials).
+        oauth_client: Box<OnshapeOAuthClient>,
+        /// OAuth client ID (kept for state-transition support).
+        client_id: String,
+        /// OAuth client secret (kept for state-transition support).
+        client_secret: SecretString,
+    },
+    /// Proxy refresh — client secret held by the proxy.
+    Proxy {
+        /// Base URL of the OAuth proxy (e.g. `https://onshape-oauth-proxy.fstab.workers.dev`).
+        proxy_url: String,
+    },
+}
+
 /// State for when OAuth client credentials are present but no tokens yet.
 ///
 /// Contains the configuration needed to build a full `OAuthApiState`
 /// when tokens become available (e.g. after the user completes the
 /// OAuth authorization flow via the `OpenCode` plugin).
 pub(crate) struct OAuthPendingState {
-    /// OAuth client ID.
-    pub(crate) client_id: String,
-    /// OAuth client secret.
-    pub(crate) client_secret: SecretString,
+    /// How to refresh tokens once they arrive.
+    pub(crate) refresh_method: PendingRefreshMethod,
     /// Base URL for the Onshape API.
     pub(crate) base_url: String,
     /// HTTP request timeout.
     pub(crate) timeout: Duration,
     /// Path to the token file on disk.
     pub(crate) token_path: PathBuf,
+}
+
+/// Pending-state variant of [`RefreshMethod`].
+///
+/// Same concept but without the pre-built `OnshapeOAuthClient`
+/// (which requires a client to exist, pointless while pending).
+pub(crate) enum PendingRefreshMethod {
+    /// Direct — `client_id` + `client_secret` known, awaiting tokens.
+    Direct {
+        client_id: String,
+        client_secret: SecretString,
+    },
+    /// Proxy — proxy URL known, awaiting tokens.
+    Proxy { proxy_url: String },
 }
 
 impl ApiState {
@@ -117,15 +153,11 @@ impl ApiState {
 pub(crate) struct OAuthApiState {
     /// Core: pure decision logic for token lifecycle.
     pub(crate) session: OAuthSession,
-    /// Core: pure OAuth client config (endpoints, client credentials).
-    pub(crate) oauth_client: OnshapeOAuthClient,
-    /// OAuth client ID (stored separately for state transition support).
-    pub(crate) client_id: String,
-    /// OAuth client secret (stored separately for state transition support).
-    pub(crate) client_secret: SecretString,
+    /// How to refresh tokens (direct or via proxy).
+    pub(crate) refresh_method: RefreshMethod,
     /// I/O: HTTP client for Onshape API calls (carries the bearer token).
     pub(crate) client: OnshapeClient,
-    /// I/O: HTTP client for token endpoint requests (no auth headers).
+    /// I/O: HTTP client for token endpoint / proxy requests (no auth headers).
     pub(crate) refresh_http: reqwest::Client,
     /// I/O: path to the token file on disk.
     pub(crate) token_path: PathBuf,
@@ -533,9 +565,19 @@ async fn execute_oauth_raw(
             ) else {
                 unreachable!("just checked this is OAuth");
             };
+            let pending_method = match oauth.refresh_method {
+                RefreshMethod::Direct {
+                    client_id,
+                    client_secret,
+                    ..
+                } => PendingRefreshMethod::Direct {
+                    client_id,
+                    client_secret,
+                },
+                RefreshMethod::Proxy { proxy_url } => PendingRefreshMethod::Proxy { proxy_url },
+            };
             *state = ApiState::OAuthPending(Box::new(OAuthPendingState {
-                client_id: oauth.client_id,
-                client_secret: oauth.client_secret,
+                refresh_method: pending_method,
                 base_url: oauth.base_url,
                 timeout: oauth.timeout,
                 token_path: oauth.token_path,
@@ -621,7 +663,7 @@ fn is_permanent_refresh_failure(error_message: &str) -> bool {
 /// Attempt to refresh the OAuth access token.
 ///
 /// 1. Check if an external process already refreshed (token file reload).
-/// 2. If not, perform the HTTP refresh via the oauth2 crate.
+/// 2. If not, refresh via the appropriate method (direct or proxy).
 /// 3. Apply the response, persist to disk, rebuild the API client.
 async fn try_refresh(oauth: &mut OAuthApiState) -> Result<(), RefreshError> {
     // 1. Check if external process already refreshed (token file reload).
@@ -634,10 +676,42 @@ async fn try_refresh(oauth: &mut OAuthApiState) -> Result<(), RefreshError> {
         return Ok(());
     }
 
-    // 2. Do the HTTP refresh via oauth2.
-    let response = oauth
-        .oauth_client
-        .exchange_refresh_token(oauth.session.refresh_token())
+    // 2. Refresh via the configured method.
+    //
+    // We use an enum discriminant check + separate blocks to avoid borrowing
+    // `oauth` (mutable) and `oauth.refresh_method` (immutable) simultaneously.
+    let is_proxy = matches!(&oauth.refresh_method, RefreshMethod::Proxy { .. });
+    if is_proxy {
+        // Extract the proxy URL (cheap clone of a String).
+        let proxy_url = match &oauth.refresh_method {
+            RefreshMethod::Proxy { proxy_url } => proxy_url.clone(),
+            RefreshMethod::Direct { .. } => unreachable!(),
+        };
+        try_refresh_proxy(oauth, &proxy_url).await?;
+    } else {
+        try_refresh_direct(oauth).await?;
+    }
+
+    // 3. Persist to disk.
+    crate::oauth::save_token_file(&oauth.token_path, &oauth.session.tokens)?;
+
+    // 4. Rebuild API client with new access token.
+    oauth.rebuild_client()?;
+
+    Ok(())
+}
+
+/// Direct refresh: exchange refresh token with Onshape via the `oauth2` crate.
+async fn try_refresh_direct(oauth: &mut OAuthApiState) -> Result<(), RefreshError> {
+    let RefreshMethod::Direct { oauth_client, .. } = &oauth.refresh_method else {
+        unreachable!("try_refresh_direct called with non-Direct method");
+    };
+
+    // Clone the refresh token to avoid holding a borrow across `.await`.
+    let refresh_token = oauth.session.refresh_token().clone();
+
+    let response = oauth_client
+        .exchange_refresh_token(&refresh_token)
         .request_async(&oauth.refresh_http)
         .await
         .map_err(|e| {
@@ -649,16 +723,140 @@ async fn try_refresh(oauth: &mut OAuthApiState) -> Result<(), RefreshError> {
             }
         })?;
 
-    // 3. Apply response (pure core logic).
     oauth.session.apply_refresh(&response, chrono::Utc::now());
-
-    // 4. Persist to disk.
-    crate::oauth::save_token_file(&oauth.token_path, &oauth.session.tokens)?;
-
-    // 5. Rebuild API client with new access token.
-    oauth.rebuild_client()?;
-
     Ok(())
+}
+
+/// Proxy refresh: POST `{ "refresh_token": "..." }` to the proxy.
+///
+/// The proxy adds client credentials and forwards to Onshape, returning
+/// the token response as-is.
+///
+/// If the proxy returns 403 and reports an IPv6 `source_ip`, the request
+/// is automatically retried with a client that forces IPv4 connections.
+/// This handles the common case where the proxy's `ALLOWED_SOURCES` only
+/// resolves to IPv4 addresses but the client connects via IPv6.
+async fn try_refresh_proxy(oauth: &mut OAuthApiState, proxy_url: &str) -> Result<(), RefreshError> {
+    let url = format!("{}/token/refresh", proxy_url.trim_end_matches('/'));
+
+    let body = serde_json::json!({
+        "refresh_token": oauth.session.refresh_token().secret(),
+    });
+
+    // First attempt with the default client.
+    let (status, response_body) = send_proxy_request(&oauth.refresh_http, &url, &body).await?;
+
+    // If the proxy rejected us with 403 and reports an IPv6 source IP,
+    // retry with a client that forces IPv4 connections.
+    let (status, response_body) = if status == reqwest::StatusCode::FORBIDDEN {
+        match build_ipv4_retry_client(&response_body) {
+            Some(ipv4_client) => send_proxy_request(&ipv4_client, &url, &body).await?,
+            None => (status, response_body),
+        }
+    } else {
+        (status, response_body)
+    };
+
+    if !status.is_success() {
+        let msg = format!("proxy returned {status}: {response_body}");
+        if is_permanent_refresh_failure(&msg) {
+            return Err(RefreshError::PermanentExchange(msg));
+        }
+        return Err(RefreshError::Exchange(msg));
+    }
+
+    // Parse the proxy response (same shape as Onshape's token response).
+    let token_response: ProxyTokenResponse = serde_json::from_str(&response_body)
+        .map_err(|e| RefreshError::Exchange(format!("failed to parse proxy response: {e}")))?;
+
+    let now = chrono::Utc::now();
+    let expires_at = token_response
+        .expires_in
+        .and_then(chrono::Duration::try_seconds)
+        .map(|d| now + d);
+
+    // Update session with new token data (preserving proxy_url in the token file).
+    let mut new_tokens = onshape_client_core::oauth::OAuthTokenData::from_raw(
+        token_response.access_token,
+        token_response.refresh_token.unwrap_or_default(),
+        expires_at,
+        token_response.token_type.unwrap_or_else(|| "bearer".into()),
+        token_response
+            .scope
+            .map(|s| s.split(' ').map(String::from).collect()),
+    );
+    // Preserve proxy_url and client_id from the existing token data.
+    new_tokens
+        .proxy_url
+        .clone_from(&oauth.session.tokens.proxy_url);
+    new_tokens
+        .client_id
+        .clone_from(&oauth.session.tokens.client_id);
+
+    oauth.session.tokens = new_tokens;
+    Ok(())
+}
+
+/// Send a POST request to the proxy and return the status + body text.
+async fn send_proxy_request(
+    client: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<(reqwest::StatusCode, String), RefreshError> {
+    let response = client
+        .post(url)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| RefreshError::Exchange(e.to_string()))?;
+
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| RefreshError::Exchange(format!("failed to read proxy response: {e}")))?;
+
+    Ok((status, text))
+}
+
+/// If a 403 response contains an IPv6 `source_ip`, build a `reqwest::Client`
+/// that forces IPv4 connections for a retry attempt.
+///
+/// Returns `None` if the response cannot be parsed, the `source_ip` is IPv4,
+/// or the IPv4 client cannot be constructed.
+fn build_ipv4_retry_client(response_body: &str) -> Option<reqwest::Client> {
+    let parsed: ProxyForbiddenResponse = serde_json::from_str(response_body).ok()?;
+
+    // IPv6 addresses always contain a colon; IPv4 never does.
+    if !parsed.source_ip.contains(':') {
+        return None;
+    }
+
+    reqwest::Client::builder()
+        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .ok()
+}
+
+/// Deserialization target for the proxy's 403 "forbidden" response.
+///
+/// The proxy includes the connecting IP so the client can detect IPv6
+/// and retry with forced IPv4.
+#[derive(serde::Deserialize)]
+struct ProxyForbiddenResponse {
+    /// The IP address the proxy saw for the incoming request.
+    source_ip: String,
+}
+
+/// Deserialization target for the proxy/Onshape token response JSON.
+#[derive(serde::Deserialize)]
+struct ProxyTokenResponse {
+    access_token: String,
+    refresh_token: Option<String>,
+    token_type: Option<String>,
+    expires_in: Option<i64>,
+    scope: Option<String>,
 }
 
 // ============================================================================
@@ -676,6 +874,7 @@ fn probe_token_status(token_path: Option<&std::path::Path>) -> TokenStatus {
     match crate::oauth::load_token_file(path) {
         Ok(data) => TokenStatus::Present {
             expires_at: data.expires_at,
+            proxy_url: data.proxy_url,
         },
         Err(_) => TokenStatus::Absent,
     }
@@ -732,6 +931,66 @@ fn build_api_state(
     }
 }
 
+/// Determine the refresh method from config and token file data.
+///
+/// Priority:
+/// 1. Config `proxy_url` (explicit env var takes precedence)
+/// 2. Token file `proxy_url` (set by the `OpenCode` plugin during proxy auth)
+/// 3. Config `client_id` + `client_secret` (direct mode)
+fn determine_refresh_method(
+    config: &AppConfig,
+    token_data: Option<&onshape_client_core::oauth::OAuthTokenData>,
+) -> Option<RefreshMethod> {
+    // Proxy mode: config takes precedence, then token file.
+    let proxy_url = config
+        .auth
+        .proxy_url
+        .as_deref()
+        .or_else(|| token_data.and_then(|t| t.proxy_url.as_deref()));
+
+    if let Some(url) = proxy_url {
+        return Some(RefreshMethod::Proxy {
+            proxy_url: url.to_string(),
+        });
+    }
+
+    // Direct mode: need both client_id and client_secret.
+    if let (Some(client_id), Some(client_secret)) =
+        (&config.auth.client_id, &config.auth.client_secret)
+    {
+        let oauth_client = onshape_oauth_client(client_id, client_secret.expose_secret());
+        return Some(RefreshMethod::Direct {
+            oauth_client: Box::new(oauth_client),
+            client_id: client_id.clone(),
+            client_secret: SecretString::from(client_secret.clone()),
+        });
+    }
+
+    None
+}
+
+/// Determine the pending refresh method from config.
+fn determine_pending_refresh_method(config: &AppConfig) -> Option<PendingRefreshMethod> {
+    // Proxy mode.
+    if let Some(proxy_url) = &config.auth.proxy_url {
+        return Some(PendingRefreshMethod::Proxy {
+            proxy_url: proxy_url.clone(),
+        });
+    }
+
+    // Direct mode.
+    if let (Some(client_id), Some(client_secret)) =
+        (&config.auth.client_id, &config.auth.client_secret)
+    {
+        return Some(PendingRefreshMethod::Direct {
+            client_id: client_id.clone(),
+            client_secret: SecretString::from(client_secret.clone()),
+        });
+    }
+
+    None
+}
+
 /// Build the `OAuthReady` API state from config and token file.
 ///
 /// The token file is guaranteed to exist by the resolution logic.
@@ -741,12 +1000,6 @@ fn build_oauth_ready_state(
     server_url: &str,
     token_path: Option<&std::path::Path>,
 ) -> Result<ApiState, Box<dyn std::error::Error + Send + Sync>> {
-    let (Some(client_id), Some(client_secret)) =
-        (&config.auth.client_id, &config.auth.client_secret)
-    else {
-        unreachable!("OAuthReady but OAuth fields are None");
-    };
-
     let Some(token_path) = token_path else {
         unreachable!("OAuthReady but token path is None");
     };
@@ -754,7 +1007,9 @@ fn build_oauth_ready_state(
     let token_data = crate::oauth::load_token_file(token_path)
         .map_err(|e| format!("failed to load token file: {e}"))?;
 
-    let oauth_client = onshape_oauth_client(client_id, client_secret.expose_secret());
+    let refresh_method = determine_refresh_method(config, Some(&token_data))
+        .ok_or("OAuthReady but no refresh method available")?;
+
     let session = OAuthSession::new(token_data, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
 
     let timeout = config.http.timeout;
@@ -774,9 +1029,7 @@ fn build_oauth_ready_state(
 
     Ok(ApiState::OAuth(Box::new(OAuthApiState {
         session,
-        oauth_client,
-        client_id: client_id.clone(),
-        client_secret: SecretString::from(client_secret.clone()),
+        refresh_method,
         client,
         refresh_http,
         token_path: token_path.to_path_buf(),
@@ -792,12 +1045,6 @@ fn build_oauth_pending_state(
     server_url: &str,
     token_path: Option<PathBuf>,
 ) -> ApiState {
-    let (Some(client_id), Some(client_secret)) =
-        (&config.auth.client_id, &config.auth.client_secret)
-    else {
-        unreachable!("OAuthPending but OAuth fields are None");
-    };
-
     let Some(token_path) = token_path else {
         // Can't watch for tokens without a path — fall back to NotConfigured
         return ApiState::NotConfigured {
@@ -806,9 +1053,12 @@ fn build_oauth_pending_state(
         };
     };
 
+    let Some(refresh_method) = determine_pending_refresh_method(config) else {
+        unreachable!("OAuthPending but no refresh method available");
+    };
+
     ApiState::OAuthPending(Box::new(OAuthPendingState {
-        client_id: client_id.clone(),
-        client_secret: SecretString::from(client_secret.clone()),
+        refresh_method,
         base_url: server_url.to_string(),
         timeout: config.http.timeout,
         token_path,
@@ -933,5 +1183,36 @@ mod tests {
     #[test]
     fn transient_refresh_generic_error() {
         assert!(!is_permanent_refresh_failure("something went wrong"));
+    }
+
+    // --- build_ipv4_retry_client tests ---
+
+    #[test]
+    fn ipv4_retry_returns_client_for_ipv6_source() {
+        let body = r#"{"error":"forbidden","source_ip":"2601:980:c200:8530:bfc8:c956:e7c1:1d07"}"#;
+        assert!(build_ipv4_retry_client(body).is_some());
+    }
+
+    #[test]
+    fn ipv4_retry_returns_none_for_ipv4_source() {
+        let body = r#"{"error":"forbidden","source_ip":"71.58.134.128"}"#;
+        assert!(build_ipv4_retry_client(body).is_none());
+    }
+
+    #[test]
+    fn ipv4_retry_returns_none_for_unparsable_body() {
+        assert!(build_ipv4_retry_client("not json").is_none());
+    }
+
+    #[test]
+    fn ipv4_retry_returns_none_for_missing_source_ip() {
+        let body = r#"{"error":"forbidden"}"#;
+        assert!(build_ipv4_retry_client(body).is_none());
+    }
+
+    #[test]
+    fn ipv4_retry_returns_client_for_ipv6_loopback() {
+        let body = r#"{"error":"forbidden","source_ip":"::1"}"#;
+        assert!(build_ipv4_retry_client(body).is_some());
     }
 }
