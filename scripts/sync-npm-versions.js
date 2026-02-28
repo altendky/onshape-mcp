@@ -132,6 +132,7 @@ function updateLockfile(pkgDir) {
       stdio: "pipe",
     });
     console.log("UPDATED: npm/onshape-mcp/package-lock.json");
+    return true;
   } catch (err) {
     console.error(
       "WARNING: Failed to update package-lock.json:",
@@ -140,6 +141,7 @@ function updateLockfile(pkgDir) {
     console.error(
       "  Run 'npm install' in npm/onshape-mcp/ manually to fix.",
     );
+    return false;
   }
 }
 
@@ -187,8 +189,11 @@ function main() {
   const mainPkgDir = path.join(NPM_DIR, "onshape-mcp");
   const lockPath = path.join(mainPkgDir, "package-lock.json");
 
-  if (fs.existsSync(lockPath)) {
-    if (checkOnly) {
+  if (checkOnly) {
+    if (!fs.existsSync(lockPath)) {
+      console.error("ERROR: npm/onshape-mcp/package-lock.json not found");
+      hasErrors = true;
+    } else {
       const lockMismatches = checkLockfileVersion(lockPath, version);
       if (lockMismatches.length > 0) {
         console.error("MISMATCH: npm/onshape-mcp/package-lock.json");
@@ -199,8 +204,10 @@ function main() {
       } else {
         console.log("OK: npm/onshape-mcp/package-lock.json");
       }
-    } else {
-      updateLockfile(mainPkgDir);
+    }
+  } else {
+    if (!updateLockfile(mainPkgDir)) {
+      hasErrors = true;
     }
   }
 
