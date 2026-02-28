@@ -148,8 +148,8 @@ describe("bin.js", () => {
       const result = getBinaryPath();
       const repoRoot = path.join(__dirname, "..", "..", "..");
 
-      // If we're in a repo with Cargo.toml, binary should be from target/
-      if (fs.existsSync(path.join(repoRoot, "Cargo.toml")) && result !== null) {
+      // If we're in a repo with Cargo.toml and a local binary exists, it should be preferred
+      if (fs.existsSync(path.join(repoRoot, "Cargo.toml")) && result !== null && localBinaryExists()) {
         assert.ok(
           result.includes("target"),
           `In dev environment, binary should be from target/, got: ${result}`
@@ -283,9 +283,9 @@ describe("bin.js", () => {
   });
 
   describe("unsupported platform error", () => {
-    // These tests only run when no local binary exists
-    // (e.g., in CI smoke tests before Rust build)
-    const skip = localBinaryExists();
+    // These tests only run when no binary exists at all
+    // (neither local target/ build nor npm-installed platform package)
+    const skip = getBinaryPath() !== null;
 
     it("should provide helpful error message when binary not found", { skip }, () => {
       // Run bin.js without ONSHAPE_MCP_NPM_COMMAND - should fail gracefully
