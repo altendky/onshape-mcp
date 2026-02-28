@@ -237,11 +237,24 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                 if (ipv4Preflight?.status === 403) {
                   collect403Ip(ipv4Preflight.body);
                 }
-                const ipList = triedSourceIps.length > 0
-                  ? ` Tried source IP${triedSourceIps.length > 1 ? "s" : ""}: ${triedSourceIps.join(", ")}.`
-                  : "";
-                const reason =
-                  `Proxy rejected request (403 Forbidden).${ipList}`;
+                let reason: string;
+                if (
+                  ipv6Preflight === null &&
+                  ipv4Preflight === null
+                ) {
+                  reason =
+                    `Failed to connect to proxy at ${proxyHostname}.`;
+                } else if (triedSourceIps.length > 0) {
+                  const ipList =
+                    ` Tried source IP${triedSourceIps.length > 1 ? "s" : ""}: ${triedSourceIps.join(", ")}.`;
+                  reason =
+                    `Proxy rejected request (403 Forbidden).${ipList}`;
+                } else {
+                  const status =
+                    ipv4Preflight?.status ?? ipv6Preflight?.status;
+                  reason =
+                    `Proxy preflight check failed (HTTP ${status}).`;
+                }
 
                 // OpenCode's AuthOauthResult has no failure variant,
                 // so we can't signal an error from authorize() directly.
