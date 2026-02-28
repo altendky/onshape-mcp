@@ -1,0 +1,3 @@
+ONSHAPE_CLIENT_ID=your-client-id
+ONSHAPE_CLIENT_SECRET=your-client-secret
+ALLOWED_SOURCES=127.0.0.1

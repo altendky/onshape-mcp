@@ -24,6 +24,7 @@
 - [Development](project/development.md)
 - [Release](project/release.md)
 - [npm Wrapper](project/npm-wrapper.md)
+- [OAuth Proxy](project/oauth-proxy.md)
 
 # Insights
 
