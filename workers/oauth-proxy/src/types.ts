@@ -1,6 +1,6 @@
 /** Cloudflare Worker environment bindings. */
 export interface Env {
-  /** Onshape OAuth application client ID (encrypted secret). */
+  /** Onshape OAuth application client ID. */
   ONSHAPE_CLIENT_ID: string;
   /** Onshape OAuth application client secret (encrypted secret). */
   ONSHAPE_CLIENT_SECRET: string;
