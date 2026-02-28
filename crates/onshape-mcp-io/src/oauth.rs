@@ -164,6 +164,7 @@ mod tests {
             scopes: None,
             client_id: None,
             client_secret: None,
+            proxy_url: None,
         }
     }
 

@@ -29,7 +29,8 @@ Items to address later in the project:
 - [x] OAuth 2.0 authentication — ~~Multi-user apps, team access~~ Implemented: authorization code flow via OpenCode plugin, token file storage, `AuthMethod::OAuth` variant. See [Authentication](authentication.md)
 - [x] OAuth token refresh — ~~Automatic token refresh when expired~~ Implemented: proactive refresh before expiry, reactive refresh on 401, external token file detection. Token file watching with OS-native watchers (inotify/kqueue/ReadDirectoryChanges) and polling fallback. See [Authentication](authentication.md#token-file-watching)
 - [ ] Interactive auth method selection — When multiple auth methods are available (e.g. both API keys and OAuth tokens), allow the user to select which method to use via the LLM conversation rather than always applying the auto-detection priority order
-- [ ] Standalone OAuth flow — Built-in browser/callback flow in the MCP binary itself (currently only via OpenCode plugin)
+- [ ] Standalone OAuth flow — Built-in browser/callback flow in the MCP binary itself (currently only via OpenCode plugin). When using the [OAuth proxy](oauth-proxy.md), the CLI handles the browser/callback flow and delegates token exchange to the proxy
+- [ ] OAuth proxy server-side callback — Move the OAuth callback from the CLI's localhost server to the proxy worker, eliminating the localhost HTTP server, PKCE generation, and authorize URL construction from the CLI. Deferred due to security concerns: the worker would persistently store tokens in Cloudflare KV (widening the attack surface compared to transient in-memory exposure during proxied responses). See [OAuth Proxy > Deferred: Server-Side Callback Flow](oauth-proxy.md#deferred-server-side-callback-flow)
 - [ ] OS keyring integration — Store tokens in system keychain instead of file (macOS Keychain, Windows Credential Manager, Linux Secret Service)
 
 ### Features
