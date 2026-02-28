@@ -158,6 +158,21 @@ export function httpsPostJsonToIp(
 ): Promise<HttpResult> {
   const parsed = new URL(url);
   const body = JSON.stringify(jsonBody);
+  return httpsPostToIp(ipAddress, parsed, body);
+}
+
+/**
+ * Low-level POST to a specific IP with pre-parsed URL and serialised body.
+ *
+ * Separated from `httpsPostJsonToIp` so that callers which iterate
+ * over multiple addresses (see `tryAddresses`) can parse once and
+ * avoid re-throwing parse errors on every address.
+ */
+function httpsPostToIp(
+  ipAddress: string,
+  parsed: URL,
+  body: string,
+): Promise<HttpResult> {
   const hostname = parsed.hostname;
   const port = parsed.port || 443;
 
@@ -207,9 +222,15 @@ export async function tryAddresses(
   url: string,
   jsonBody: unknown,
 ): Promise<HttpResult | null> {
+  // Parse URL and serialise body once before the loop.  Errors here
+  // (malformed URL, circular JSON) propagate immediately to the caller
+  // instead of being silently swallowed by the per-address catch below.
+  const parsed = new URL(url);
+  const body = JSON.stringify(jsonBody);
+
   for (const addr of addresses) {
     try {
-      return await httpsPostJsonToIp(addr, url, jsonBody);
+      return await httpsPostToIp(addr, parsed, body);
     } catch {
       // Connection error — try the next address.
       continue;
