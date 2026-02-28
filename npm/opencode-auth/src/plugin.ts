@@ -184,6 +184,12 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
             };
             const clientId = proxyConfig.client_id;
 
+            if (typeof clientId !== "string" || clientId === "") {
+              throw new Error(
+                "Proxy /config response missing or invalid 'client_id' field",
+              );
+            }
+
             // 2. Preflight IP check — verify we can reach the proxy's
             //    IP-restricted endpoints before sending the user to the
             //    browser.  We POST a dummy body to /token/refresh: the
