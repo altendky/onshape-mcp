@@ -5,6 +5,8 @@
  * The I/O layer (index.ts) is responsible for executing effects.
  */
 
+import * as ipaddr from "ipaddr.js";
+
 import type {
   AllowedSources,
   Effect,
@@ -58,9 +60,39 @@ function isIpAddress(value: string): boolean {
   return false;
 }
 
-/** Check whether a source IP is in the resolved allowed-IP list. */
+/**
+ * Check whether a source IP is in the resolved allowed-IP list.
+ *
+ * Uses parsed IP comparison via `ipaddr.js` so that equivalent
+ * representations (e.g. `::1` vs `0:0:0:0:0:0:0:1`) match correctly,
+ * with a fast-path string comparison to avoid parsing overhead when
+ * the textual forms already agree.
+ */
 export function isIpAllowed(sourceIp: string, allowedIps: string[]): boolean {
-  return allowedIps.includes(sourceIp);
+  // Fast path: exact string match (covers the common case where
+  // Cloudflare's CF-Connecting-IP already uses canonical form).
+  if (allowedIps.includes(sourceIp)) return true;
+
+  // Slow path: parse and compare so that non-canonical entries in
+  // ALLOWED_SOURCES still match.
+  let parsed: ipaddr.IPv4 | ipaddr.IPv6;
+  try {
+    parsed = ipaddr.parse(sourceIp);
+  } catch {
+    return false; // Unparsable source IP cannot match anything.
+  }
+
+  for (const allowed of allowedIps) {
+    try {
+      if (parsed.toNormalizedString() === ipaddr.parse(allowed).toNormalizedString()) {
+        return true;
+      }
+    } catch {
+      // Skip unparsable entries (they were already checked by string).
+      continue;
+    }
+  }
+  return false;
 }
 
 // ============================================================================

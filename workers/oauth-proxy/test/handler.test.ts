@@ -101,6 +101,20 @@ describe("isIpAllowed", () => {
   it("returns false for empty allowed list", () => {
     expect(isIpAllowed("10.0.0.1", [])).toBe(false);
   });
+
+  it("matches equivalent IPv6 representations", () => {
+    // Compact vs. expanded — same address, different text.
+    expect(isIpAllowed("::1", ["0:0:0:0:0:0:0:1"])).toBe(true);
+    expect(isIpAllowed("2001:db8::1", ["2001:0db8:0000:0000:0000:0000:0000:0001"])).toBe(true);
+  });
+
+  it("matches IPv6 with leading-zero differences", () => {
+    expect(isIpAllowed("2001:db8::1", ["2001:0db8::0001"])).toBe(true);
+  });
+
+  it("rejects different IPv6 addresses despite similar text", () => {
+    expect(isIpAllowed("::1", ["::2"])).toBe(false);
+  });
 });
 
 // ============================================================================
