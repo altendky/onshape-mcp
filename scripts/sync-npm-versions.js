@@ -4,13 +4,17 @@
 /**
  * Syncs npm package versions from Cargo.toml.
  *
+ * Updates all package.json files and regenerates package-lock.json
+ * to keep versions in sync with the Cargo workspace version.
+ *
  * Usage:
- *   node scripts/sync-npm-versions.js          # Update all package.json files
+ *   node scripts/sync-npm-versions.js          # Update all package.json and package-lock.json files
  *   node scripts/sync-npm-versions.js --check  # Check without modifying (exit 1 if mismatch)
  */
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const ROOT = path.join(__dirname, "..");
 const CARGO_TOML = path.join(ROOT, "crates", "onshape-mcp", "Cargo.toml");
@@ -90,6 +94,74 @@ function checkPackageVersion(pkgPath, version) {
   return mismatches;
 }
 
+function checkLockfileVersion(lockPath, version) {
+  const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+  const mismatches = [];
+
+  if (!lock.lockfileVersion || lock.lockfileVersion < 2) {
+    mismatches.push(
+      `lockfileVersion: ${lock.lockfileVersion ?? "missing"} (expected >= 2)`,
+    );
+  }
+
+  if (lock.version !== version) {
+    mismatches.push(`version: ${lock.version} (expected ${version})`);
+  }
+
+  const rootPkg = lock.packages?.[""];
+  if (!rootPkg || typeof rootPkg !== "object") {
+    mismatches.push('packages[""] entry is missing');
+  } else {
+    if (rootPkg.version !== version) {
+      mismatches.push(
+        `packages[""].version: ${rootPkg.version} (expected ${version})`,
+      );
+    }
+
+    if (rootPkg.optionalDependencies) {
+      for (const [dep, depVersion] of Object.entries(
+        rootPkg.optionalDependencies,
+      )) {
+        if (dep.startsWith("@onshape-mcp/") && depVersion !== version) {
+          mismatches.push(
+            `packages[""].optionalDependencies["${dep}"]: ${depVersion} (expected ${version})`,
+          );
+        }
+      }
+    }
+  }
+
+  return mismatches;
+}
+
+function updateLockfile(pkgDir) {
+  console.log("Updating npm/onshape-mcp/package-lock.json...");
+  try {
+    const [cmd, args] =
+      process.platform === "win32"
+        ? ["cmd.exe", ["/c", "npm", "install", "--package-lock-only"]]
+        : ["npm", ["install", "--package-lock-only"]];
+    execFileSync(cmd, args, {
+      cwd: pkgDir,
+      stdio: "pipe",
+    });
+    console.log("UPDATED: npm/onshape-mcp/package-lock.json");
+    return true;
+  } catch (err) {
+    console.error(
+      "WARNING: Failed to update package-lock.json:",
+      err.message,
+    );
+    if (err.stderr) {
+      console.error("npm output:", err.stderr.toString());
+    }
+    console.error(
+      "  Run 'npm install' in npm/onshape-mcp/ manually to fix.",
+    );
+    return false;
+  }
+}
+
 function main() {
   const checkOnly = process.argv.includes("--check");
   const version = getCargoVersion();
@@ -127,6 +199,32 @@ function main() {
       } else {
         console.log(`OK: npm/${pkg}/package.json (no changes)`);
       }
+    }
+  }
+
+  // Handle package-lock.json for the main package
+  const mainPkgDir = path.join(NPM_DIR, "onshape-mcp");
+  const lockPath = path.join(mainPkgDir, "package-lock.json");
+
+  if (checkOnly) {
+    if (!fs.existsSync(lockPath)) {
+      console.error("ERROR: npm/onshape-mcp/package-lock.json not found");
+      hasErrors = true;
+    } else {
+      const lockMismatches = checkLockfileVersion(lockPath, version);
+      if (lockMismatches.length > 0) {
+        console.error("MISMATCH: npm/onshape-mcp/package-lock.json");
+        for (const m of lockMismatches) {
+          console.error(`  - ${m}`);
+        }
+        hasErrors = true;
+      } else {
+        console.log("OK: npm/onshape-mcp/package-lock.json");
+      }
+    }
+  } else {
+    if (!updateLockfile(mainPkgDir)) {
+      hasErrors = true;
     }
   }
 

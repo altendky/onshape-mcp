@@ -75,7 +75,11 @@ while ((${#crate_info[@]} > 0)); do
 			max_retries=3
 			retry_delay=15
 			for attempt in $(seq 1 "$max_retries"); do
-				if cargo publish -p "$name"; then
+				if publish_output=$(cargo publish -p "$name" 2>&1 | tee /dev/stderr); then
+					break
+				fi
+				if echo "$publish_output" | grep -q 'already exists'; then
+					echo "  ${name} already published, skipping."
 					break
 				fi
 				if [[ "$attempt" -eq "$max_retries" ]]; then
