@@ -196,9 +196,15 @@ function httpsPostToIp(
         res.on("end", () => {
           resolve({ status: res.statusCode ?? 0, body: data });
         });
+        res.on("error", reject);
       },
     );
 
+    // 30 s matches the Rust implementation's reqwest timeout for the
+    // same proxy requests (lib.rs `.timeout(Duration::from_secs(30))`).
+    req.setTimeout(30_000, () => {
+      req.destroy(new Error("request timed out"));
+    });
     req.on("error", reject);
     req.write(body);
     req.end();
