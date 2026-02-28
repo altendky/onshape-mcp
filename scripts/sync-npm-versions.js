@@ -127,8 +127,11 @@ function checkLockfileVersion(lockPath, version) {
 function updateLockfile(pkgDir) {
   console.log("Updating npm/onshape-mcp/package-lock.json...");
   try {
-    const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-    execFileSync(npmCmd, ["install", "--package-lock-only"], {
+    const [cmd, args] =
+      process.platform === "win32"
+        ? ["cmd.exe", ["/c", "npm", "install", "--package-lock-only"]]
+        : ["npm", ["install", "--package-lock-only"]];
+    execFileSync(cmd, args, {
       cwd: pkgDir,
       stdio: "pipe",
     });
