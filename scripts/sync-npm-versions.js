@@ -98,25 +98,35 @@ function checkLockfileVersion(lockPath, version) {
   const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
   const mismatches = [];
 
+  if (!lock.lockfileVersion || lock.lockfileVersion < 2) {
+    mismatches.push(
+      `lockfileVersion: ${lock.lockfileVersion ?? "missing"} (expected >= 2)`,
+    );
+  }
+
   if (lock.version !== version) {
     mismatches.push(`version: ${lock.version} (expected ${version})`);
   }
 
   const rootPkg = lock.packages?.[""];
-  if (rootPkg && rootPkg.version !== version) {
-    mismatches.push(
-      `packages[""].version: ${rootPkg.version} (expected ${version})`,
-    );
-  }
+  if (!rootPkg || typeof rootPkg !== "object") {
+    mismatches.push('packages[""] entry is missing');
+  } else {
+    if (rootPkg.version !== version) {
+      mismatches.push(
+        `packages[""].version: ${rootPkg.version} (expected ${version})`,
+      );
+    }
 
-  if (rootPkg?.optionalDependencies) {
-    for (const [dep, depVersion] of Object.entries(
-      rootPkg.optionalDependencies,
-    )) {
-      if (dep.startsWith("@onshape-mcp/") && depVersion !== version) {
-        mismatches.push(
-          `packages[""].optionalDependencies["${dep}"]: ${depVersion} (expected ${version})`,
-        );
+    if (rootPkg.optionalDependencies) {
+      for (const [dep, depVersion] of Object.entries(
+        rootPkg.optionalDependencies,
+      )) {
+        if (dep.startsWith("@onshape-mcp/") && depVersion !== version) {
+          mismatches.push(
+            `packages[""].optionalDependencies["${dep}"]: ${depVersion} (expected ${version})`,
+          );
+        }
       }
     }
   }
