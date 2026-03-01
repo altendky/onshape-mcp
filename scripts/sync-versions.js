@@ -137,8 +137,13 @@ function checkCargoLock() {
         : ["cargo", ["update", "--workspace", "--locked"]];
     execFileSync(cmd, args, { cwd: ROOT, stdio: "pipe" });
     return []; // no mismatches
-  } catch {
-    return ["Cargo.lock is out of date (cargo update --workspace --locked failed)"];
+  } catch (err) {
+    const stderr = err?.stderr?.toString()?.trim();
+    return [
+      stderr
+        ? `Cargo.lock check failed: ${stderr}`
+        : "Cargo.lock is out of date (cargo update --workspace --locked failed)",
+    ];
   }
 }
 
