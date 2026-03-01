@@ -901,7 +901,8 @@ pub(crate) async fn auth_middleware(
 /// Build the OAuth server router with all endpoints.
 ///
 /// The returned router includes:
-/// - `GET /.well-known/oauth-protected-resource` — RFC 9728
+/// - `GET /.well-known/oauth-protected-resource/mcp` — RFC 9728 (path-suffixed)
+/// - `GET /.well-known/oauth-protected-resource` — RFC 9728 (fallback without suffix)
 /// - `GET /.well-known/oauth-authorization-server` — RFC 8414
 /// - `POST /oauth/register` — Dynamic Client Registration
 /// - `GET /oauth/authorize` — Authorization endpoint
@@ -909,6 +910,13 @@ pub(crate) async fn auth_middleware(
 /// - `POST /oauth/token` — Token endpoint
 ///
 /// CORS is applied to metadata and token endpoints.
+///
+/// Per RFC 9728 Section 3, when the protected resource URL has a path
+/// component (e.g. `https://example.com/mcp`), the well-known URI is
+/// constructed by inserting `/.well-known/oauth-protected-resource`
+/// after the authority, preserving the path suffix:
+/// `https://example.com/.well-known/oauth-protected-resource/mcp`.
+/// We serve both the path-suffixed and bare variants for robustness.
 pub(crate) fn oauth_router(state: Arc<OAuthServerState>) -> Router {
     use tower_http::cors::{Any, CorsLayer};
 
@@ -918,6 +926,12 @@ pub(crate) fn oauth_router(state: Arc<OAuthServerState>) -> Router {
         .allow_headers(Any);
 
     Router::new()
+        // RFC 9728: path-suffixed variant (matches resource path `/mcp`).
+        .route(
+            "/.well-known/oauth-protected-resource/mcp",
+            routing::get(protected_resource_metadata),
+        )
+        // RFC 9728: bare variant (some clients may omit the path suffix).
         .route(
             "/.well-known/oauth-protected-resource",
             routing::get(protected_resource_metadata),
