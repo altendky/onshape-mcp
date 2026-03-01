@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oauth2::AccessToken;
+use oauth2_reqwest::ReqwestClient;
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
@@ -774,7 +775,7 @@ async fn try_refresh_direct(oauth: &mut OAuthApiState) -> Result<(), RefreshErro
 
     let response = oauth_client
         .exchange_refresh_token(&refresh_token)
-        .request_async(&oauth.refresh_http)
+        .request_async(&ReqwestClient::from(oauth.refresh_http.clone()))
         .await
         .map_err(|e| {
             let msg = e.to_string();
