@@ -202,6 +202,14 @@ fn hex_encode(bytes: &[u8]) -> String {
 // Metadata Endpoints
 // ============================================================================
 
+/// Health check endpoint.
+///
+/// `GET /health` — returns 200 OK with a simple JSON body.
+/// Used by load balancers and container orchestrators (e.g. Fly.io).
+async fn health() -> impl IntoResponse {
+    Json(serde_json::json!({"status": "ok"}))
+}
+
 /// RFC 9728: Protected Resource Metadata.
 ///
 /// `GET /.well-known/oauth-protected-resource`
@@ -542,7 +550,9 @@ async fn fetch_and_verify_user(
             http::StatusCode::FORBIDDEN,
             format!(
                 "User {} is not authorized to use this server. \
-                 Contact the server administrator to be added to the allowlist.",
+                 Send this ID to the server administrator to request access. \
+                 You can also find your Onshape user ID at \
+                 https://cad.onshape.com/api/v10/users/sessioninfo",
                 session_info.id
             ),
         ));
@@ -901,6 +911,7 @@ pub(crate) async fn auth_middleware(
 /// Build the OAuth server router with all endpoints.
 ///
 /// The returned router includes:
+/// - `GET /health` — Health check (returns 200 OK)
 /// - `GET /.well-known/oauth-protected-resource/mcp` — RFC 9728 (path-suffixed)
 /// - `GET /.well-known/oauth-protected-resource` — RFC 9728 (fallback without suffix)
 /// - `GET /.well-known/oauth-authorization-server` — RFC 8414
@@ -926,6 +937,7 @@ pub(crate) fn oauth_router(state: Arc<OAuthServerState>) -> Router {
         .allow_headers(Any);
 
     Router::new()
+        .route("/health", routing::get(health))
         // RFC 9728: path-suffixed variant (matches resource path `/mcp`).
         .route(
             "/.well-known/oauth-protected-resource/mcp",

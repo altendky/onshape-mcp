@@ -1,0 +1,12 @@
+target/
+.git/
+.github/
+node_modules/
+npm/
+docs/
+*.md
+.gitignore
+.pre-commit-config.yaml
+.mise.toml
+opencode.json
+fly.toml

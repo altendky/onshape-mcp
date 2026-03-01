@@ -117,7 +117,12 @@ pub struct HttpTransportConfig {
     /// Allowlist of Onshape user IDs permitted to connect.
     ///
     /// Empty list = fail-closed (nobody allowed).
-    #[serde(default)]
+    ///
+    /// Supports two formats:
+    /// - **TOML array of objects**: `[[http.allowed_users]]` with `id` and optional `name`
+    /// - **Comma-separated string** (e.g. from env vars):
+    ///   `id1:name1,id2:name2` or just `id1,id2` (names are optional)
+    #[serde(default, deserialize_with = "deserialize_allowed_users")]
     pub allowed_users: Vec<AllowedUser>,
 }
 
@@ -529,6 +534,76 @@ fn parse_duration_str(s: &str) -> Result<Duration, String> {
     num.checked_mul(multiplier)
         .map(Duration::from_secs)
         .ok_or_else(|| format!("invalid duration \"{s}\": value overflows"))
+}
+
+/// Deserializes `allowed_users` from either a TOML array of objects or a
+/// comma-separated string (useful for environment variables).
+///
+/// String format: `id1:name1,id2:name2` or just `id1,id2`.
+/// The `:name` portion is optional and ignored at runtime.
+fn deserialize_allowed_users<'de, D>(deserializer: D) -> Result<Vec<AllowedUser>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct AllowedUsersVisitor;
+
+    impl<'de> de::Visitor<'de> for AllowedUsersVisitor {
+        type Value = Vec<AllowedUser>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str(
+                "a list of allowed users (TOML array of {id, name} objects) \
+                 or a comma-separated string like \"id1:name1,id2:name2\"",
+            )
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Vec<AllowedUser>, E> {
+            Ok(parse_allowed_users_csv(value))
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Vec<AllowedUser>, A::Error> {
+            let mut users = Vec::new();
+            while let Some(user) = seq.next_element()? {
+                users.push(user);
+            }
+            Ok(users)
+        }
+    }
+
+    deserializer.deserialize_any(AllowedUsersVisitor)
+}
+
+/// Parse a comma-separated string of `id:name` pairs into `AllowedUser` entries.
+///
+/// - Empty or whitespace-only strings produce an empty vec.
+/// - Each entry is trimmed. Empty entries (from trailing commas) are skipped.
+/// - The `:name` portion is optional.
+fn parse_allowed_users_csv(s: &str) -> Vec<AllowedUser> {
+    if s.trim().is_empty() {
+        return Vec::new();
+    }
+    s.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            if let Some((id, name)) = entry.split_once(':') {
+                AllowedUser {
+                    id: id.trim().to_string(),
+                    name: Some(name.trim().to_string()),
+                }
+            } else {
+                AllowedUser {
+                    id: entry.to_string(),
+                    name: None,
+                }
+            }
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -1251,5 +1326,76 @@ mod tests {
         };
         let result = resolve_auth(AuthMethod::OAuth, &inv);
         assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
+    }
+
+    // ====================================================================
+    // Allowed Users CSV Parsing Tests
+    // ====================================================================
+
+    #[test]
+    fn allowed_users_csv_with_names() {
+        let users = parse_allowed_users_csv("abc123:alice,def456:bob");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert_eq!(users[0].name.as_deref(), Some("alice"));
+        assert_eq!(users[1].id, "def456");
+        assert_eq!(users[1].name.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn allowed_users_csv_without_names() {
+        let users = parse_allowed_users_csv("abc123,def456");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert!(users[0].name.is_none());
+        assert_eq!(users[1].id, "def456");
+        assert!(users[1].name.is_none());
+    }
+
+    #[test]
+    fn allowed_users_csv_mixed() {
+        let users = parse_allowed_users_csv("abc123:alice,def456");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert_eq!(users[0].name.as_deref(), Some("alice"));
+        assert_eq!(users[1].id, "def456");
+        assert!(users[1].name.is_none());
+    }
+
+    #[test]
+    fn allowed_users_csv_empty_string() {
+        let users = parse_allowed_users_csv("");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_whitespace_only() {
+        let users = parse_allowed_users_csv("   ");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_with_whitespace() {
+        let users = parse_allowed_users_csv(" abc123 : alice , def456 : bob ");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert_eq!(users[0].name.as_deref(), Some("alice"));
+        assert_eq!(users[1].id, "def456");
+        assert_eq!(users[1].name.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn allowed_users_csv_trailing_comma() {
+        let users = parse_allowed_users_csv("abc123:alice,");
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].id, "abc123");
+    }
+
+    #[test]
+    fn allowed_users_csv_single_entry() {
+        let users = parse_allowed_users_csv("60a1b2c3d4e5f60708091011:altendky");
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].id, "60a1b2c3d4e5f60708091011");
+        assert_eq!(users[0].name.as_deref(), Some("altendky"));
     }
 }

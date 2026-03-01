@@ -1,0 +1,40 @@
+# Fly.io configuration for onshape-mcp HTTP transport.
+#
+# Deployment:
+#   1. fly launch            (creates app, picks region)
+#   2. fly secrets set \
+#        ONSHAPE_MCP_HTTP__PUBLIC_URL=https://<app-name>.fly.dev \
+#        ONSHAPE_MCP_HTTP__ONSHAPE_CLIENT_ID=<your-client-id> \
+#        ONSHAPE_MCP_HTTP__ONSHAPE_CLIENT_SECRET=<your-client-secret> \
+#        "ONSHAPE_MCP_HTTP__ALLOWED_USERS=<id1>:<name1>,<id2>:<name2>"
+#   3. fly deploy
+#   4. Update Onshape OAuth app redirect URI:
+#        https://<app-name>.fly.dev/oauth/callback
+#   5. Add as Claude.ai connector:
+#        https://<app-name>.fly.dev/mcp
+
+app = "onshape-mcp"
+primary_region = "iad"
+
+[build]
+
+[env]
+# Listen on all interfaces so Fly's proxy can reach the app.
+ONSHAPE_MCP_HTTP__HOST = "0.0.0.0"
+# Secrets (set via `fly secrets set`, not here):
+#   ONSHAPE_MCP_HTTP__PUBLIC_URL
+#   ONSHAPE_MCP_HTTP__ONSHAPE_CLIENT_ID
+#   ONSHAPE_MCP_HTTP__ONSHAPE_CLIENT_SECRET
+#   ONSHAPE_MCP_HTTP__ALLOWED_USERS
+
+[http_service]
+internal_port = 8080
+force_https = true
+auto_stop_machines = "stop"
+auto_start_machines = true
+min_machines_running = 0
+
+[[http_service.checks]]
+path = "/health"
+interval = "30s"
+timeout = "5s"
