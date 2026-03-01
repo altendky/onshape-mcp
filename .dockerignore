@@ -3,8 +3,11 @@ target/
 .github/
 node_modules/
 npm/
-docs/
-*.md
+# Exclude docs/ except mcp-resources (needed by onshape-mcp-resources build.rs)
+docs/src/project/
+docs/book/
+# Exclude top-level markdown files but not those under docs/src/mcp-resources/
+/*.md
 .gitignore
 .pre-commit-config.yaml
 .mise.toml
