@@ -208,6 +208,9 @@ pub struct LoginFlowHandle {
 /// Returns an error if the callback server cannot be started or if the proxy
 /// config cannot be fetched.
 pub async fn start_login_flow(mode: &LoginMode) -> Result<LoginFlowHandle, LoginError> {
+    // Fail fast before launching browser-based auth.
+    let token_path = default_token_file_path().ok_or(LoginError::NoTokenPath)?;
+
     // Determine client_id and build the exchange configuration.
     let exchange_config = match mode {
         LoginMode::Proxy { proxy_url } => {
@@ -268,6 +271,7 @@ pub async fn start_login_flow(mode: &LoginMode) -> Result<LoginFlowHandle, Login
             listeners,
             shutdown_rx,
             internal_shutdown,
+            token_path,
         )
         .await;
         // Ignore send error — the receiver may have been dropped if the caller timed out.
@@ -396,6 +400,7 @@ async fn complete_login_flow(
     listeners: Vec<tokio::net::TcpListener>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    token_path: std::path::PathBuf,
 ) -> Result<(), LoginError> {
     // Set up shared state for the callback handler.
     let (url_tx, url_rx) = oneshot::channel::<String>();
@@ -453,7 +458,6 @@ async fn complete_login_flow(
     let token_data = exchange_code(auth_code, session.pkce_verifier, &exchange_config).await?;
 
     // Save tokens to disk.
-    let token_path = default_token_file_path().ok_or(LoginError::NoTokenPath)?;
     crate::oauth::save_token_file(&token_path, &token_data)?;
 
     Ok(())
