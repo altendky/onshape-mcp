@@ -15,6 +15,9 @@
 
 app = "onshape-mcp"
 primary_region = "iad"
+# Custom domain: onshape.mcp.fstab.net
+# Setup: fly certs add onshape.mcp.fstab.net
+# DNS:   onshape.mcp.fstab.net CNAME onshape-mcp.fly.dev
 
 [build]
 
