@@ -98,6 +98,21 @@ pub enum ToolResult {
     },
 }
 
+/// Create a [`ToolResult`] for an expected user-input error.
+///
+/// Returns a successful `CallToolResult` with `is_error: Some(true)`, keeping
+/// the MCP transport clean. Use this for validation failures that the caller
+/// (typically an LLM) can act on — as opposed to protocol-level
+/// `Err(ErrorData)` which signals handler/infrastructure breakage.
+fn tool_input_error(message: impl Into<String>) -> ToolResult {
+    ToolResult::Immediate(Ok(CallToolResult {
+        content: vec![Content::text(message.into())],
+        is_error: Some(true),
+        structured_content: None,
+        meta: None,
+    }))
+}
+
 /// Convert a raw HTTP response from the Onshape API into a [`CallToolResult`].
 ///
 /// # Arguments
@@ -449,7 +464,7 @@ fn call_auth_status(
 ) -> ToolResult {
     let input: AuthStatusInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return ToolResult::Immediate(Err(e)),
+        Err(e) => return tool_input_error(e.message),
     };
 
     if input.validate != Some(true) {
@@ -561,7 +576,7 @@ pub const DEFAULT_PROXY_URL: &str = "https://onshape-oauth-proxy.fstab.workers.d
 fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolResult {
     let input: AuthLoginInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return ToolResult::Immediate(Err(e)),
+        Err(e) => return tool_input_error(e.message),
     };
 
     let mode_str = input.mode.as_deref().unwrap_or("proxy");
@@ -575,18 +590,10 @@ fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolResult {
         }
         "direct" => {
             let Some(client_id) = input.client_id else {
-                return ToolResult::Immediate(Err(ErrorData::new(
-                    ErrorCode::INVALID_PARAMS,
-                    "client_id is required for direct mode",
-                    None,
-                )));
+                return tool_input_error("client_id is required for direct mode");
             };
             let Some(client_secret) = input.client_secret else {
-                return ToolResult::Immediate(Err(ErrorData::new(
-                    ErrorCode::INVALID_PARAMS,
-                    "client_secret is required for direct mode",
-                    None,
-                )));
+                return tool_input_error("client_secret is required for direct mode");
             };
             LoginMode::Direct {
                 client_id,
@@ -594,11 +601,9 @@ fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolResult {
             }
         }
         other => {
-            return ToolResult::Immediate(Err(ErrorData::new(
-                ErrorCode::INVALID_PARAMS,
-                format!("invalid mode \"{other}\": expected \"proxy\" (default) or \"direct\""),
-                None,
-            )));
+            return tool_input_error(format!(
+                "invalid mode \"{other}\": expected \"proxy\" (default) or \"direct\""
+            ));
         }
     };
 
@@ -668,26 +673,20 @@ fn call_api_explain(
 fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolResult {
     let input: ApiCallInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return ToolResult::Immediate(Err(e)),
+        Err(e) => return tool_input_error(e.message),
     };
 
     let body: Option<Value> = match input.body.as_deref().map(serde_json::from_str).transpose() {
         Ok(v) => v,
         Err(e) => {
-            return ToolResult::Immediate(Err(ErrorData::new(
-                ErrorCode::INVALID_PARAMS,
-                format!("invalid body JSON: {e}"),
-                None,
-            )));
+            return tool_input_error(format!("invalid body JSON: {e}"));
         }
     };
 
     if body == Some(Value::Null) {
-        return ToolResult::Immediate(Err(ErrorData::new(
-            ErrorCode::INVALID_PARAMS,
-            "body parsed as JSON null; omit the body field instead of passing \"null\"".to_string(),
-            None,
-        )));
+        return tool_input_error(
+            "body parsed as JSON null; omit the body field instead of passing \"null\"",
+        );
     }
 
     let request = match spec.build_request(
@@ -698,11 +697,7 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
     ) {
         Ok(req) => req,
         Err(e) => {
-            return ToolResult::Immediate(Err(ErrorData::new(
-                ErrorCode::INVALID_PARAMS,
-                format!("{e}"),
-                None,
-            )));
+            return tool_input_error(format!("{e}"));
         }
     };
 
@@ -919,6 +914,32 @@ mod tests {
             ToolResult::OAuthLoginFlow { .. } => {
                 panic!("expected Immediate Err, got OAuthLoginFlow")
             }
+        }
+    }
+
+    /// Asserts that `result` is a tool-level error (`is_error: Some(true)`)
+    /// and returns the concatenated text content for further assertions.
+    fn assert_tool_error(result: ToolResult) -> String {
+        match result {
+            ToolResult::Immediate(Ok(r)) => {
+                assert_eq!(
+                    r.is_error,
+                    Some(true),
+                    "expected is_error=true, got {:?}",
+                    r.is_error
+                );
+                r.content
+                    .iter()
+                    .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+                    .collect::<String>()
+            }
+            ToolResult::Immediate(Err(e)) => {
+                panic!("expected tool error (is_error=true), got protocol error: {e:?}")
+            }
+            other => panic!(
+                "expected Immediate tool error, got {:?}",
+                std::mem::discriminant(&other)
+            ),
         }
     }
 
@@ -1394,14 +1415,14 @@ mod tests {
         );
         // Missing required path param "did"
 
-        let err = assert_immediate_err(call_tool(
+        let msg = assert_tool_error(call_tool(
             "onshape_api_call",
             Some(&args),
             &auth,
             &default_validation(),
             Some(&spec),
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(!msg.is_empty());
     }
 
     #[test]
@@ -1470,15 +1491,14 @@ mod tests {
             Value::String("not valid json".to_string()),
         );
 
-        let err = assert_immediate_err(call_tool(
+        let msg = assert_tool_error(call_tool(
             "onshape_api_call",
             Some(&args),
             &auth,
             &default_validation(),
             Some(&spec),
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("invalid body JSON"));
+        assert!(msg.contains("invalid body JSON"));
     }
 
     #[test]
@@ -1492,15 +1512,14 @@ mod tests {
         );
         args.insert("body".to_string(), Value::String("null".to_string()));
 
-        let err = assert_immediate_err(call_tool(
+        let msg = assert_tool_error(call_tool(
             "onshape_api_call",
             Some(&args),
             &auth,
             &default_validation(),
             Some(&spec),
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("JSON null"));
+        assert!(msg.contains("JSON null"));
     }
 
     #[test]
@@ -1986,15 +2005,14 @@ mod tests {
             Value::String("secret".to_string()),
         );
 
-        let err = assert_immediate_err(call_tool(
+        let msg = assert_tool_error(call_tool(
             "onshape_mcp_auth_login",
             Some(&args),
             &auth,
             &default_validation(),
             None,
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("client_id"));
+        assert!(msg.contains("client_id"));
     }
 
     #[test]
@@ -2004,15 +2022,14 @@ mod tests {
         args.insert("mode".to_string(), Value::String("direct".to_string()));
         args.insert("client_id".to_string(), Value::String("cid".to_string()));
 
-        let err = assert_immediate_err(call_tool(
+        let msg = assert_tool_error(call_tool(
             "onshape_mcp_auth_login",
             Some(&args),
             &auth,
             &default_validation(),
             None,
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("client_secret"));
+        assert!(msg.contains("client_secret"));
     }
 
     #[test]
@@ -2021,14 +2038,13 @@ mod tests {
         let mut args = Map::new();
         args.insert("mode".to_string(), Value::String("invalid".to_string()));
 
-        let err = assert_immediate_err(call_tool(
+        let msg = assert_tool_error(call_tool(
             "onshape_mcp_auth_login",
             Some(&args),
             &auth,
             &default_validation(),
             None,
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("invalid"));
+        assert!(msg.contains("invalid"));
     }
 }
