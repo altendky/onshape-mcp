@@ -17,6 +17,11 @@ COPY crates/onshape-mcp-io/Cargo.toml crates/onshape-mcp-io/
 COPY crates/onshape-mcp-resources/Cargo.toml crates/onshape-mcp-resources/
 COPY crates/onshape-mcp/Cargo.toml crates/onshape-mcp/
 
+# onshape-mcp-resources has a build.rs that requires its resources/ directory.
+# Copy these during the cache layer so the dependency pre-build succeeds.
+COPY crates/onshape-mcp-resources/build.rs crates/onshape-mcp-resources/
+COPY crates/onshape-mcp-resources/resources/ crates/onshape-mcp-resources/resources/
+
 # Create dummy source files so cargo can resolve dependencies
 RUN mkdir -p crates/onshape-client-core/src && echo "" > crates/onshape-client-core/src/lib.rs \
     && mkdir -p crates/onshape-client-io/src && echo "" > crates/onshape-client-io/src/lib.rs \
