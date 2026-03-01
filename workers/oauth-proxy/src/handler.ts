@@ -183,13 +183,8 @@ export function handleRequest(
     return handleHealth();
   }
 
-  // Config endpoint — exempt from IP restriction.
-  if (ctx.pathname === "/config" && ctx.method === "GET") {
-    return handleConfig(env);
-  }
-
-  // Method check for exempt endpoints that used the wrong method.
-  if (ctx.pathname === "/health" || ctx.pathname === "/config") {
+  // Method check for health endpoint with wrong method.
+  if (ctx.pathname === "/health") {
     return jsonError(405, "method_not_allowed");
   }
 
@@ -205,6 +200,12 @@ export function handleRequest(
       status: 403,
       body: { error: "forbidden", source_ip: ctx.sourceIp },
     };
+  }
+
+  // Config endpoint.
+  if (ctx.pathname === "/config") {
+    if (ctx.method !== "GET") return jsonError(405, "method_not_allowed");
+    return handleConfig(env);
   }
 
   // Token exchange.

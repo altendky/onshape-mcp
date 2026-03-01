@@ -167,13 +167,17 @@ describe("GET /config", () => {
     expect(json.body).toEqual({ client_id: "test-client-id" });
   });
 
-  it("is exempt from IP restriction", () => {
+  it("is blocked for disallowed IP", () => {
     const effect = handleRequest(
       ctx({ pathname: "/config", sourceIp: DISALLOWED_IP }),
       TEST_ENV,
       [ALLOWED_IP],
     );
-    expect((effect as JsonResponseEffect).status).toBe(200);
+    expect((effect as JsonResponseEffect).status).toBe(403);
+    expect((effect as JsonResponseEffect).body).toEqual({
+      error: "forbidden",
+      source_ip: DISALLOWED_IP,
+    });
   });
 
   it("rejects non-GET methods", () => {
@@ -191,6 +195,23 @@ describe("GET /config", () => {
 // ============================================================================
 
 describe("IP restriction", () => {
+  it("blocks disallowed IP on /config", () => {
+    const effect = handleRequest(
+      ctx({
+        pathname: "/config",
+        sourceIp: DISALLOWED_IP,
+      }),
+      TEST_ENV,
+      [ALLOWED_IP],
+    );
+    expect(effect.type).toBe("json-response");
+    expect((effect as JsonResponseEffect).status).toBe(403);
+    expect((effect as JsonResponseEffect).body).toEqual({
+      error: "forbidden",
+      source_ip: DISALLOWED_IP,
+    });
+  });
+
   it("blocks disallowed IP on /token/exchange", () => {
     const effect = handleRequest(
       ctx({
@@ -250,6 +271,17 @@ describe("ALLOWED_SOURCES misconfigured", () => {
     const envNoSources: Env = { ...TEST_ENV, ALLOWED_SOURCES: "" };
     const effect = handleRequest(ctx(), envNoSources, []);
     expect((effect as JsonResponseEffect).status).toBe(200);
+  });
+
+  it("blocks /config when ALLOWED_SOURCES is empty", () => {
+    const envNoSources: Env = { ...TEST_ENV, ALLOWED_SOURCES: "" };
+    const effect = handleRequest(
+      ctx({ pathname: "/config" }),
+      envNoSources,
+      [],
+    );
+    expect((effect as JsonResponseEffect).status).toBe(500);
+    expect((effect as JsonResponseEffect).body).toEqual({ error: "server misconfigured" });
   });
 });
 

@@ -150,8 +150,13 @@ describe("shouldRetryIpv4", () => {
 // ============================================================================
 
 describe("tryAddresses", () => {
-  test("returns null for empty address list", async () => {
+  test("returns null for empty address list (POST)", async () => {
     const result = await tryAddresses([], "https://example.com/test", {});
+    expect(result).toBeNull();
+  });
+
+  test("returns null for empty address list (GET)", async () => {
+    const result = await tryAddresses([], "https://example.com/test", null, "GET");
     expect(result).toBeNull();
   });
 

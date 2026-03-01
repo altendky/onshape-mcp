@@ -158,23 +158,50 @@ export function httpsPostJsonToIp(
 ): Promise<HttpResult> {
   const parsed = new URL(url);
   const body = JSON.stringify(jsonBody);
-  return httpsPostToIp(ipAddress, parsed, body);
+  return httpsRequestToIp(ipAddress, parsed, "POST", body);
 }
 
 /**
- * Low-level POST to a specific IP with pre-parsed URL and serialised body.
+ * Make an HTTPS GET request to a specific IP address.
  *
- * Separated from `httpsPostJsonToIp` so that callers which iterate
+ * The request is sent directly to `ipAddress` with `servername` set
+ * for TLS SNI and `Host` set for HTTP routing.
+ *
+ * Returns the response status and body text.  Throws on network errors.
+ */
+export function httpsGetToIp(
+  ipAddress: string,
+  url: string,
+): Promise<HttpResult> {
+  const parsed = new URL(url);
+  return httpsRequestToIp(ipAddress, parsed, "GET", null);
+}
+
+/**
+ * Low-level HTTP request to a specific IP with pre-parsed URL.
+ *
+ * Separated from the public helpers so that callers which iterate
  * over multiple addresses (see `tryAddresses`) can parse once and
  * avoid re-throwing parse errors on every address.
+ *
+ * Supports both GET (no body) and POST (with body) requests.
  */
-function httpsPostToIp(
+function httpsRequestToIp(
   ipAddress: string,
   parsed: URL,
-  body: string,
+  method: "GET" | "POST",
+  body: string | null,
 ): Promise<HttpResult> {
   const hostname = parsed.hostname;
   const port = parsed.port || 443;
+
+  const headers: Record<string, string | number> = {
+    Host: hostname,
+  };
+  if (body !== null) {
+    headers["Content-Type"] = "application/json";
+    headers["Content-Length"] = Buffer.byteLength(body);
+  }
 
   return new Promise((resolve, reject) => {
     const req = httpsRequest(
@@ -182,13 +209,9 @@ function httpsPostToIp(
         hostname: ipAddress,
         port,
         path: parsed.pathname + parsed.search,
-        method: "POST",
+        method,
         servername: hostname, // TLS SNI must match the certificate
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-          Host: hostname,
-        },
+        headers,
       },
       (res) => {
         let data = "";
@@ -206,7 +229,9 @@ function httpsPostToIp(
       req.destroy(new Error("request timed out"));
     });
     req.on("error", reject);
-    req.write(body);
+    if (body !== null) {
+      req.write(body);
+    }
     req.end();
   });
 }
@@ -216,7 +241,7 @@ function httpsPostToIp(
 // ============================================================================
 
 /**
- * Try POSTing to each address in order.  Stop on the first HTTP
+ * Try requesting each address in order.  Stop on the first HTTP
  * response (even an error like 403).  Only connection-level failures
  * advance to the next address.
  *
@@ -227,16 +252,28 @@ export async function tryAddresses(
   addresses: string[],
   url: string,
   jsonBody: unknown,
+): Promise<HttpResult | null>;
+export async function tryAddresses(
+  addresses: string[],
+  url: string,
+  jsonBody: null,
+  method: "GET",
+): Promise<HttpResult | null>;
+export async function tryAddresses(
+  addresses: string[],
+  url: string,
+  jsonBody: unknown,
+  method: "GET" | "POST" = "POST",
 ): Promise<HttpResult | null> {
-  // Parse URL and serialise body once before the loop.  Errors here
-  // (malformed URL, circular JSON) propagate immediately to the caller
-  // instead of being silently swallowed by the per-address catch below.
+  // Parse URL once before the loop.  Errors here (malformed URL)
+  // propagate immediately to the caller instead of being silently
+  // swallowed by the per-address catch below.
   const parsed = new URL(url);
-  const body = JSON.stringify(jsonBody);
+  const body = method === "POST" ? JSON.stringify(jsonBody) : null;
 
   for (const addr of addresses) {
     try {
-      return await httpsPostToIp(addr, parsed, body);
+      return await httpsRequestToIp(addr, parsed, method, body);
     } catch {
       // Connection error — try the next address.
       continue;
