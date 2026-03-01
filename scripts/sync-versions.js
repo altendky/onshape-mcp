@@ -62,7 +62,7 @@ function getWorkspaceVersion() {
  * For each internal crate in [workspace.dependencies], extract the current
  * version string from its inline table.
  *
- * Returns an array of { crate, currentVersion, line } objects for mismatches,
+ * Returns an array of { crate, currentVersion, expected } objects for mismatches,
  * or an empty array if all match.
  */
 function checkWorkspaceDepsVersions(expectedVersion) {
