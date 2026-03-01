@@ -12,8 +12,8 @@
 //! The redirect URI uses `http://localhost:18338/callback` as required by
 //! Onshape's OAuth application settings (which reject literal IP addresses).
 //! The callback server binds to both `127.0.0.1` and `[::1]` loopback
-//! addresses (whichever succeed) so the flow works regardless of how the
-//! system resolves `localhost`.
+//! addresses. On dual-stack systems both must succeed; on single-stack
+//! systems the available address family is sufficient.
 //!
 //! The flow is initiated by the `onshape_mcp_auth_login` MCP tool or the
 //! `auth login` CLI subcommand. The authorization URL is returned to the
@@ -448,16 +448,34 @@ async fn complete_login_flow(
 // Callback Server
 // ============================================================================
 
+/// Returns `true` if a bind error indicates port contention — the address
+/// family exists but the port is occupied or blocked — as opposed to the
+/// address family being unavailable on this system.
+///
+/// Uses an inverted check (matching known-fatal kinds) rather than
+/// enumerating "acceptable" kinds, because [`std::io::ErrorKind`] is
+/// `#[non_exhaustive]` and unmapped OS errors (e.g. `EAFNOSUPPORT` →
+/// `Uncategorized`) should be treated as "interface unavailable".
+fn is_bind_contention(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
+    )
+}
+
 /// Starts TCP listeners for the callback server on loopback addresses.
 ///
 /// Attempts to bind both IPv4 (`127.0.0.1`) and IPv6 (`[::1]`) loopback
-/// addresses. Returns all listeners that successfully bound — at least one
-/// must succeed. This dual-stack approach ensures the callback works
-/// regardless of how the system resolves `localhost`.
+/// addresses. On dual-stack systems, both must succeed — if one address
+/// family's port is in use or inaccessible, the function fails rather than
+/// accepting a single listener (since `localhost` may resolve to either
+/// family). On single-stack systems where one address family is simply
+/// unavailable, a single listener is accepted.
 ///
 /// # Errors
 ///
-/// Returns `LoginError::ServerStart` if neither address can be bound.
+/// Returns `LoginError::ServerStart` if neither address can be bound, or
+/// if only one bound but the other failed due to port contention.
 async fn start_callback_server() -> Result<Vec<tokio::net::TcpListener>, LoginError> {
     let ipv4_addr = SocketAddr::from(([127, 0, 0, 1], CALLBACK_PORT));
     let ipv6_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], CALLBACK_PORT));
@@ -484,6 +502,29 @@ async fn start_callback_server() -> Result<Vec<tokio::net::TcpListener>, LoginEr
         return Err(LoginError::ServerStart(last_err.unwrap_or_else(|| {
             std::io::Error::other("no loopback address available")
         })));
+    }
+
+    // If only one address family bound successfully but the other failed
+    // due to port contention (AddrInUse or PermissionDenied), reject the
+    // partial bind. The redirect URI uses `localhost` which may resolve to
+    // either address family, so accepting only one listener risks the
+    // callback timing out if the client resolves to the occupied family.
+    // Non-contention errors (AddrNotAvailable, Uncategorized/EAFNOSUPPORT,
+    // etc.) indicate the address family simply doesn't exist on this system,
+    // which is fine — a single listener is sufficient.
+    if listeners.len() == 1
+        && let Some(ref err) = last_err
+        && is_bind_contention(err)
+    {
+        return Err(LoginError::ServerStart(std::io::Error::new(
+            err.kind(),
+            format!(
+                "callback port {CALLBACK_PORT} is already in use or inaccessible \
+                 on one localhost address family; both IPv4 (127.0.0.1) and IPv6 \
+                 ([::1]) must be available because the redirect URI uses \
+                 `localhost` which may resolve to either"
+            ),
+        )));
     }
 
     Ok(listeners)
@@ -1069,6 +1110,57 @@ mod tests {
         // On dual-stack systems, both should succeed.
         // On IPv4-only or IPv6-only, exactly one should succeed.
         assert!(listeners.len() <= 2, "should return at most two listeners");
+    }
+
+    #[tokio::test]
+    async fn callback_server_rejects_partial_bind_contention() {
+        // Block only IPv4 on the callback port.
+        let Ok(_ipv4_hold) =
+            tokio::net::TcpListener::bind(format!("127.0.0.1:{CALLBACK_PORT}")).await
+        else {
+            return; // Port already in use, skip.
+        };
+
+        // Verify IPv6 is available on this system (bind ephemeral port).
+        if tokio::net::TcpListener::bind("[::1]:0").await.is_err() {
+            return; // IPv6 unavailable; can't test partial contention.
+        }
+
+        // IPv4 → AddrInUse (contention), IPv6 → would succeed.
+        // The partial contention check should reject this.
+        let result = start_callback_server().await;
+        assert!(
+            result.is_err(),
+            "should fail when one address family's port is occupied"
+        );
+    }
+
+    // ====================================================================
+    // Bind contention classification tests
+    // ====================================================================
+
+    #[test]
+    fn bind_contention_identifies_addr_in_use() {
+        let err = std::io::Error::new(std::io::ErrorKind::AddrInUse, "test");
+        assert!(is_bind_contention(&err));
+    }
+
+    #[test]
+    fn bind_contention_identifies_permission_denied() {
+        let err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test");
+        assert!(is_bind_contention(&err));
+    }
+
+    #[test]
+    fn bind_contention_rejects_addr_not_available() {
+        let err = std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, "test");
+        assert!(!is_bind_contention(&err));
+    }
+
+    #[test]
+    fn bind_contention_rejects_other_errors() {
+        let err = std::io::Error::other("some unknown error");
+        assert!(!is_bind_contention(&err));
     }
 
     // ====================================================================
