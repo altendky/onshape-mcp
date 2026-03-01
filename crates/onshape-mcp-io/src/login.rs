@@ -599,9 +599,12 @@ async fn exchange_code_direct(
     // expires and cannot be renewed. The refresh-time code paths correctly
     // handle omitted refresh tokens per RFC 6749 Section 6, but the initial
     // login must include one.
-    if response.refresh_token().is_none() {
+    if response
+        .refresh_token()
+        .is_none_or(|t| t.secret().is_empty())
+    {
         return Err(LoginError::TokenExchange(
-            "token response missing refresh_token".to_string(),
+            "token response missing or empty refresh_token".to_string(),
         ));
     }
 
@@ -668,9 +671,12 @@ async fn exchange_code_proxy(
 
     // Fail fast if the proxy response did not include a refresh token.
     // Without one, the session will break once the access token expires.
-    let refresh_token = token_response.refresh_token.ok_or_else(|| {
-        LoginError::TokenExchange("proxy response missing refresh_token".to_string())
-    })?;
+    let refresh_token = token_response
+        .refresh_token
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| {
+            LoginError::TokenExchange("proxy response missing or empty refresh_token".to_string())
+        })?;
 
     let mut token_data = OAuthTokenData::from_raw(
         token_response.access_token,
