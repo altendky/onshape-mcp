@@ -75,6 +75,16 @@ pub enum LoginError {
     #[error("login flow timed out after {LOGIN_TIMEOUT:?} — no callback received")]
     Timeout,
 
+    /// The callback channel was closed before delivering a URL.
+    ///
+    /// This means the oneshot sender was dropped without sending a value,
+    /// which is distinct from a timeout. Currently this is practically
+    /// unreachable because the sender lives for the entire login flow,
+    /// but differentiating it from `Timeout` aids debugging if future
+    /// refactoring changes ownership lifetimes.
+    #[error("callback channel closed before delivering a callback URL")]
+    CallbackChannelClosed,
+
     /// OAuth callback validation failed.
     #[error("callback validation failed: {0}")]
     CallbackValidation(#[from] onshape_client_core::oauth::CallbackValidationError),
@@ -434,7 +444,7 @@ async fn complete_login_flow(
     // Now handle the result (after servers are stopped).
     let callback_url = result
         .map_err(|_| LoginError::Timeout)?
-        .map_err(|_| LoginError::Timeout)?;
+        .map_err(|_| LoginError::CallbackChannelClosed)?;
 
     // Validate the callback.
     let auth_code = validate_callback(&callback_url, &session.csrf_state)?;
