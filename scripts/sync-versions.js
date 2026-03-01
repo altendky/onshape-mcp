@@ -267,7 +267,8 @@ function checkLockfileVersion(lockPath, version) {
 }
 
 function updateNpmLockfile(pkgDir) {
-  console.log("Updating npm/onshape-mcp/package-lock.json...");
+  const lockRelPath = path.relative(ROOT, path.join(pkgDir, "package-lock.json"));
+  console.log(`Updating ${lockRelPath}...`);
   try {
     const [cmd, args] =
       process.platform === "win32"
@@ -277,18 +278,18 @@ function updateNpmLockfile(pkgDir) {
       cwd: pkgDir,
       stdio: "pipe",
     });
-    console.log("UPDATED: npm/onshape-mcp/package-lock.json");
+    console.log(`UPDATED: ${lockRelPath}`);
     return true;
   } catch (err) {
     console.error(
-      "WARNING: Failed to update package-lock.json:",
+      `WARNING: Failed to update ${lockRelPath}:`,
       err.message,
     );
     if (err.stderr) {
       console.error("npm output:", err.stderr.toString());
     }
     console.error(
-      "  Run 'npm install' in npm/onshape-mcp/ manually to fix.",
+      `  Run 'npm install' in ${path.relative(ROOT, pkgDir)}/ manually to fix.`,
     );
     return false;
   }
