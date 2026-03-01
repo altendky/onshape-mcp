@@ -262,9 +262,16 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
               );
             }
 
-            const proxyConfig = JSON.parse(configBody!) as {
-              client_id: string;
-            };
+            let proxyConfig: { client_id: string };
+            try {
+              proxyConfig = JSON.parse(configBody!) as {
+                client_id: string;
+              };
+            } catch {
+              throw new Error(
+                `Proxy /config returned invalid JSON: ${configBody}`,
+              );
+            }
             const clientId = proxyConfig.client_id;
 
             if (typeof clientId !== "string" || clientId === "") {
