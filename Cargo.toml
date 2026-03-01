@@ -21,6 +21,7 @@ onshape-mcp-io = { path = "crates/onshape-mcp-io", version = "0.2.0" }
 onshape-mcp-resources = { path = "crates/onshape-mcp-resources", version = "0.2.0" }
 
 # External dependencies
+axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
@@ -38,6 +39,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+url = "2"
 proc-macro2 = "1"
 pulldown-cmark = "0.13"
 tempfile = "3"

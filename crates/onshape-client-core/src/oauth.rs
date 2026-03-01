@@ -8,7 +8,10 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use oauth2::basic::{BasicClient, BasicTokenResponse};
-use oauth2::{AccessToken, AuthUrl, ClientId, ClientSecret, RefreshToken, TokenResponse, TokenUrl};
+use oauth2::{
+    AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, RefreshToken, TokenResponse, TokenUrl,
+};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -463,11 +466,175 @@ impl OAuthSession {
 }
 
 // ============================================================================
+// OAuth Login Flow (Authorization Code + PKCE)
+// ============================================================================
+
+/// Configuration for starting an OAuth login flow.
+///
+/// Contains the OAuth client ID, redirect URI, and requested scopes.
+/// Used to build the authorization URL and validate the callback.
+#[derive(Clone, Debug)]
+pub struct OAuthLoginConfig {
+    /// The OAuth 2.0 client ID.
+    pub client_id: String,
+    /// The redirect URI where Onshape will send the authorization code.
+    /// Typically `http://127.0.0.1:18338/callback`.
+    pub redirect_uri: String,
+    /// OAuth 2.0 scopes to request (e.g. `["OAuth2Read", "OAuth2Write"]`).
+    pub scopes: Vec<String>,
+}
+
+/// Active OAuth login session state.
+///
+/// Holds the PKCE verifier and CSRF state needed to complete the
+/// authorization code exchange after the user authorizes in their browser.
+/// This is a pure state machine — no I/O.
+pub struct OAuthLoginSession {
+    /// PKCE code verifier — kept secret until the token exchange.
+    pub pkce_verifier: PkceCodeVerifier,
+    /// CSRF state token — validated against the callback to prevent CSRF.
+    pub csrf_state: CsrfToken,
+    /// The login configuration used to start this session.
+    pub config: OAuthLoginConfig,
+}
+
+/// Errors that can occur during OAuth callback validation.
+#[derive(Debug, thiserror::Error)]
+pub enum CallbackValidationError {
+    /// The callback URL could not be parsed.
+    #[error("invalid callback URL: {0}")]
+    InvalidUrl(String),
+    /// The OAuth provider returned an error.
+    #[error("OAuth error from provider: {error} (description: {description:?})")]
+    OAuthError {
+        /// The OAuth error code (e.g. `access_denied`).
+        error: String,
+        /// Optional human-readable error description.
+        description: Option<String>,
+    },
+    /// The CSRF state token does not match.
+    #[error("CSRF state mismatch: expected {expected}, got {actual}")]
+    StateMismatch {
+        /// The expected state token.
+        expected: String,
+        /// The actual state token from the callback.
+        actual: String,
+    },
+    /// The callback did not contain a `state` parameter.
+    #[error("callback is missing the 'state' parameter")]
+    MissingState,
+    /// The callback did not contain a `code` parameter.
+    #[error("callback is missing the 'code' parameter")]
+    MissingCode,
+}
+
+/// Constructs the Onshape OAuth authorization URL.
+///
+/// Builds a full authorization URL with PKCE challenge, CSRF state,
+/// redirect URI, and requested scopes. The returned URL should be
+/// opened in the user's browser.
+///
+/// # Arguments
+///
+/// * `config` — OAuth login configuration (client ID, redirect URI, scopes)
+/// * `csrf_state` — CSRF state token to include in the request
+/// * `pkce_challenge` — PKCE code challenge (S256)
+///
+/// This is a pure function — no I/O.
+///
+/// # Panics
+///
+/// Panics if the `redirect_uri` in `config` is not a valid URL.
+#[must_use]
+pub fn build_authorize_url(
+    config: &OAuthLoginConfig,
+    csrf_state: &CsrfToken,
+    pkce_challenge: PkceCodeChallenge,
+) -> String {
+    let client = BasicClient::new(ClientId::new(config.client_id.clone()))
+        .set_auth_uri(onshape_auth_url())
+        .set_token_uri(onshape_token_url())
+        .set_redirect_uri(
+            #[allow(clippy::expect_used)]
+            RedirectUrl::new(config.redirect_uri.clone())
+                .expect("redirect_uri should be a valid URL"),
+        );
+
+    let mut auth_request = client
+        .authorize_url(|| csrf_state.clone())
+        .set_pkce_challenge(pkce_challenge);
+
+    for scope in &config.scopes {
+        auth_request = auth_request.add_scope(oauth2::Scope::new(scope.clone()));
+    }
+
+    let (url, _csrf_token) = auth_request.url();
+    url.to_string()
+}
+
+/// Validates an OAuth callback URL and extracts the authorization code.
+///
+/// Checks for OAuth error parameters, validates the CSRF state token,
+/// and extracts the authorization code from the callback URL.
+///
+/// # Arguments
+///
+/// * `callback_url` — The full callback URL received from Onshape
+/// * `expected_state` — The CSRF state token from the login session
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The URL cannot be parsed
+/// - The OAuth provider returned an error
+/// - The CSRF state does not match
+/// - The authorization code is missing
+pub fn validate_callback(
+    callback_url: &str,
+    expected_state: &CsrfToken,
+) -> Result<AuthorizationCode, CallbackValidationError> {
+    let url = url::Url::parse(callback_url)
+        .map_err(|e| CallbackValidationError::InvalidUrl(e.to_string()))?;
+
+    let params: std::collections::HashMap<String, String> = url
+        .query_pairs()
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+
+    // Check for OAuth error response.
+    if let Some(error) = params.get("error") {
+        return Err(CallbackValidationError::OAuthError {
+            error: error.clone(),
+            description: params.get("error_description").cloned(),
+        });
+    }
+
+    // Validate CSRF state.
+    let state = params
+        .get("state")
+        .ok_or(CallbackValidationError::MissingState)?;
+
+    if state != expected_state.secret() {
+        return Err(CallbackValidationError::StateMismatch {
+            expected: expected_state.secret().clone(),
+            actual: state.clone(),
+        });
+    }
+
+    // Extract authorization code.
+    let code = params
+        .get("code")
+        .ok_or(CallbackValidationError::MissingCode)?;
+
+    Ok(AuthorizationCode::new(code.clone()))
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -1356,5 +1523,153 @@ mod tests {
         assert!(tokens.client_id.is_none());
         assert!(tokens.client_secret.is_none());
         assert!(tokens.proxy_url.is_none());
+    }
+
+    // ====================================================================
+    // OAuth Login Flow Tests
+    // ====================================================================
+
+    fn test_login_config() -> OAuthLoginConfig {
+        OAuthLoginConfig {
+            client_id: "test-client-id".into(),
+            redirect_uri: "http://127.0.0.1:18338/callback".into(),
+            scopes: vec!["OAuth2Read".into(), "OAuth2Write".into()],
+        }
+    }
+
+    #[test]
+    fn build_authorize_url_contains_required_params() {
+        let config = test_login_config();
+        let state = CsrfToken::new("test-state-token".into());
+        let (challenge, _verifier) = PkceCodeChallenge::new_random_sha256();
+
+        let url_str = build_authorize_url(&config, &state, challenge);
+        let url = url::Url::parse(&url_str).expect("should be a valid URL");
+
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("oauth.onshape.com"));
+        assert_eq!(url.path(), "/oauth/authorize");
+
+        let params: std::collections::HashMap<String, String> = url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+
+        assert_eq!(
+            params.get("client_id").map(String::as_str),
+            Some("test-client-id")
+        );
+        assert_eq!(
+            params.get("redirect_uri").map(String::as_str),
+            Some("http://127.0.0.1:18338/callback")
+        );
+        assert_eq!(
+            params.get("response_type").map(String::as_str),
+            Some("code")
+        );
+        assert_eq!(
+            params.get("state").map(String::as_str),
+            Some("test-state-token")
+        );
+        assert!(params.contains_key("code_challenge"));
+        assert_eq!(
+            params.get("code_challenge_method").map(String::as_str),
+            Some("S256")
+        );
+        // Scopes should be space-separated in the scope parameter.
+        let scope = params.get("scope").expect("should have scope parameter");
+        assert!(scope.contains("OAuth2Read"));
+        assert!(scope.contains("OAuth2Write"));
+    }
+
+    #[test]
+    fn build_authorize_url_with_no_scopes() {
+        let config = OAuthLoginConfig {
+            client_id: "cid".into(),
+            redirect_uri: "http://127.0.0.1:18338/callback".into(),
+            scopes: vec![],
+        };
+        let state = CsrfToken::new("state".into());
+        let (challenge, _verifier) = PkceCodeChallenge::new_random_sha256();
+
+        let url_str = build_authorize_url(&config, &state, challenge);
+        let url = url::Url::parse(&url_str).expect("should be a valid URL");
+        let params: std::collections::HashMap<String, String> = url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+
+        // No scope parameter when no scopes requested.
+        assert!(!params.contains_key("scope"));
+    }
+
+    #[test]
+    fn validate_callback_extracts_code() {
+        let state = CsrfToken::new("my-state".into());
+        let callback = "http://127.0.0.1:18338/callback?code=auth-code-123&state=my-state";
+
+        let code = validate_callback(callback, &state).expect("should validate");
+        assert_eq!(code.secret(), "auth-code-123");
+    }
+
+    #[test]
+    fn validate_callback_detects_state_mismatch() {
+        let state = CsrfToken::new("expected-state".into());
+        let callback = "http://127.0.0.1:18338/callback?code=abc&state=wrong-state";
+
+        let err = validate_callback(callback, &state).expect_err("should fail");
+        assert!(
+            matches!(err, CallbackValidationError::StateMismatch { .. }),
+            "expected StateMismatch, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_callback_detects_oauth_error() {
+        let state = CsrfToken::new("my-state".into());
+        let callback = "http://127.0.0.1:18338/callback?error=access_denied&error_description=User+denied+access&state=my-state";
+
+        let err = validate_callback(callback, &state).expect_err("should fail");
+        match err {
+            CallbackValidationError::OAuthError { error, description } => {
+                assert_eq!(error, "access_denied");
+                assert_eq!(description.as_deref(), Some("User denied access"));
+            }
+            other => panic!("expected OAuthError, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_callback_detects_missing_state() {
+        let state = CsrfToken::new("my-state".into());
+        let callback = "http://127.0.0.1:18338/callback?code=abc";
+
+        let err = validate_callback(callback, &state).expect_err("should fail");
+        assert!(
+            matches!(err, CallbackValidationError::MissingState),
+            "expected MissingState, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_callback_detects_missing_code() {
+        let state = CsrfToken::new("my-state".into());
+        let callback = "http://127.0.0.1:18338/callback?state=my-state";
+
+        let err = validate_callback(callback, &state).expect_err("should fail");
+        assert!(
+            matches!(err, CallbackValidationError::MissingCode),
+            "expected MissingCode, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_callback_detects_invalid_url() {
+        let state = CsrfToken::new("my-state".into());
+        let err = validate_callback("not a url at all ://", &state).expect_err("should fail");
+        assert!(
+            matches!(err, CallbackValidationError::InvalidUrl(_)),
+            "expected InvalidUrl, got: {err:?}"
+        );
     }
 }
