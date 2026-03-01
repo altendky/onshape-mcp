@@ -556,7 +556,7 @@ fn call_auth_status(
 }
 
 /// Default OAuth proxy URL used when no `proxy_url` is specified.
-const DEFAULT_PROXY_URL: &str = "https://onshape-oauth-proxy.fstab.workers.dev";
+pub const DEFAULT_PROXY_URL: &str = "https://onshape-oauth-proxy.fstab.workers.dev";
 
 fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolResult {
     let input: AuthLoginInput = match parse_arguments(arguments) {

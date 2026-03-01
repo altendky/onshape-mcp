@@ -10,9 +10,6 @@ use clap::{Parser, Subcommand};
 const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Default OAuth proxy URL used when no `proxy_url` is specified.
-const DEFAULT_PROXY_URL: &str = "https://onshape-oauth-proxy.fstab.workers.dev";
-
 /// Onshape MCP Server — A Model Context Protocol server for Onshape CAD integration.
 #[derive(Parser)]
 #[command(name = NAME, version = VERSION)]
@@ -135,7 +132,7 @@ async fn handle_auth_login(
     proxy_url: Option<String>,
     cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use onshape_mcp_core::tools::LoginMode;
+    use onshape_mcp_core::tools::{DEFAULT_PROXY_URL, LoginMode};
 
     // Determine the login mode from flags and config.
     let mode = if direct {
