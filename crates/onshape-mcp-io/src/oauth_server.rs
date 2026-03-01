@@ -271,6 +271,11 @@ async fn register_client(
     let client_id = random_hex(16);
     let client_secret = random_hex(32);
 
+    eprintln!(
+        "[oauth] DCR: registering client name={:?} redirect_uris={:?}",
+        req.client_name, req.redirect_uris
+    );
+
     let grant_types = if req.grant_types.is_empty() {
         vec![
             "authorization_code".to_string(),
@@ -297,6 +302,8 @@ async fn register_client(
         .write()
         .await
         .insert(client_id.clone(), registered);
+
+    eprintln!("[oauth] DCR: issued client_id={client_id}");
 
     Json(RegisterResponse {
         client_id,
@@ -331,8 +338,17 @@ async fn authorize(
     State(state): State<Arc<OAuthServerState>>,
     Query(params): Query<AuthorizeParams>,
 ) -> Result<Redirect, (http::StatusCode, String)> {
+    eprintln!(
+        "[oauth] authorize: client_id={} redirect_uri={}",
+        params.client_id, params.redirect_uri
+    );
+
     // Validate response_type.
     if params.response_type != "code" {
+        eprintln!(
+            "[oauth] authorize: rejected unsupported response_type={}",
+            params.response_type
+        );
         return Err((
             http::StatusCode::BAD_REQUEST,
             "unsupported response_type".to_string(),
@@ -342,6 +358,7 @@ async fn authorize(
     // Validate client_id.
     let clients = state.clients.read().await;
     let Some(client) = clients.get(&params.client_id) else {
+        eprintln!("[oauth] authorize: rejected unknown client_id");
         return Err((
             http::StatusCode::BAD_REQUEST,
             "unknown client_id".to_string(),
@@ -350,6 +367,7 @@ async fn authorize(
 
     // Validate redirect_uri.
     if !client.redirect_uris.contains(&params.redirect_uri) {
+        eprintln!("[oauth] authorize: rejected unregistered redirect_uri");
         return Err((
             http::StatusCode::BAD_REQUEST,
             "redirect_uri not registered".to_string(),
@@ -434,10 +452,16 @@ async fn exchange_onshape_code(
     ),
     (http::StatusCode, String),
 > {
+    eprintln!("[oauth] callback: exchanging Onshape authorization code for tokens");
+
+    // Use RequestBody (client_secret_post) auth — Onshape requires credentials
+    // in the POST body rather than an HTTP Basic Authorization header.
     let onshape_client = onshape_oauth_client(
         &state.onshape_client_id,
         state.onshape_client_secret.expose_secret(),
-    );
+    )
+    .set_auth_type(oauth2::AuthType::RequestBody);
+
     let callback_url = format!("{}/oauth/callback", state.public_url);
     let redirect_url = oauth2::RedirectUrl::new(callback_url).map_err(|e| {
         (
@@ -463,12 +487,14 @@ async fn exchange_onshape_code(
         .request_async(&oauth2_reqwest::ReqwestClient::from(http_client.clone()))
         .await
         .map_err(|e| {
+            eprintln!("[oauth] callback: token exchange failed: {e}");
             (
                 http::StatusCode::INTERNAL_SERVER_ERROR,
                 format!("token exchange failed: {e}"),
             )
         })?;
 
+    eprintln!("[oauth] callback: Onshape token exchange succeeded");
     Ok((token_response, http_client))
 }
 
@@ -478,12 +504,15 @@ async fn fetch_and_verify_user(
     access_token: &str,
     allowed_users: &HashSet<String>,
 ) -> Result<SessionInfo, (http::StatusCode, String)> {
+    eprintln!("[oauth] callback: fetching user identity from Onshape");
+
     let session_info: SessionInfo = http_client
         .get("https://cad.onshape.com/api/v10/users/sessioninfo")
         .bearer_auth(access_token)
         .send()
         .await
         .map_err(|e| {
+            eprintln!("[oauth] callback: failed to fetch user info: {e}");
             (
                 http::StatusCode::INTERNAL_SERVER_ERROR,
                 format!("failed to fetch user info: {e}"),
@@ -492,13 +521,23 @@ async fn fetch_and_verify_user(
         .json()
         .await
         .map_err(|e| {
+            eprintln!("[oauth] callback: failed to parse user info: {e}");
             (
                 http::StatusCode::INTERNAL_SERVER_ERROR,
                 format!("failed to parse user info: {e}"),
             )
         })?;
 
+    eprintln!(
+        "[oauth] callback: Onshape user id={} name={:?}",
+        session_info.id, session_info.name
+    );
+
     if !allowed_users.contains(&session_info.id) {
+        eprintln!(
+            "[oauth] callback: user {} not in allowlist, rejecting",
+            session_info.id
+        );
         return Err((
             http::StatusCode::FORBIDDEN,
             format!(
@@ -509,6 +548,10 @@ async fn fetch_and_verify_user(
         ));
     }
 
+    eprintln!(
+        "[oauth] callback: user {} is on the allowlist",
+        session_info.id
+    );
     Ok(session_info)
 }
 
@@ -516,8 +559,11 @@ async fn onshape_callback(
     State(state): State<Arc<OAuthServerState>>,
     Query(params): Query<CallbackParams>,
 ) -> Result<Redirect, (http::StatusCode, String)> {
+    eprintln!("[oauth] callback: received Onshape redirect");
+
     // Check for OAuth errors from Onshape.
     if let Some(error) = &params.error {
+        eprintln!("[oauth] callback: Onshape returned error: {error}");
         return Err((
             http::StatusCode::FORBIDDEN,
             format!("Onshape authorization denied: {error}"),
@@ -540,11 +586,17 @@ async fn onshape_callback(
 
     // Look up and consume the pending auth state.
     let Some(pending) = state.pending_auth.write().await.remove(&csrf_state) else {
+        eprintln!("[oauth] callback: unknown or expired CSRF state");
         return Err((
             http::StatusCode::BAD_REQUEST,
             "unknown or expired state".to_string(),
         ));
     };
+
+    eprintln!(
+        "[oauth] callback: matched pending auth for client_id={}",
+        pending.client_id
+    );
 
     // Exchange Onshape code for tokens and fetch user identity.
     let (token_response, http_client) =
@@ -582,8 +634,13 @@ async fn onshape_callback(
             client_id: pending.client_id,
             redirect_uri: pending.redirect_uri.clone(),
             pkce_verifier: pending.pkce_verifier,
-            user_id: session_info.id,
+            user_id: session_info.id.clone(),
         },
+    );
+
+    eprintln!(
+        "[oauth] callback: issued MCP auth code for user {}, redirecting to MCP client",
+        session_info.id
     );
 
     // Redirect back to the MCP client with the authorization code.
@@ -632,6 +689,11 @@ async fn token_endpoint(
     State(state): State<Arc<OAuthServerState>>,
     axum::Form(req): axum::Form<TokenRequest>,
 ) -> Result<Json<TokenResponseBody>, (http::StatusCode, Json<serde_json::Value>)> {
+    eprintln!(
+        "[oauth] token: grant_type={} client_id={:?}",
+        req.grant_type,
+        req.client_id.as_deref().unwrap_or("<none>")
+    );
     match req.grant_type.as_str() {
         "authorization_code" => handle_auth_code_grant(&state, &req).await,
         "refresh_token" => handle_refresh_token_grant(&state, &req).await,
@@ -791,6 +853,9 @@ pub(crate) async fn auth_middleware(
     mut request: http::Request<axum::body::Body>,
     next: middleware::Next,
 ) -> Result<axum::response::Response, (http::StatusCode, String)> {
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+
     let auth_header = request
         .headers()
         .get(http::header::AUTHORIZATION)
@@ -798,6 +863,7 @@ pub(crate) async fn auth_middleware(
         .map(String::from);
 
     let Some(auth_value) = auth_header else {
+        eprintln!("[oauth] auth: {method} {uri} — missing Authorization header");
         return Err((
             http::StatusCode::UNAUTHORIZED,
             "Missing Authorization header".to_string(),
@@ -805,6 +871,7 @@ pub(crate) async fn auth_middleware(
     };
 
     let Some(token) = auth_value.strip_prefix("Bearer ") else {
+        eprintln!("[oauth] auth: {method} {uri} — invalid Authorization header format");
         return Err((
             http::StatusCode::UNAUTHORIZED,
             "Invalid Authorization header format".to_string(),
@@ -812,12 +879,17 @@ pub(crate) async fn auth_middleware(
     };
 
     let Some(user_ctx) = state.validate_token(token).await else {
+        eprintln!("[oauth] auth: {method} {uri} — invalid or expired token");
         return Err((
             http::StatusCode::UNAUTHORIZED,
             "Invalid or expired token".to_string(),
         ));
     };
 
+    eprintln!(
+        "[oauth] auth: {method} {uri} — authenticated user {}",
+        user_ctx.user_id
+    );
     request.extensions_mut().insert(user_ctx);
     Ok(next.run(request).await)
 }
