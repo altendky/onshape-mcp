@@ -326,7 +326,8 @@ async fn handle_callback(
             .into_owned()
             .collect();
 
-    let is_valid = params.contains_key("code")
+    let has_terminal_param = params.contains_key("code") || params.contains_key("error");
+    let is_valid = has_terminal_param
         && params
             .get("state")
             .is_some_and(|s| s == &state.expected_state);
@@ -350,7 +351,16 @@ async fn handle_callback(
         let _ = tx.send(callback_url);
     }
 
-    // Return a success page to the browser.
+    // Return appropriate page based on callback type.
+    if params.contains_key("error") {
+        return axum::response::Html(
+            "<html><body><h1>Authorization denied.</h1>\
+             <p>The authorization request was denied or an error occurred. \
+             You can close this tab and return to your terminal.</p>\
+             </body></html>",
+        );
+    }
+
     axum::response::Html(
         "<html><body><h1>Authorization successful!</h1>\
          <p>You can close this tab and return to your terminal.</p>\
@@ -952,6 +962,72 @@ mod tests {
         assert!(callback_url.contains("state=test-state"));
 
         // Send shutdown signal (in production, LoginSession/complete_login_flow does this).
+        let _ = shutdown_tx.send(true);
+
+        // Server should shut down gracefully.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server).await;
+    }
+
+    #[tokio::test]
+    async fn callback_server_handles_oauth_error() {
+        // Start the server on a dynamic port to avoid conflicts.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("should bind");
+        let port = listener.local_addr().expect("should have addr").port();
+
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        let (url_tx, url_rx) = oneshot::channel::<String>();
+
+        let callback_state = CallbackState {
+            url_sender: Arc::new(tokio::sync::Mutex::new(Some(url_tx))),
+            expected_state: "test-state".to_string(),
+        };
+
+        let app = axum::Router::new()
+            .route("/callback", axum::routing::get(handle_callback))
+            .with_state(callback_state);
+
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.wait_for(|&v| v).await;
+                })
+                .await
+        });
+
+        // Send an OAuth error callback (e.g., user denied consent).
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!(
+                "http://127.0.0.1:{port}/callback?error=access_denied&state=test-state"
+            ))
+            .send()
+            .await
+            .expect("should send request");
+
+        assert!(response.status().is_success());
+        let body = response.text().await.expect("should read body");
+        assert!(
+            body.contains("Authorization denied"),
+            "error callback should show denial page, got: {body}"
+        );
+        assert!(
+            !body.contains("Authorization successful"),
+            "error callback should not show success page"
+        );
+
+        // The URL should still have been sent through the channel so
+        // validate_callback can report the error promptly.
+        let callback_url = url_rx.await.expect("should receive URL");
+        assert!(
+            callback_url.starts_with(REDIRECT_URI),
+            "callback URL should start with REDIRECT_URI: {callback_url}"
+        );
+        assert!(callback_url.contains("error=access_denied"));
+        assert!(callback_url.contains("state=test-state"));
+
+        // Send shutdown signal.
         let _ = shutdown_tx.send(true);
 
         // Server should shut down gracefully.
