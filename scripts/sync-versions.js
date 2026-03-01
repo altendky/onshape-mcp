@@ -47,12 +47,9 @@ const INTERNAL_CRATES = [
 
 function getWorkspaceVersion() {
   const content = fs.readFileSync(ROOT_CARGO_TOML, "utf8");
-  // Match version under [workspace.package] — it appears after the section
-  // header and before any other [section]. We rely on the fact that version
-  // is the first field in [workspace.package].
-  const match = content.match(
-    /\[workspace\.package\]\s*\n\s*version\s*=\s*"([^"]+)"/,
-  );
+  // Extract the [workspace.package] section, then find version within it.
+  const section = content.match(/\[workspace\.package\]([\s\S]*?)(?:\n\[|$)/);
+  const match = section?.[1]?.match(/^\s*version\s*=\s*"([^"]+)"/m);
   if (!match) {
     throw new Error(
       `Could not find [workspace.package] version in ${ROOT_CARGO_TOML}`,
