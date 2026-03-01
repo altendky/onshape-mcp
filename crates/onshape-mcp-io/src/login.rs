@@ -23,6 +23,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, TokenResponse};
+use oauth2_reqwest::ReqwestClient;
 use tokio::sync::oneshot;
 
 use onshape_client_core::oauth::{
@@ -594,7 +595,7 @@ async fn exchange_code_direct(
     let response = oauth_client
         .exchange_code(code)
         .set_pkce_verifier(pkce_verifier)
-        .request_async(&http_client)
+        .request_async(&ReqwestClient::from(http_client))
         .await
         .map_err(|e| LoginError::TokenExchange(e.to_string()))?;
 
