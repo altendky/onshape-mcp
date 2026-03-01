@@ -787,11 +787,19 @@ async fn fetch_proxy_client_id(proxy_url: &str) -> Result<String, LoginError> {
 
     let config: ProxyConfigResponse =
         serde_json::from_str(&body).map_err(|e| LoginError::ProxyConfig {
-            url,
+            url: url.clone(),
             detail: format!("failed to parse response: {e}"),
         })?;
 
-    Ok(config.client_id)
+    let client_id = config.client_id.trim().to_string();
+    if client_id.is_empty() {
+        return Err(LoginError::ProxyConfig {
+            url,
+            detail: "proxy response missing non-empty client_id".to_string(),
+        });
+    }
+
+    Ok(client_id)
 }
 
 /// Deserialization target for the proxy `/config` response.
