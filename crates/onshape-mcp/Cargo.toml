@@ -15,6 +15,8 @@ clap.workspace = true
 figment.workspace = true
 onshape-mcp-core.workspace = true
 onshape-mcp-io.workspace = true
+open.workspace = true
+secrecy.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

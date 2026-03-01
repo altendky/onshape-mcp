@@ -5,6 +5,7 @@
 //! `onshape-client-io`.
 
 pub mod config;
+pub mod login;
 pub mod oauth;
 pub mod watcher;
 
@@ -206,6 +207,7 @@ pub struct OnshapeMcpServer {
     spec: Arc<OpenApiSpec>,
     api_state: Arc<tokio::sync::Mutex<ApiState>>,
     validation: Arc<tokio::sync::Mutex<ValidationState>>,
+    login_state: Arc<tokio::sync::Mutex<login::LoginState>>,
 }
 
 impl OnshapeMcpServer {
@@ -234,6 +236,7 @@ impl OnshapeMcpServer {
             spec: Arc::new(spec),
             api_state: Arc::new(tokio::sync::Mutex::new(api_state)),
             validation: Arc::new(tokio::sync::Mutex::new(ValidationState::default())),
+            login_state: Arc::new(tokio::sync::Mutex::new(login::LoginState::new())),
         })
     }
 }
@@ -330,6 +333,11 @@ impl ServerHandler for OnshapeMcpServer {
 
             match current {
                 ToolResult::Immediate(r) => return r,
+                ToolResult::OAuthLoginFlow { mode } => {
+                    // Drop locks before doing I/O.
+                    drop(state);
+                    return handle_oauth_login_flow(mode, &self.login_state).await;
+                }
                 ToolResult::OnshapeApiRequest { request: api_req } => {
                     // Simple case: execute and update implicit validation.
                     let raw = execute_raw_api_request(&mut state, &api_req).await;
@@ -627,6 +635,60 @@ async fn apply_side_effect(validation: &tokio::sync::Mutex<ValidationState>, eff
             let mut v = validation.lock().await;
             *v = new_state;
         }
+    }
+}
+
+// ============================================================================
+// OAuth Login Flow Handler
+// ============================================================================
+
+/// Handle the `OAuthLoginFlow` tool result by starting a login flow.
+///
+/// Any previous login flow is cancelled first (callback servers shut down,
+/// background task aborted) to free the callback port before starting the
+/// new flow.
+///
+/// Extracted from `call_tool` to keep that function within clippy's line limit.
+async fn handle_oauth_login_flow(
+    mode: onshape_mcp_core::tools::LoginMode,
+    login_state: &tokio::sync::Mutex<login::LoginState>,
+) -> Result<CallToolResult, McpError> {
+    let mut login = login_state.lock().await;
+
+    // Cancel any existing flow first — this shuts down the old callback
+    // server and frees port 18338 so the new flow can bind it.
+    login.clear();
+
+    // Start the login flow.
+    match login::start_login_flow(&mode).await {
+        Ok(handle) => {
+            let authorize_url = handle.authorize_url.clone();
+
+            // Store the new session.
+            login.set_active(handle.session);
+            drop(login);
+
+            Ok(CallToolResult {
+                content: vec![rmcp::model::Content::text(format!(
+                    "The OAuth authorization flow has started. You MUST present the \
+                     following URL to the user and instruct them to open it in their \
+                     browser to authorize:\n\n{authorize_url}\n\n\
+                     After they authorize in the browser, the server will automatically \
+                     detect the new tokens via the local callback.",
+                ))],
+                is_error: Some(false),
+                structured_content: None,
+                meta: None,
+            })
+        }
+        Err(e) => Ok(CallToolResult {
+            content: vec![rmcp::model::Content::text(format!(
+                "Failed to start login flow: {e}"
+            ))],
+            is_error: Some(true),
+            structured_content: None,
+            meta: None,
+        }),
     }
 }
 
