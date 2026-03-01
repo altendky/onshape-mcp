@@ -7,6 +7,7 @@
 pub mod config;
 pub mod login;
 pub mod oauth;
+pub mod oauth_server;
 pub mod watcher;
 
 use std::path::PathBuf;
@@ -240,6 +241,26 @@ impl OnshapeMcpServer {
             login_state: Arc::new(tokio::sync::Mutex::new(login::LoginState::new())),
         })
     }
+
+    /// Creates a new server instance from pre-built shared state.
+    ///
+    /// Used by `run_http()` so the factory closure can clone `Arc`s cheaply.
+    pub(crate) fn from_shared_state(
+        info: ServerInfo,
+        config: Arc<AppConfig>,
+        spec: Arc<OpenApiSpec>,
+        api_state: Arc<tokio::sync::Mutex<ApiState>>,
+        validation: Arc<tokio::sync::Mutex<ValidationState>>,
+    ) -> Self {
+        Self {
+            info,
+            config,
+            spec,
+            api_state,
+            validation,
+            login_state: Arc::new(tokio::sync::Mutex::new(login::LoginState::new())),
+        }
+    }
 }
 
 impl ServerHandler for OnshapeMcpServer {
@@ -294,7 +315,36 @@ impl ServerHandler for OnshapeMcpServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        // Check if we're in HTTP mode by looking for UserContext in the
+        // request extensions (injected by the auth middleware via the
+        // Streamable HTTP transport's `http::request::Parts`).
+        let user_ctx = context
+            .extensions
+            .get::<http::request::Parts>()
+            .and_then(|parts| parts.extensions.get::<oauth_server::UserContext>())
+            .cloned();
+
+        if let Some(user_ctx) = user_ctx {
+            return self.call_tool_http(request, &user_ctx).await;
+        }
+
+        // stdio mode: use shared credentials (existing path).
+        self.call_tool_stdio(request).await
+    }
+}
+
+// ============================================================================
+// Transport-Specific call_tool Implementations
+// ============================================================================
+
+impl OnshapeMcpServer {
+    /// Handle `call_tool` in stdio mode using shared credentials.
+    #[allow(clippy::significant_drop_tightening)]
+    async fn call_tool_stdio(
+        &self,
+        request: CallToolRequestParams,
     ) -> Result<CallToolResult, McpError> {
         // Lock state to derive resolved auth and potentially execute API requests.
         let mut state = self.api_state.lock().await;
@@ -316,64 +366,139 @@ impl ServerHandler for OnshapeMcpServer {
 
         // Dispatch loop: handles Immediate, OnshapeApiRequest, and
         // OnshapeApiRequestThen (which can chain multiple requests).
-        let mut current = result;
-        loop {
-            // For variants that need API execution, check if credentials
-            // are available. NotConfigured and OAuthPending cannot execute
-            // API requests, so return informative tool-level errors.
-            if matches!(
-                current,
-                ToolResult::OnshapeApiRequest { .. } | ToolResult::OnshapeApiRequestThen { .. }
-            ) {
-                match &*state {
-                    ApiState::NotConfigured { .. } => return Ok(not_configured_error()),
-                    ApiState::OAuthPending(_) => return Ok(oauth_pending_error()),
-                    ApiState::Basic(_) | ApiState::OAuth(_) => {}
+        dispatch_tool_result(
+            result,
+            &mut state,
+            &self.validation,
+            Some(&self.login_state),
+        )
+        .await
+    }
+
+    /// Handle `call_tool` in HTTP mode using per-user credentials.
+    async fn call_tool_http(
+        &self,
+        request: CallToolRequestParams,
+        user_ctx: &oauth_server::UserContext,
+    ) -> Result<CallToolResult, McpError> {
+        let validation = self.validation.lock().await;
+
+        // In HTTP mode, we present OAuthReady with the user's token expiry.
+        let resolved_auth = ResolvedAuth::OAuthReady {
+            expires_at: user_ctx.onshape_tokens.expires_at,
+        };
+
+        let result = tools::call_tool(
+            &request.name,
+            request.arguments.as_ref(),
+            &resolved_auth,
+            &validation,
+            Some(&self.spec),
+        );
+
+        drop(validation);
+
+        // Build a per-user API client.
+        let client = OnshapeClient::new(ClientConfig {
+            base_url: self.spec.server_url().to_string(),
+            auth: ClientAuthConfig::Bearer {
+                access_token: AccessToken::new(user_ctx.onshape_tokens.access_token.clone()),
+            },
+            timeout: Some(self.config.api.timeout),
+        })
+        .map_err(|e| {
+            McpError::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("failed to build per-user API client: {e}"),
+                None,
+            )
+        })?;
+
+        let mut api_state = ApiState::Basic(client);
+
+        dispatch_tool_result(result, &mut api_state, &self.validation, None).await
+    }
+}
+
+/// Shared dispatch loop for tool results.
+///
+/// Handles `Immediate`, `OnshapeApiRequest`, `OnshapeApiRequestThen`,
+/// and `OAuthLoginFlow` variants. Used by both stdio and HTTP modes.
+#[allow(clippy::significant_drop_tightening)]
+async fn dispatch_tool_result(
+    initial_result: ToolResult,
+    state: &mut ApiState,
+    validation: &tokio::sync::Mutex<ValidationState>,
+    login_state: Option<&tokio::sync::Mutex<login::LoginState>>,
+) -> Result<CallToolResult, McpError> {
+    let mut current = initial_result;
+    loop {
+        // For variants that need API execution, check if credentials
+        // are available. NotConfigured and OAuthPending cannot execute
+        // API requests, so return informative tool-level errors.
+        if matches!(
+            current,
+            ToolResult::OnshapeApiRequest { .. } | ToolResult::OnshapeApiRequestThen { .. }
+        ) {
+            match state {
+                ApiState::NotConfigured { .. } => return Ok(not_configured_error()),
+                ApiState::OAuthPending(_) => return Ok(oauth_pending_error()),
+                ApiState::Basic(_) | ApiState::OAuth(_) => {}
+            }
+        }
+
+        match current {
+            ToolResult::Immediate(r) => return r,
+            ToolResult::OAuthLoginFlow { mode } => {
+                // In HTTP mode, login_state is None — return informative message.
+                let Some(login_state) = login_state else {
+                    return Ok(CallToolResult {
+                        content: vec![rmcp::model::Content::text(
+                            "Authentication is handled via the browser OAuth flow \
+                             when connecting to this server. You do not need to \
+                             run the login tool manually.",
+                        )],
+                        is_error: Some(false),
+                        structured_content: None,
+                        meta: None,
+                    });
+                };
+                return handle_oauth_login_flow(mode, login_state).await;
+            }
+            ToolResult::OnshapeApiRequest { request: api_req } => {
+                // Simple case: execute and update implicit validation.
+                let raw = execute_raw_api_request(state, &api_req).await;
+                match raw {
+                    Ok(raw) => {
+                        update_implicit_validation(validation, raw.status).await;
+                        return tools::process_api_response(raw.status, &raw.body);
+                    }
+                    Err(e) => return Err(e),
                 }
             }
+            ToolResult::OnshapeApiRequestThen {
+                request: api_req,
+                then,
+            } => {
+                // Execute the request, get raw response.
+                let raw = execute_raw_api_request(state, &api_req).await;
+                match raw {
+                    Ok(raw) => {
+                        // Update implicit validation.
+                        update_implicit_validation(validation, raw.status).await;
 
-            match current {
-                ToolResult::Immediate(r) => return r,
-                ToolResult::OAuthLoginFlow { mode } => {
-                    // Drop locks before doing I/O.
-                    drop(state);
-                    return handle_oauth_login_flow(mode, &self.login_state).await;
-                }
-                ToolResult::OnshapeApiRequest { request: api_req } => {
-                    // Simple case: execute and update implicit validation.
-                    let raw = execute_raw_api_request(&mut state, &api_req).await;
-                    match raw {
-                        Ok(raw) => {
-                            update_implicit_validation(&self.validation, raw.status).await;
-                            return tools::process_api_response(raw.status, &raw.body);
+                        // Invoke the callback.
+                        let (next_result, side_effects) = then(raw.status, &raw.body);
+
+                        // Apply side effects.
+                        for effect in side_effects {
+                            apply_side_effect(validation, effect).await;
                         }
-                        Err(e) => return Err(e),
+
+                        // Loop with the next result.
+                        current = next_result;
                     }
-                }
-                ToolResult::OnshapeApiRequestThen {
-                    request: api_req,
-                    then,
-                } => {
-                    // Execute the request, get raw response.
-                    let raw = execute_raw_api_request(&mut state, &api_req).await;
-                    match raw {
-                        Ok(raw) => {
-                            // Update implicit validation.
-                            update_implicit_validation(&self.validation, raw.status).await;
-
-                            // Invoke the callback.
-                            let (next_result, side_effects) = then(raw.status, &raw.body);
-
-                            // Apply side effects.
-                            for effect in side_effects {
-                                apply_side_effect(&self.validation, effect).await;
-                            }
-
-                            // Loop with the next result.
-                            current = next_result;
-                        }
-                        Err(e) => return Err(e),
-                    }
+                    Err(e) => return Err(e),
                 }
             }
         }
@@ -976,7 +1101,7 @@ fn build_api_state(
                         secret_key: SecretString::from(secret_key.clone()),
                     }),
                 },
-                timeout: Some(config.http.timeout),
+                timeout: Some(config.api.timeout),
             })?;
             Ok(ApiState::Basic(client))
         }
@@ -1075,7 +1200,7 @@ fn build_oauth_ready_state(
 
     let session = OAuthSession::new(token_data, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
 
-    let timeout = config.http.timeout;
+    let timeout = config.api.timeout;
     let base_url = server_url.to_string();
     let client = OnshapeClient::new(ClientConfig {
         base_url: base_url.clone(),
@@ -1123,7 +1248,7 @@ fn build_oauth_pending_state(
     ApiState::OAuthPending(Box::new(OAuthPendingState {
         refresh_method,
         base_url: server_url.to_string(),
-        timeout: config.http.timeout,
+        timeout: config.api.timeout,
         token_path,
     }))
 }
@@ -1175,7 +1300,7 @@ pub async fn run(
         watcher::WatcherContext {
             token_path,
             base_url: server.spec.server_url().to_string(),
-            timeout: server.config.http.timeout,
+            timeout: server.config.api.timeout,
         }
     });
     let watcher_handle = watcher_ctx.map(|ctx| {
@@ -1193,6 +1318,151 @@ pub async fn run(
 
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
+
+    Ok(())
+}
+
+// ============================================================================
+// HTTP Transport Entry Point
+// ============================================================================
+
+/// Runs the MCP server over Streamable HTTP transport.
+///
+/// Serves both the OAuth endpoints (metadata, DCR, authorize, callback, token)
+/// and the MCP endpoint at `/mcp` (protected by bearer token auth).
+///
+/// # Arguments
+///
+/// * `name` - The server name (typically from `CARGO_PKG_NAME`)
+/// * `version` - The server version (typically from `CARGO_PKG_VERSION`)
+/// * `config` - Application configuration (loaded by the binary crate)
+///
+/// # Errors
+///
+/// Returns an error if required config fields are missing, or if the server
+/// fails to start.
+pub async fn run_http(
+    name: &str,
+    version: &str,
+    config: AppConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use std::sync::Arc;
+
+    use axum::{Router, middleware};
+    use rmcp::transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    };
+    use tokio_util::sync::CancellationToken;
+
+    // Validate required config.
+    let public_url = config
+        .http
+        .public_url
+        .clone()
+        .ok_or("http.public_url is required for the HTTP transport")?;
+    let onshape_client_id = config
+        .http
+        .onshape_client_id
+        .clone()
+        .ok_or("http.onshape_client_id is required for the HTTP transport")?;
+    let onshape_client_secret = config
+        .http
+        .onshape_client_secret
+        .clone()
+        .ok_or("http.onshape_client_secret is required for the HTTP transport")?;
+
+    let host = config.http.host.clone();
+    let port = config.http.port;
+
+    let allowed_user_ids: Vec<String> = config
+        .http
+        .allowed_users
+        .iter()
+        .map(|u| u.id.clone())
+        .collect();
+
+    // Build shared state.
+    let spec = OpenApiSpec::from_json(OPENAPI_SPEC_JSON)?;
+    let info = onshape_mcp_core::server_info(name, version);
+    let config = Arc::new(config);
+    let spec = Arc::new(spec);
+    let validation = Arc::new(tokio::sync::Mutex::new(ValidationState::default()));
+
+    // Build the OAuth server state.
+    let oauth_state = Arc::new(oauth_server::OAuthServerState::new(
+        public_url.clone(),
+        onshape_client_id,
+        onshape_client_secret,
+        allowed_user_ids,
+    ));
+
+    // Build the MCP service factory.
+    //
+    // Each session gets a fresh `OnshapeMcpServer` instance, but they share
+    // the same `spec` and `validation` state. In HTTP mode, per-user credentials
+    // come from the `UserContext` in the request extensions (set by auth middleware),
+    // not from the shared `api_state`.
+    let api_state = Arc::new(tokio::sync::Mutex::new(ApiState::NotConfigured {
+        configured_method: onshape_client_core::auth::AuthMethod::OAuth,
+        detail: "HTTP mode: per-user credentials via OAuth".to_string(),
+    }));
+
+    let cancellation_token = CancellationToken::new();
+
+    let mcp_config = StreamableHttpServerConfig {
+        stateful_mode: true,
+        cancellation_token: cancellation_token.clone(),
+        ..Default::default()
+    };
+
+    let factory_info = info.clone();
+    let factory_config = Arc::clone(&config);
+    let factory_spec = Arc::clone(&spec);
+    let factory_api_state = Arc::clone(&api_state);
+    let factory_validation = Arc::clone(&validation);
+
+    let mcp_service = StreamableHttpService::new(
+        move || {
+            Ok(OnshapeMcpServer::from_shared_state(
+                factory_info.clone(),
+                Arc::clone(&factory_config),
+                Arc::clone(&factory_spec),
+                Arc::clone(&factory_api_state),
+                Arc::clone(&factory_validation),
+            ))
+        },
+        Arc::new(LocalSessionManager::default()),
+        mcp_config,
+    );
+
+    // Build the MCP endpoint with auth middleware.
+    let oauth_state_for_middleware = Arc::clone(&oauth_state);
+    let mcp_router =
+        Router::new()
+            .nest_service("/mcp", mcp_service)
+            .layer(middleware::from_fn_with_state(
+                oauth_state_for_middleware,
+                oauth_server::auth_middleware,
+            ));
+
+    // Build the full app: OAuth routes + protected MCP route.
+    let app = oauth_server::oauth_router(oauth_state).merge(mcp_router);
+
+    // Bind and serve.
+    let bind_addr = format!("{host}:{port}");
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    eprintln!("HTTP transport listening on {bind_addr}");
+    eprintln!("Public URL: {public_url}");
+    eprintln!("MCP endpoint: {public_url}/mcp");
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            // Ignore errors from ctrl_c — if we can't install the handler,
+            // we simply won't have graceful shutdown on Ctrl+C.
+            let _ = tokio::signal::ctrl_c().await;
+            cancellation_token.cancel();
+        })
+        .await?;
 
     Ok(())
 }

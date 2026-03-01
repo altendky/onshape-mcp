@@ -45,7 +45,7 @@ secret_key = "..."
 method = "basic"
 check_interval = "5m"
 
-[http]
+[api]
 timeout = "30s"
 
 [mode]
@@ -68,7 +68,7 @@ All environment variables use the `ONSHAPE_MCP_` prefix.
 | Client Secret | `string` | — | `ONSHAPE_MCP_AUTH__CLIENT_SECRET` | `auth.client_secret` | `--client-secret` | OAuth 2.0 client secret |
 | Auth Method | `string` | `basic` | `ONSHAPE_MCP_AUTH__METHOD` | `auth.method` | `--auth-method` | Authentication method (`basic`, `oauth`; HMAC planned) |
 | Auth Check Interval | `duration` | `5m` | `ONSHAPE_MCP_AUTH__CHECK_INTERVAL` | `auth.check_interval` | — | Periodic credential validation interval (minimum: 15s) |
-| HTTP Timeout | `duration` | `30s` | `ONSHAPE_MCP_HTTP__TIMEOUT` | `http.timeout` | — | Request timeout for Onshape API calls |
+| API Timeout | `duration` | `30s` | `ONSHAPE_MCP_API__TIMEOUT` | `api.timeout` | — | Request timeout for Onshape API calls |
 | Max Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_MAX_MODE` | `mode.max` | — | Upper limit for permission mode |
 | Initial Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_INITIAL_MODE` | `mode.initial` | — | Starting permission mode (must be ≤ max_mode) |
 | Allow Mode Escalation | `bool` | `false` | `ONSHAPE_MCP_ALLOW_ESCALATION` | `mode.allow_escalation` | — | Can AI change mode at runtime? |

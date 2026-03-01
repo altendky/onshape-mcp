@@ -62,9 +62,12 @@ pub struct AuthConfig {
     pub check_interval: Duration,
 }
 
-/// HTTP client configuration.
+/// Onshape API client configuration (request timeouts, etc.).
+///
+/// Previously named `HttpConfig` with TOML section `[http]`. Renamed to `[api]`
+/// to avoid ambiguity with the new HTTP transport subcommand.
 #[derive(Deserialize)]
-pub struct HttpConfig {
+pub struct ApiConfig {
     /// Request timeout for Onshape API calls (default: 30 seconds).
     #[serde(
         default = "default_http_timeout",
@@ -73,12 +76,72 @@ pub struct HttpConfig {
     pub timeout: Duration,
 }
 
-impl Default for HttpConfig {
+impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             timeout: DEFAULT_HTTP_TIMEOUT,
         }
     }
+}
+
+/// Default host for the HTTP transport server.
+pub const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
+
+/// Default port for the HTTP transport server.
+pub const DEFAULT_HTTP_PORT: u16 = 8080;
+
+/// HTTP transport configuration.
+///
+/// Used by the `onshape-mcp http` subcommand to serve the MCP server
+/// over Streamable HTTP with per-user OAuth authentication.
+#[derive(Deserialize)]
+pub struct HttpTransportConfig {
+    /// Listen address (default: `127.0.0.1`).
+    #[serde(default = "default_http_host")]
+    pub host: String,
+    /// Listen port (default: `8080`).
+    #[serde(default = "default_http_port")]
+    pub port: u16,
+    /// Public URL of the server (e.g. `https://mcp.example.com`).
+    ///
+    /// Required — used in OAuth metadata endpoint URLs. The server will
+    /// fail at startup with a clear error if this is missing.
+    #[serde(default)]
+    pub public_url: Option<String>,
+    /// Onshape OAuth application client ID.
+    #[serde(default)]
+    pub onshape_client_id: Option<String>,
+    /// Onshape OAuth application client secret.
+    #[serde(default)]
+    pub onshape_client_secret: Option<SecretString>,
+    /// Allowlist of Onshape user IDs permitted to connect.
+    ///
+    /// Empty list = fail-closed (nobody allowed).
+    #[serde(default)]
+    pub allowed_users: Vec<AllowedUser>,
+}
+
+impl Default for HttpTransportConfig {
+    fn default() -> Self {
+        Self {
+            host: DEFAULT_HTTP_HOST.to_string(),
+            port: DEFAULT_HTTP_PORT,
+            public_url: None,
+            onshape_client_id: None,
+            onshape_client_secret: None,
+            allowed_users: Vec::new(),
+        }
+    }
+}
+
+/// An entry in the HTTP transport allowlist.
+#[derive(Deserialize, Clone, Debug)]
+pub struct AllowedUser {
+    /// Onshape user ID (e.g. `6073e74c7f81d1054fca4373`).
+    pub id: String,
+    /// Human-readable name (ignored at runtime, for config readability).
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// Top-level application configuration.
@@ -87,9 +150,12 @@ pub struct AppConfig {
     /// Authentication settings.
     #[serde(default)]
     pub auth: AuthConfig,
-    /// HTTP client settings.
+    /// Onshape API client settings (timeouts, etc.).
     #[serde(default)]
-    pub http: HttpConfig,
+    pub api: ApiConfig,
+    /// HTTP transport settings (for `onshape-mcp http` subcommand).
+    #[serde(default)]
+    pub http: HttpTransportConfig,
 }
 
 // ============================================================================
@@ -378,6 +444,16 @@ const fn default_check_interval() -> Duration {
 /// Default HTTP timeout for serde deserialization.
 const fn default_http_timeout() -> Duration {
     DEFAULT_HTTP_TIMEOUT
+}
+
+/// Default host for the HTTP transport.
+fn default_http_host() -> String {
+    DEFAULT_HTTP_HOST.to_string()
+}
+
+/// Default port for the HTTP transport.
+const fn default_http_port() -> u16 {
+    DEFAULT_HTTP_PORT
 }
 
 /// Deserializes a duration from either an integer (seconds) or a string like "5m", "300s".
@@ -970,64 +1046,64 @@ mod tests {
     }
 
     // ====================================================================
-    // HttpConfig Tests
+    // ApiConfig Tests
     // ====================================================================
 
     #[test]
-    fn default_http_config() {
-        let config = HttpConfig::default();
+    fn default_api_config() {
+        let config = ApiConfig::default();
         assert_eq!(config.timeout, Duration::from_secs(30));
     }
 
     #[test]
-    fn deserialize_http_config_with_timeout() {
+    fn deserialize_api_config_with_timeout() {
         let toml_str = r#"
             timeout = "10s"
         "#;
-        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        let config: ApiConfig = toml::from_str(toml_str).expect("should deserialize");
         assert_eq!(config.timeout, Duration::from_secs(10));
     }
 
     #[test]
-    fn deserialize_http_config_timeout_minutes() {
+    fn deserialize_api_config_timeout_minutes() {
         let toml_str = r#"
             timeout = "2m"
         "#;
-        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        let config: ApiConfig = toml::from_str(toml_str).expect("should deserialize");
         assert_eq!(config.timeout, Duration::from_secs(120));
     }
 
     #[test]
-    fn deserialize_http_config_timeout_integer() {
+    fn deserialize_api_config_timeout_integer() {
         let toml_str = r"
             timeout = 45
         ";
-        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        let config: ApiConfig = toml::from_str(toml_str).expect("should deserialize");
         assert_eq!(config.timeout, Duration::from_secs(45));
     }
 
     #[test]
-    fn deserialize_http_config_defaults() {
+    fn deserialize_api_config_defaults() {
         let toml_str = "";
-        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        let config: ApiConfig = toml::from_str(toml_str).expect("should deserialize");
         assert_eq!(config.timeout, DEFAULT_HTTP_TIMEOUT);
     }
 
     #[test]
-    fn deserialize_app_config_with_http_section() {
+    fn deserialize_app_config_with_api_section() {
         let toml_str = r#"
             [auth]
             access_key = "ak"
             secret_key = "sk"
 
-            [http]
+            [api]
             timeout = "60s"
         "#;
 
         let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
         let inv = AuthInventory::from_config(&config.auth, TokenStatus::Absent);
         assert_eq!(resolve_auth(config.auth.method, &inv), ResolvedAuth::Basic);
-        assert_eq!(config.http.timeout, Duration::from_secs(60));
+        assert_eq!(config.api.timeout, Duration::from_secs(60));
     }
 
     // ====================================================================
