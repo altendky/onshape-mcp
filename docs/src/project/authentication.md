@@ -142,7 +142,7 @@ onshape-mcp auth login --proxy-url https://my-proxy.example.com
 onshape-mcp auth login --direct --client-id YOUR_ID --client-secret YOUR_SECRET
 ```
 
-The CLI opens your browser to the Onshape authorization page, starts a local callback server on `127.0.0.1:18338`, exchanges the authorization code for tokens, and saves them to the token file. The MCP server automatically detects the new tokens via the file watcher.
+The CLI opens your browser to the Onshape authorization page, starts a local callback server on `localhost:18338`, exchanges the authorization code for tokens, and saves them to the token file. The MCP server automatically detects the new tokens via the file watcher.
 
 #### MCP Tool Usage
 
