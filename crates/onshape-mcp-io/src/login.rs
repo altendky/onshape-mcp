@@ -423,7 +423,12 @@ async fn complete_login_flow(
     // This eagerly releases the ports before proceeding to token exchange.
     let _ = shutdown_tx.send(true);
     for handle in &mut server_handles {
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+        if tokio::time::timeout(std::time::Duration::from_secs(2), &mut *handle)
+            .await
+            .is_err()
+        {
+            handle.abort();
+        }
     }
 
     // Now handle the result (after servers are stopped).
