@@ -22,7 +22,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, PkceCodeVerifier};
+use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, TokenResponse};
 use tokio::sync::oneshot;
 
 use onshape_client_core::oauth::{
@@ -528,6 +528,17 @@ async fn exchange_code_direct(
         .await
         .map_err(|e| LoginError::TokenExchange(e.to_string()))?;
 
+    // Fail fast if the authorization server did not return a refresh token.
+    // Without a refresh token, the session will break once the access token
+    // expires and cannot be renewed. The refresh-time code paths correctly
+    // handle omitted refresh tokens per RFC 6749 Section 6, but the initial
+    // login must include one.
+    if response.refresh_token().is_none() {
+        return Err(LoginError::TokenExchange(
+            "token response missing refresh_token".to_string(),
+        ));
+    }
+
     let now = chrono::Utc::now();
     let mut token_data = OAuthTokenData::from_response(&response, now);
     // Store client credentials in the token file so the server can refresh.
@@ -589,9 +600,15 @@ async fn exchange_code_proxy(
         .and_then(chrono::Duration::try_seconds)
         .map(|d| now + d);
 
+    // Fail fast if the proxy response did not include a refresh token.
+    // Without one, the session will break once the access token expires.
+    let refresh_token = token_response.refresh_token.ok_or_else(|| {
+        LoginError::TokenExchange("proxy response missing refresh_token".to_string())
+    })?;
+
     let mut token_data = OAuthTokenData::from_raw(
         token_response.access_token,
-        token_response.refresh_token.unwrap_or_default(),
+        refresh_token,
         expires_at,
         token_response.token_type.unwrap_or_else(|| "bearer".into()),
         token_response
