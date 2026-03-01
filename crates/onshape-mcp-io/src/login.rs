@@ -298,24 +298,52 @@ impl ExchangeConfig {
 /// Shared state passed to the axum callback handler via `axum::extract::State`.
 #[derive(Clone)]
 struct CallbackState {
-    /// Sends the reconstructed callback URL to the main flow.
+    /// Sends the callback URL to the main flow after basic pre-validation.
     url_sender: Arc<tokio::sync::Mutex<Option<oneshot::Sender<String>>>>,
+    /// Expected CSRF state; used to ignore invalid callbacks.
+    expected_state: String,
 }
 
 /// Axum handler for `GET /callback`.
 ///
-/// Reconstructs the callback URL from query parameters, sends it through
-/// the channel, signals shutdown, and returns an HTML success page.
+/// Validates the CSRF state before consuming the one-shot sender, so that
+/// stray or invalid requests cannot sink the login flow. Preserves the raw
+/// query string to avoid mangling percent-encoded values.
 async fn handle_callback(
     axum::extract::State(state): axum::extract::State<CallbackState>,
-    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
 ) -> axum::response::Html<&'static str> {
-    // Reconstruct the callback URL from the query parameters.
-    let mut callback_url = format!("{REDIRECT_URI}?");
-    let pairs: Vec<String> = query.iter().map(|(k, v)| format!("{k}={v}")).collect();
-    callback_url.push_str(&pairs.join("&"));
+    // Extract and validate query parameters before consuming the one-shot.
+    let Some(raw_query) = uri.query() else {
+        return axum::response::Html(
+            "<html><body><h1>Invalid callback.</h1>\
+             <p>Missing query parameters. Please try the login flow again.</p>\
+             </body></html>",
+        );
+    };
+    let params: std::collections::HashMap<String, String> =
+        url::form_urlencoded::parse(raw_query.as_bytes())
+            .into_owned()
+            .collect();
 
-    // Send the callback URL through the channel (only the first handler wins).
+    let is_valid = params.contains_key("code")
+        && params
+            .get("state")
+            .is_some_and(|s| s == &state.expected_state);
+
+    if !is_valid {
+        return axum::response::Html(
+            "<html><body><h1>Invalid callback.</h1>\
+             <p>The callback parameters were invalid or the request was unexpected. \
+             Please try the login flow again.</p>\
+             </body></html>",
+        );
+    }
+
+    // Reconstruct the callback URL preserving the raw query string.
+    let callback_url = format!("{REDIRECT_URI}?{raw_query}");
+
+    // Send the callback URL through the channel (only the first valid handler wins).
     // Shutdown is handled externally by the LoginSession / complete_login_flow.
     let url_tx = state.url_sender.lock().await.take();
     if let Some(tx) = url_tx {
@@ -354,6 +382,7 @@ async fn complete_login_flow(
 
     let callback_state = CallbackState {
         url_sender: Arc::new(tokio::sync::Mutex::new(Some(url_tx))),
+        expected_state: session.csrf_state.secret().clone(),
     };
 
     // Spawn one axum server per listener, all sharing the same state.
@@ -867,6 +896,7 @@ mod tests {
 
         let callback_state = CallbackState {
             url_sender: Arc::new(tokio::sync::Mutex::new(Some(url_tx))),
+            expected_state: "test-state".to_string(),
         };
 
         let app = axum::Router::new()
