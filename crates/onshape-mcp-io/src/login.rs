@@ -902,8 +902,15 @@ mod tests {
     async fn login_state_cancels_previous_on_re_attempt() {
         let mut state = LoginState::new();
 
-        let session1 = test_session();
-        let task1 = &raw const session1.task_handle;
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        });
+        let task1_abort = task.abort_handle();
+        let session1 = LoginSession {
+            task_handle: task,
+            shutdown: shutdown_tx,
+        };
         state.set_active(session1);
         assert!(state.is_active());
 
@@ -912,14 +919,12 @@ mod tests {
         state.set_active(session2);
         assert!(state.is_active());
 
-        // The first task should have been aborted (pointer comparison
-        // confirms we're tracking the second session now).
-        let current_task = &raw const state
-            .session
-            .as_ref()
-            .expect("session should be set")
-            .task_handle;
-        assert_ne!(task1, current_task, "should be tracking the new session");
+        // The first task should have been aborted.
+        tokio::task::yield_now().await;
+        assert!(
+            task1_abort.is_finished(),
+            "first session task should be aborted when replaced"
+        );
     }
 
     #[tokio::test]
