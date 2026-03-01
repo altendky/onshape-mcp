@@ -104,6 +104,7 @@ function checkWorkspaceDepsVersions(expectedVersion) {
 function updateWorkspaceDepsVersions(expectedVersion) {
   let content = fs.readFileSync(ROOT_CARGO_TOML, "utf8");
   let changed = false;
+  const missingCrates = [];
 
   for (const crate of INTERNAL_CRATES) {
     // Replace version = "..." within the inline table for this crate.
@@ -112,7 +113,11 @@ function updateWorkspaceDepsVersions(expectedVersion) {
       "m",
     );
     const match = content.match(pattern);
-    if (match && match[2] !== expectedVersion) {
+    if (!match) {
+      missingCrates.push(crate);
+      continue;
+    }
+    if (match[2] !== expectedVersion) {
       content = content.replace(pattern, `$1"${expectedVersion}"`);
       changed = true;
     }
@@ -122,7 +127,7 @@ function updateWorkspaceDepsVersions(expectedVersion) {
     fs.writeFileSync(ROOT_CARGO_TOML, content);
   }
 
-  return changed;
+  return { changed, missingCrates };
 }
 
 // ---------------------------------------------------------------------------
@@ -332,12 +337,20 @@ function main() {
       console.log("OK: [workspace.dependencies] internal crate versions");
     }
   } else {
-    const changed = updateWorkspaceDepsVersions(version);
+    const { changed, missingCrates } = updateWorkspaceDepsVersions(version);
+    if (missingCrates.length > 0) {
+      for (const crate of missingCrates) {
+        console.error(
+          `MISMATCH: [workspace.dependencies] ${crate}: <not found> (expected ${version})`,
+        );
+      }
+      hasErrors = true;
+    }
     if (changed) {
       console.log(
         "UPDATED: [workspace.dependencies] internal crate versions",
       );
-    } else {
+    } else if (missingCrates.length === 0) {
       console.log(
         "OK: [workspace.dependencies] internal crate versions (no changes)",
       );
