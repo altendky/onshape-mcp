@@ -64,6 +64,7 @@ These are advisory hints for MCP clients, not security enforcement.
 | Tool | `readOnlyHint` | `destructiveHint` |
 | ---- | -------------- | ----------------- |
 | `onshape_mcp_auth_status` | true | false |
+| `onshape_mcp_auth_login` | false | false |
 | `onshape_api_search` | true | false |
 | `onshape_api_explain` | true | false |
 | `onshape_api_call` | false | true |
@@ -77,6 +78,31 @@ Always visible (read-only operations on the server itself).
 | `onshape_mcp_get_mode` | Returns current mode, max mode, escalation allowed | Not yet implemented |
 | `onshape_mcp_request_mode` | Request mode change (escalate or de-escalate, within max) | Not yet implemented |
 | `onshape_mcp_auth_status` | Returns auth status (valid/invalid/expired), last check time, connectivity | Implemented |
+| `onshape_mcp_auth_login` | Start an OAuth authorization flow (proxy or direct mode) | Implemented |
+
+### `onshape_mcp_auth_login`
+
+Start an OAuth authorization flow. Returns a URL to open in your browser. After authorizing, the server automatically detects the new tokens.
+
+**Input:**
+
+| Parameter | Type | Required | Description |
+| ----------- | -------- | ---------- | ------------- |
+| `mode` | `string` | No | Login mode: `"proxy"` (default) or `"direct"` |
+| `proxy_url` | `string` | No | OAuth proxy URL override (proxy mode only) |
+| `client_id` | `string` | No | OAuth 2.0 client ID (required for direct mode) |
+| `client_secret` | `string` | No | OAuth 2.0 client secret (required for direct mode) |
+
+**Output:** A text message containing the authorization URL to open in the browser.
+
+**Effect Pattern:** This tool uses the effects-as-data pattern. The core crate validates inputs and returns an `OAuthLoginFlow` effect with the login mode. The I/O layer starts a local callback server on `127.0.0.1:18338`, generates PKCE and CSRF tokens, builds the authorization URL, and orchestrates the code exchange and token persistence in the background.
+
+**Modes:**
+
+- **Proxy mode** (default): Fetches the `client_id` from the proxy's `/config` endpoint. The proxy holds the client secret and handles the token exchange.
+- **Direct mode**: Requires `client_id` and `client_secret`. Exchanges the authorization code directly with Onshape's token endpoint.
+
+The tool prevents concurrent login attempts — only one flow can be active at a time.
 
 ## Onshape API Tools
 

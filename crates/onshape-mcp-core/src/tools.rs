@@ -38,6 +38,29 @@ pub enum SideEffect {
     UpdateValidation(ValidationState),
 }
 
+/// How the OAuth login flow should operate.
+///
+/// Returned as part of [`ToolResult::OAuthLoginFlow`] for the I/O layer
+/// to execute.
+#[derive(Clone, Debug)]
+pub enum LoginMode {
+    /// Use the OAuth proxy for token exchange.
+    ///
+    /// The proxy holds the client secret. The CLI fetches the client ID
+    /// from the proxy's `/config` endpoint.
+    Proxy {
+        /// Base URL of the OAuth proxy.
+        proxy_url: String,
+    },
+    /// Exchange tokens directly with Onshape using client credentials.
+    Direct {
+        /// OAuth 2.0 client ID.
+        client_id: String,
+        /// OAuth 2.0 client secret.
+        client_secret: String,
+    },
+}
+
 /// Result of dispatching a tool call.
 ///
 /// Tools that need no I/O return `Immediate`. Tools that need an HTTP request
@@ -45,6 +68,7 @@ pub enum SideEffect {
 /// execute and then pass back through [`process_api_response`].
 /// `OnshapeApiRequestThen` extends this with a callback that processes the
 /// response and can return further results plus side effects.
+/// `OAuthLoginFlow` signals the I/O layer to start an OAuth login flow.
 pub enum ToolResult {
     /// Tool completed immediately with no I/O needed.
     Immediate(Result<CallToolResult, ErrorData>),
@@ -63,6 +87,30 @@ pub enum ToolResult {
         #[allow(clippy::type_complexity)]
         then: Box<dyn FnOnce(u16, &str) -> (Self, Vec<SideEffect>) + Send>,
     },
+    /// Tool requests an OAuth login flow to be started.
+    ///
+    /// The I/O layer handles all the I/O: starting a callback server,
+    /// building the authorization URL, waiting for the callback, exchanging
+    /// the code for tokens, and writing the token file.
+    OAuthLoginFlow {
+        /// The login mode (proxy or direct).
+        mode: LoginMode,
+    },
+}
+
+/// Create a [`ToolResult`] for an expected user-input error.
+///
+/// Returns a successful `CallToolResult` with `is_error: Some(true)`, keeping
+/// the MCP transport clean. Use this for validation failures that the caller
+/// (typically an LLM) can act on — as opposed to protocol-level
+/// `Err(ErrorData)` which signals handler/infrastructure breakage.
+fn tool_input_error(message: impl Into<String>) -> ToolResult {
+    ToolResult::Immediate(Ok(CallToolResult {
+        content: vec![Content::text(message.into())],
+        is_error: Some(true),
+        structured_content: None,
+        meta: None,
+    }))
 }
 
 /// Convert a raw HTTP response from the Onshape API into a [`CallToolResult`].
@@ -118,6 +166,7 @@ pub fn process_api_response(status: u16, body: &str) -> Result<CallToolResult, E
 pub fn list_tools() -> Vec<Tool> {
     vec![
         tool_auth_status_def(),
+        tool_auth_login_def(),
         tool_api_search_def(),
         tool_api_explain_def(),
         tool_api_call_def(),
@@ -147,6 +196,7 @@ pub fn call_tool(
 ) -> ToolResult {
     match name {
         "onshape_mcp_auth_status" => call_auth_status(arguments, resolved_auth, validation, spec),
+        "onshape_mcp_auth_login" => call_auth_login(arguments),
         "onshape_api_search" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
@@ -234,6 +284,24 @@ pub struct ApiCallInput {
     pub body: Option<String>,
 }
 
+/// Input schema for `onshape_mcp_auth_login`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AuthLoginInput {
+    /// Login mode: `"proxy"` (default) uses the OAuth proxy for token exchange;
+    /// `"direct"` exchanges tokens directly with Onshape using client credentials.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// OAuth proxy URL override. Only used in proxy mode.
+    #[serde(default)]
+    pub proxy_url: Option<String>,
+    /// OAuth 2.0 client ID. Required for direct mode.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// OAuth 2.0 client secret. Required for direct mode.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
+
 /// Input schema for `onshape_read_resource`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadResourceInput {
@@ -260,6 +328,25 @@ fn tool_auth_status_def() -> Tool {
         "onshape_mcp_auth_status",
         "Returns authentication status (valid/invalid/expired/not_configured), \
          last check time, and a human-readable message",
+        Arc::new(input_schema),
+    )
+    .annotate(ToolAnnotations::new().read_only(false).destructive(false))
+}
+
+#[allow(clippy::expect_used)]
+fn tool_auth_login_def() -> Tool {
+    let schema = schemars::schema_for!(AuthLoginInput);
+    let input_schema: Value = serde_json::to_value(schema)
+        .expect("AuthLoginInput schema serialization should never fail");
+    let input_schema = input_schema
+        .as_object()
+        .cloned()
+        .expect("Schema should be a JSON object");
+
+    Tool::new(
+        "onshape_mcp_auth_login",
+        "Start an OAuth authorization flow. Returns a URL to open in your browser. \
+         After authorizing, the server automatically detects the new tokens.",
         Arc::new(input_schema),
     )
     .annotate(ToolAnnotations::new().read_only(false).destructive(false))
@@ -377,7 +464,7 @@ fn call_auth_status(
 ) -> ToolResult {
     let input: AuthStatusInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return ToolResult::Immediate(Err(e)),
+        Err(e) => return tool_input_error(e.message),
     };
 
     if input.validate != Some(true) {
@@ -483,6 +570,46 @@ fn call_auth_status(
     }
 }
 
+/// Default OAuth proxy URL used when no `proxy_url` is specified.
+pub const DEFAULT_PROXY_URL: &str = "https://onshape-oauth-proxy.fstab.workers.dev";
+
+fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolResult {
+    let input: AuthLoginInput = match parse_arguments(arguments) {
+        Ok(input) => input,
+        Err(e) => return tool_input_error(e.message),
+    };
+
+    let mode_str = input.mode.as_deref().unwrap_or("proxy");
+
+    let mode = match mode_str {
+        "proxy" => {
+            let proxy_url = input
+                .proxy_url
+                .unwrap_or_else(|| DEFAULT_PROXY_URL.to_string());
+            LoginMode::Proxy { proxy_url }
+        }
+        "direct" => {
+            let Some(client_id) = input.client_id else {
+                return tool_input_error("client_id is required for direct mode");
+            };
+            let Some(client_secret) = input.client_secret else {
+                return tool_input_error("client_secret is required for direct mode");
+            };
+            LoginMode::Direct {
+                client_id,
+                client_secret,
+            }
+        }
+        other => {
+            return tool_input_error(format!(
+                "invalid mode \"{other}\": expected \"proxy\" (default) or \"direct\""
+            ));
+        }
+    };
+
+    ToolResult::OAuthLoginFlow { mode }
+}
+
 fn call_api_search(
     arguments: Option<&Map<String, Value>>,
     spec: &OpenApiSpec,
@@ -546,26 +673,20 @@ fn call_api_explain(
 fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolResult {
     let input: ApiCallInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return ToolResult::Immediate(Err(e)),
+        Err(e) => return tool_input_error(e.message),
     };
 
     let body: Option<Value> = match input.body.as_deref().map(serde_json::from_str).transpose() {
         Ok(v) => v,
         Err(e) => {
-            return ToolResult::Immediate(Err(ErrorData::new(
-                ErrorCode::INVALID_PARAMS,
-                format!("invalid body JSON: {e}"),
-                None,
-            )));
+            return tool_input_error(format!("invalid body JSON: {e}"));
         }
     };
 
     if body == Some(Value::Null) {
-        return ToolResult::Immediate(Err(ErrorData::new(
-            ErrorCode::INVALID_PARAMS,
-            "body parsed as JSON null; omit the body field instead of passing \"null\"".to_string(),
-            None,
-        )));
+        return tool_input_error(
+            "body parsed as JSON null; omit the body field instead of passing \"null\"",
+        );
     }
 
     let request = match spec.build_request(
@@ -576,11 +697,7 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
     ) {
         Ok(req) => req,
         Err(e) => {
-            return ToolResult::Immediate(Err(ErrorData::new(
-                ErrorCode::INVALID_PARAMS,
-                format!("{e}"),
-                None,
-            )));
+            return tool_input_error(format!("{e}"));
         }
     };
 
@@ -780,6 +897,9 @@ mod tests {
             ToolResult::OnshapeApiRequestThen { .. } => {
                 panic!("expected Immediate, got ApiRequestThen")
             }
+            ToolResult::OAuthLoginFlow { .. } => {
+                panic!("expected Immediate, got OAuthLoginFlow")
+            }
         }
     }
 
@@ -791,6 +911,35 @@ mod tests {
             ToolResult::OnshapeApiRequestThen { .. } => {
                 panic!("expected Immediate, got ApiRequestThen")
             }
+            ToolResult::OAuthLoginFlow { .. } => {
+                panic!("expected Immediate Err, got OAuthLoginFlow")
+            }
+        }
+    }
+
+    /// Asserts that `result` is a tool-level error (`is_error: Some(true)`)
+    /// and returns the concatenated text content for further assertions.
+    fn assert_tool_error(result: ToolResult) -> String {
+        match result {
+            ToolResult::Immediate(Ok(r)) => {
+                assert_eq!(
+                    r.is_error,
+                    Some(true),
+                    "expected is_error=true, got {:?}",
+                    r.is_error
+                );
+                r.content
+                    .iter()
+                    .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+                    .collect::<String>()
+            }
+            ToolResult::Immediate(Err(e)) => {
+                panic!("expected tool error (is_error=true), got protocol error: {e:?}")
+            }
+            other => panic!(
+                "expected Immediate tool error, got {:?}",
+                std::mem::discriminant(&other)
+            ),
         }
     }
 
@@ -803,6 +952,9 @@ mod tests {
             }
             ToolResult::OnshapeApiRequestThen { .. } => {
                 panic!("expected ApiRequest, got ApiRequestThen")
+            }
+            ToolResult::OAuthLoginFlow { .. } => {
+                panic!("expected ApiRequest, got OAuthLoginFlow")
             }
         }
     }
@@ -846,9 +998,15 @@ mod tests {
     }
 
     #[test]
-    fn list_tools_has_six_tools() {
+    fn list_tools_includes_auth_login() {
         let tools = list_tools();
-        assert_eq!(tools.len(), 6);
+        assert!(tools.iter().any(|t| t.name == "onshape_mcp_auth_login"));
+    }
+
+    #[test]
+    fn list_tools_has_seven_tools() {
+        let tools = list_tools();
+        assert_eq!(tools.len(), 7);
     }
 
     // --- auth_status tests ---
@@ -1257,14 +1415,14 @@ mod tests {
         );
         // Missing required path param "did"
 
-        let err = assert_immediate_err(call_tool(
+        let msg = assert_tool_error(call_tool(
             "onshape_api_call",
             Some(&args),
             &auth,
             &default_validation(),
             Some(&spec),
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(!msg.is_empty());
     }
 
     #[test]
@@ -1333,15 +1491,14 @@ mod tests {
             Value::String("not valid json".to_string()),
         );
 
-        let err = assert_immediate_err(call_tool(
+        let msg = assert_tool_error(call_tool(
             "onshape_api_call",
             Some(&args),
             &auth,
             &default_validation(),
             Some(&spec),
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("invalid body JSON"));
+        assert!(msg.contains("invalid body JSON"));
     }
 
     #[test]
@@ -1355,15 +1512,14 @@ mod tests {
         );
         args.insert("body".to_string(), Value::String("null".to_string()));
 
-        let err = assert_immediate_err(call_tool(
+        let msg = assert_tool_error(call_tool(
             "onshape_api_call",
             Some(&args),
             &auth,
             &default_validation(),
             Some(&spec),
         ));
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("JSON null"));
+        assert!(msg.contains("JSON null"));
     }
 
     #[test]
@@ -1465,6 +1621,27 @@ mod tests {
             }
             ToolResult::OnshapeApiRequest { .. } => {
                 panic!("expected ApiRequestThen, got ApiRequest")
+            }
+            ToolResult::OAuthLoginFlow { .. } => {
+                panic!("expected ApiRequestThen, got OAuthLoginFlow")
+            }
+        }
+    }
+
+    fn assert_oauth_login_flow(result: ToolResult) -> LoginMode {
+        match result {
+            ToolResult::OAuthLoginFlow { mode } => mode,
+            ToolResult::Immediate(Ok(_)) => {
+                panic!("expected OAuthLoginFlow, got Immediate Ok")
+            }
+            ToolResult::Immediate(Err(e)) => {
+                panic!("expected OAuthLoginFlow, got Immediate Err: {e:?}")
+            }
+            ToolResult::OnshapeApiRequest { .. } => {
+                panic!("expected OAuthLoginFlow, got ApiRequest")
+            }
+            ToolResult::OnshapeApiRequestThen { .. } => {
+                panic!("expected OAuthLoginFlow, got ApiRequestThen")
             }
         }
     }
@@ -1735,5 +1912,139 @@ mod tests {
             text.contains("insights:shaded-views"),
             "error should list available URIs: {text}",
         );
+    }
+
+    // ====================================================================
+    // Auth Login Tool Tests
+    // ====================================================================
+
+    #[test]
+    fn auth_login_default_mode_returns_proxy() {
+        let auth = not_configured();
+        let result = call_tool(
+            "onshape_mcp_auth_login",
+            None,
+            &auth,
+            &default_validation(),
+            None,
+        );
+        let mode = assert_oauth_login_flow(result);
+        assert!(
+            matches!(mode, LoginMode::Proxy { .. }),
+            "default mode should be Proxy"
+        );
+    }
+
+    #[test]
+    fn auth_login_explicit_proxy_mode() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("mode".to_string(), Value::String("proxy".to_string()));
+        args.insert(
+            "proxy_url".to_string(),
+            Value::String("https://my-proxy.example.com".to_string()),
+        );
+
+        let result = call_tool(
+            "onshape_mcp_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        );
+        let mode = assert_oauth_login_flow(result);
+        match mode {
+            LoginMode::Proxy { proxy_url } => {
+                assert_eq!(proxy_url, "https://my-proxy.example.com");
+            }
+            LoginMode::Direct { .. } => panic!("expected Proxy, got Direct"),
+        }
+    }
+
+    #[test]
+    fn auth_login_direct_mode() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("mode".to_string(), Value::String("direct".to_string()));
+        args.insert(
+            "client_id".to_string(),
+            Value::String("my-client-id".to_string()),
+        );
+        args.insert(
+            "client_secret".to_string(),
+            Value::String("my-client-secret".to_string()),
+        );
+
+        let result = call_tool(
+            "onshape_mcp_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        );
+        let mode = assert_oauth_login_flow(result);
+        match mode {
+            LoginMode::Direct {
+                client_id,
+                client_secret,
+            } => {
+                assert_eq!(client_id, "my-client-id");
+                assert_eq!(client_secret, "my-client-secret");
+            }
+            LoginMode::Proxy { .. } => panic!("expected Direct, got Proxy"),
+        }
+    }
+
+    #[test]
+    fn auth_login_direct_mode_missing_client_id() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("mode".to_string(), Value::String("direct".to_string()));
+        args.insert(
+            "client_secret".to_string(),
+            Value::String("secret".to_string()),
+        );
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_mcp_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
+        assert!(msg.contains("client_id"));
+    }
+
+    #[test]
+    fn auth_login_direct_mode_missing_client_secret() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("mode".to_string(), Value::String("direct".to_string()));
+        args.insert("client_id".to_string(), Value::String("cid".to_string()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_mcp_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
+        assert!(msg.contains("client_secret"));
+    }
+
+    #[test]
+    fn auth_login_invalid_mode() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("mode".to_string(), Value::String("invalid".to_string()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_mcp_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
+        assert!(msg.contains("invalid"));
     }
 }
