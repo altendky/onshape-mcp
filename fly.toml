@@ -2,16 +2,17 @@
 #
 # Deployment:
 #   1. fly launch            (creates app, picks region)
-#   2. fly secrets set \
-#        ONSHAPE_MCP_HTTP__PUBLIC_URL=https://<app-name>.fly.dev \
+#   2. fly certs add onshape.mcp.fstab.net
+#   3. DNS: onshape.mcp.fstab.net CNAME onshape-mcp.fly.dev
+#   4. fly secrets set \
 #        ONSHAPE_MCP_HTTP__ONSHAPE_CLIENT_ID=<your-client-id> \
 #        ONSHAPE_MCP_HTTP__ONSHAPE_CLIENT_SECRET=<your-client-secret> \
 #        "ONSHAPE_MCP_HTTP__ALLOWED_USERS=<id1>:<name1>,<id2>:<name2>"
-#   3. fly deploy
-#   4. Update Onshape OAuth app redirect URI:
-#        https://<app-name>.fly.dev/oauth/callback
-#   5. Add as Claude.ai connector:
-#        https://<app-name>.fly.dev/mcp
+#   5. Update Onshape OAuth app redirect URI:
+#        https://onshape.mcp.fstab.net/oauth/callback
+#   6. fly deploy
+#   7. Add as Claude.ai connector:
+#        https://onshape.mcp.fstab.net/mcp
 
 app = "onshape-mcp"
 primary_region = "iad"
@@ -24,11 +25,11 @@ primary_region = "iad"
 [env]
 # Listen on all interfaces so Fly's proxy can reach the app.
 ONSHAPE_MCP_HTTP__HOST = "0.0.0.0"
-# Secrets (set via `fly secrets set`, not here):
-#   ONSHAPE_MCP_HTTP__PUBLIC_URL
+ONSHAPE_MCP_HTTP__PUBLIC_URL = "https://onshape.mcp.fstab.net"
+# Secrets (set via `fly secrets set` or the Fly.io dashboard):
 #   ONSHAPE_MCP_HTTP__ONSHAPE_CLIENT_ID
 #   ONSHAPE_MCP_HTTP__ONSHAPE_CLIENT_SECRET
-#   ONSHAPE_MCP_HTTP__ALLOWED_USERS
+#   ONSHAPE_MCP_HTTP__ALLOWED_USERS  — comma-separated id:name pairs
 
 [http_service]
 internal_port = 8080
