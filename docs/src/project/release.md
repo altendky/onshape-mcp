@@ -47,8 +47,9 @@ All steps run on every trigger. The `release-config` job determines whether each
 
 ### Source of Truth
 
-The authoritative version is in `crates/onshape-mcp/Cargo.toml`.
-All npm `package.json` files are synced to this version via `scripts/sync-npm-versions.js`, enforced by a pre-commit hook.
+The authoritative version is `[workspace.package].version` in the root `Cargo.toml`.
+All crate `Cargo.toml` files inherit this version via `version.workspace = true`.
+The `[workspace.dependencies]` internal crate version entries, `Cargo.lock`, and all npm `package.json` files are synced to this version via `scripts/sync-versions.js`, enforced by a pre-commit hook.
 
 ### Staging Version Format
 
@@ -87,11 +88,11 @@ The `staging` dist-tag and `cleanup-npm-staging.yml` workflow are retained for p
 
 ## Version Workflow (`reflow-release-version.yml`)
 
-Extracts the version from `crates/onshape-mcp/Cargo.toml`, verifies npm packages are in sync, and optionally verifies the version matches a git tag.
+Extracts the version from the workspace `Cargo.toml`, verifies all versions are in sync, and optionally verifies the version matches a git tag.
 
 - Input: `git-tag` (optional)
 - Output: `version`
-- Verify all npm `package.json` versions match Cargo.toml (via `scripts/sync-npm-versions.js --check`)
+- Verify all versions are in sync (via `scripts/sync-versions.js --check`)
 - If `git-tag` provided: strip `v` prefix, compare to Cargo.toml version, fail on mismatch
 
 ## Build Workflow (`reflow-release-build.yml`)

@@ -800,10 +800,24 @@ async fn fetch_proxy_client_id(proxy_url: &str) -> Result<String, LoginError> {
         };
 
     if !status.is_success() {
-        return Err(LoginError::ProxyConfig {
-            url,
-            detail: format!("HTTP {status}: {body}"),
-        });
+        let detail = if status == reqwest::StatusCode::FORBIDDEN {
+            // Parse the 403 body to extract source_ip for a user-friendly message.
+            #[derive(serde::Deserialize)]
+            struct ForbiddenBody {
+                source_ip: Option<String>,
+            }
+            match serde_json::from_str::<ForbiddenBody>(&body) {
+                Ok(ForbiddenBody {
+                    source_ip: Some(ip),
+                }) => {
+                    format!("your IP address ({ip}) is not authorized to use this proxy",)
+                }
+                _ => format!("HTTP {status}: {body}"),
+            }
+        } else {
+            format!("HTTP {status}: {body}")
+        };
+        return Err(LoginError::ProxyConfig { url, detail });
     }
 
     let config: ProxyConfigResponse =
