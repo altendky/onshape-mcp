@@ -1064,12 +1064,12 @@ fn resources_list_returns_insight_resources() {
         "audience should include assistant"
     );
 
-    // Check that sketch-constraints is present
-    let sketch_constraints = resources
+    // Check that sketch is present
+    let sketch = resources
         .iter()
-        .find(|r| r["uri"] == "insights:sketch-constraints")
-        .expect("should have insights:sketch-constraints resource");
-    assert_eq!(sketch_constraints["name"], "sketch-constraints");
+        .find(|r| r["uri"] == "insights:sketch")
+        .expect("should have insights:sketch resource");
+    assert_eq!(sketch["name"], "sketch");
 
     client.shutdown();
 }
@@ -1196,8 +1196,8 @@ fn tools_call_list_resources_returns_entries() {
         "should list shaded-views URI, got: {text}"
     );
     assert!(
-        text.contains("insights:sketch-constraints"),
-        "should list sketch-constraints URI, got: {text}"
+        text.contains("insights:sketch"),
+        "should list sketch URI, got: {text}"
     );
 
     client.shutdown();
