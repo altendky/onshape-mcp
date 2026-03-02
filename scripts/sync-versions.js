@@ -439,7 +439,11 @@ function main() {
 
   if (hasErrors) {
     console.error();
-    console.error("Version mismatch detected. Run without --check to fix.");
+    if (checkOnly) {
+      console.error("Version mismatch detected. Run without --check to fix.");
+    } else {
+      console.error("Version sync failed. See errors above and re-run after fixes.");
+    }
     process.exit(1);
   }
 }
