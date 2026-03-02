@@ -373,7 +373,7 @@ musl (Alpine) environments to verify portability.
 
 | Check | Tool | Run On |
 | ------- | ------ | -------- |
-| Coverage | `c8` (V8 native coverage) | Node.js 22, all 5 platforms |
+| Coverage | `c8` (V8 native coverage) | Node.js 24, all 5 platforms |
 | Upload | `codecov/codecov-action` | With OIDC authentication, `npm` flag |
 
 Both Rust and npm coverage use Codecov flags to separate the coverage data. The `codecov.yml` configuration defines components for each, enabling per-component coverage tracking in PR comments.
