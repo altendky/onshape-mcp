@@ -590,17 +590,22 @@ pub fn parse_allowed_users_csv(s: &str) -> Vec<AllowedUser> {
     s.split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
-        .map(|entry| {
+        .filter_map(|entry| {
             if let Some((id, name)) = entry.split_once(':') {
-                AllowedUser {
-                    id: id.trim().to_string(),
-                    name: Some(name.trim().to_string()),
+                let id = id.trim();
+                if id.is_empty() {
+                    return None;
                 }
+                let name = name.trim();
+                Some(AllowedUser {
+                    id: id.to_string(),
+                    name: (!name.is_empty()).then(|| name.to_string()),
+                })
             } else {
-                AllowedUser {
+                Some(AllowedUser {
                     id: entry.to_string(),
                     name: None,
-                }
+                })
             }
         })
         .collect()
@@ -1491,5 +1496,46 @@ mod tests {
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].id, "60a1b2c3d4e5f60708091011");
         assert_eq!(users[0].name.as_deref(), Some("altendky"));
+    }
+
+    #[test]
+    fn allowed_users_csv_rejects_empty_id_with_name() {
+        // ":somename" has an empty id — should be silently skipped
+        let users = parse_allowed_users_csv(":somename");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_rejects_bare_colon() {
+        // ":" has empty id and empty name — should be silently skipped
+        let users = parse_allowed_users_csv(":");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_rejects_whitespace_colon() {
+        // "  :  " has empty id after trimming — should be silently skipped
+        let users = parse_allowed_users_csv("  :  ");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_skips_empty_id_among_valid() {
+        // Mix of valid and invalid entries — only valid ones survive
+        let users = parse_allowed_users_csv("abc123:alice,:badname,def456");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert_eq!(users[0].name.as_deref(), Some("alice"));
+        assert_eq!(users[1].id, "def456");
+        assert!(users[1].name.is_none());
+    }
+
+    #[test]
+    fn allowed_users_csv_empty_name_becomes_none() {
+        // "abc123:" has a valid id but empty name — name should be None
+        let users = parse_allowed_users_csv("abc123:");
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].id, "abc123");
+        assert!(users[0].name.is_none());
     }
 }
