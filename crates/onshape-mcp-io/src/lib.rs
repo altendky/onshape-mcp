@@ -1341,6 +1341,7 @@ pub async fn run(
 ///
 /// Returns an error if required config fields are missing, or if the server
 /// fails to start.
+#[allow(clippy::too_many_lines)]
 pub async fn run_http(
     name: &str,
     version: &str,
@@ -1380,6 +1381,13 @@ pub async fn run_http(
         .iter()
         .map(|u| u.id.clone())
         .collect();
+
+    if allowed_user_ids.is_empty() {
+        eprintln!(
+            "WARNING: allowed_users is empty — all users will be denied access. \
+             Configure allowed_users in the config file or via --allowed-users."
+        );
+    }
 
     // Build shared state.
     let spec = OpenApiSpec::from_json(OPENAPI_SPEC_JSON)?;
@@ -1449,8 +1457,12 @@ pub async fn run_http(
     // Build the full app: OAuth routes + protected MCP route.
     let app = oauth_server::oauth_router(oauth_state).merge(mcp_router);
 
-    // Bind and serve.
-    let bind_addr = format!("{host}:{port}");
+    // Bind and serve. Bracket IPv6 hosts to produce valid socket addresses.
+    let bind_addr = if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     eprintln!("HTTP transport listening on {bind_addr}");
     eprintln!("Public URL: {public_url}");
