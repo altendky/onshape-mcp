@@ -1023,6 +1023,8 @@ fn tool_screenshot_def() -> Tool {
 }
 
 fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolResult {
+    const MAX_SCREENSHOT_DIM: u32 = 4096;
+
     let input: ScreenshotInput = match parse_arguments(arguments) {
         Ok(input) => input,
         Err(e) => return tool_input_error(e.message),
@@ -1065,9 +1067,19 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
     query_params.insert("pixelSize".to_string(), "0".to_string());
 
     if let Some(h) = input.output_height {
+        if h == 0 || h > MAX_SCREENSHOT_DIM {
+            return tool_input_error(format!(
+                "invalid output_height {h}: expected 1..={MAX_SCREENSHOT_DIM}"
+            ));
+        }
         query_params.insert("outputHeight".to_string(), h.to_string());
     }
     if let Some(w) = input.output_width {
+        if w == 0 || w > MAX_SCREENSHOT_DIM {
+            return tool_input_error(format!(
+                "invalid output_width {w}: expected 1..={MAX_SCREENSHOT_DIM}"
+            ));
+        }
         query_params.insert("outputWidth".to_string(), w.to_string());
     }
     if let Some(ref edges) = input.edges {
