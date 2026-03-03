@@ -50,14 +50,23 @@ RUN touch crates/*/src/*.rs crates/*/src/**/*.rs 2>/dev/null; \
 # to avoid glibc version mismatches.
 FROM debian:trixie-slim
 
-# Install CA certificates (needed for HTTPS to Onshape API)
+# Install CA certificates (HTTPS) and curl (HEALTHCHECK)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for container security
+RUN useradd --create-home --shell /bin/bash appuser
 
 COPY --from=builder /build/target/release/onshape-mcp /usr/local/bin/onshape-mcp
 
+USER appuser
+
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["onshape-mcp"]
 CMD ["http"]
