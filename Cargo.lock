@@ -1258,7 +1258,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onshape-client-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "chrono",
@@ -1274,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "onshape-client-io"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "oauth2",
  "onshape-client-core",
@@ -1286,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "onshape-mcp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "figment",
@@ -1301,7 +1301,7 @@ dependencies = [
 
 [[package]]
 name = "onshape-mcp-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "onshape-client-core",
@@ -1317,7 +1317,7 @@ dependencies = [
 
 [[package]]
 name = "onshape-mcp-io"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "base64",
@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "onshape-mcp-resources"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "pulldown-cmark",

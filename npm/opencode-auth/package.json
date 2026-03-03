@@ -1,6 +1,6 @@
 {
   "name": "@onshape-mcp/opencode-auth",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "OpenCode auth plugin for Onshape OAuth — enables `opencode auth login` for onshape-mcp",
   "license": "MIT OR Apache-2.0",
   "repository": {

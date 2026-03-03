@@ -1,5 +1,5 @@
 [tools]
-node = "22"
+node = "24"
 python = "3"
 "pipx:pre-commit" = "4.5.1"
 # Non-core tools: use explicit backend prefix (aqua:/github:) for Renovate compatibility
