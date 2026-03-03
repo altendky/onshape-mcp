@@ -1214,7 +1214,15 @@ fn process_screenshot_response(
         ToolResult::WriteFiles {
             files: vec![file_write],
             format: Box::new(move |results: &[FileWriteResult]| {
-                format_screenshot_result(&results[0], &label, &view_matrix)
+                let Some(result) = results.first() else {
+                    return CallToolResult {
+                        content: vec![Content::text("internal error: no file write results")],
+                        is_error: Some(true),
+                        structured_content: None,
+                        meta: None,
+                    };
+                };
+                format_screenshot_result(result, &label, &view_matrix)
             }),
         },
         vec![],
