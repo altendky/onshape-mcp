@@ -1386,8 +1386,6 @@ pub async fn run_http(
     let info = onshape_mcp_core::server_info(name, version);
     let config = Arc::new(config);
     let spec = Arc::new(spec);
-    let validation = Arc::new(tokio::sync::Mutex::new(ValidationState::default()));
-
     // Build the OAuth server state.
     let oauth_state = Arc::new(oauth_server::OAuthServerState::new(
         public_url.clone(),
@@ -1398,9 +1396,9 @@ pub async fn run_http(
 
     // Build the MCP service factory.
     //
-    // Each session gets a fresh `OnshapeMcpServer` instance, but they share
-    // the same `spec` and `validation` state. In HTTP mode, per-user credentials
-    // come from the `UserContext` in the request extensions (set by auth middleware),
+    // Each session gets a fresh `OnshapeMcpServer` instance with its own
+    // `ValidationState`. In HTTP mode, per-user credentials come from the
+    // `UserContext` in the request extensions (set by auth middleware),
     // not from the shared `api_state`.
     let api_state = Arc::new(tokio::sync::Mutex::new(ApiState::NotConfigured {
         configured_method: onshape_client_core::auth::AuthMethod::OAuth,
@@ -1419,16 +1417,19 @@ pub async fn run_http(
     let factory_config = Arc::clone(&config);
     let factory_spec = Arc::clone(&spec);
     let factory_api_state = Arc::clone(&api_state);
-    let factory_validation = Arc::clone(&validation);
 
     let mcp_service = StreamableHttpService::new(
         move || {
+            // Each session gets its own ValidationState so that one user's
+            // API response status does not overwrite another user's view.
+            let per_session_validation =
+                Arc::new(tokio::sync::Mutex::new(ValidationState::default()));
             Ok(OnshapeMcpServer::from_shared_state(
                 factory_info.clone(),
                 Arc::clone(&factory_config),
                 Arc::clone(&factory_spec),
                 Arc::clone(&factory_api_state),
-                Arc::clone(&factory_validation),
+                per_session_validation,
             ))
         },
         Arc::new(LocalSessionManager::default()),
