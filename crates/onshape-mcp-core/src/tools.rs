@@ -1251,7 +1251,8 @@ fn format_screenshot_result(
             );
             CallToolResult {
                 content: vec![
-                    Content::text(structured.to_string()),
+                    Content::json(&structured)
+                        .unwrap_or_else(|_| Content::text(structured.to_string())),
                     Content::text(summary),
                 ],
                 is_error: Some(false),
@@ -1273,7 +1274,8 @@ fn format_screenshot_result(
             );
             CallToolResult {
                 content: vec![
-                    Content::text(structured.to_string()),
+                    Content::json(&structured)
+                        .unwrap_or_else(|_| Content::text(structured.to_string())),
                     Content::text(summary),
                 ],
                 is_error: Some(true),
