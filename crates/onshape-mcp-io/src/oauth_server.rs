@@ -64,8 +64,8 @@ struct PendingAuth {
     client_id: String,
     /// Redirect URI for the MCP client.
     redirect_uri: String,
-    /// PKCE code verifier for the MCP client's auth request.
-    pkce_verifier: Option<String>,
+    /// PKCE code challenge from the MCP client's auth request (RFC 7636).
+    pkce_code_challenge: Option<String>,
     /// The CSRF state token from the MCP client's auth request.
     mcp_state: String,
     /// PKCE verifier for the Onshape leg of the flow.
@@ -77,7 +77,6 @@ struct PendingAuth {
 struct RegisteredClient {
     #[allow(dead_code)]
     client_id: String,
-    #[allow(dead_code)]
     client_secret: String,
     redirect_uris: Vec<String>,
 }
@@ -89,8 +88,8 @@ struct IssuedAuthCode {
     client_id: String,
     /// The redirect URI used in the authorization request.
     redirect_uri: String,
-    /// PKCE code verifier from the client's authorization request.
-    pkce_verifier: Option<String>,
+    /// PKCE code challenge from the client's authorization request (RFC 7636).
+    pkce_code_challenge: Option<String>,
     /// Onshape user ID associated with this code.
     user_id: String,
 }
@@ -100,6 +99,8 @@ struct IssuedAuthCode {
 struct IssuedToken {
     /// Onshape user ID.
     user_id: String,
+    /// The client that this token was issued for.
+    client_id: String,
     /// When the token was issued.
     #[allow(dead_code)]
     issued_at: chrono::DateTime<chrono::Utc>,
@@ -117,6 +118,8 @@ pub(crate) struct OAuthServerState {
     auth_codes: RwLock<HashMap<String, IssuedAuthCode>>,
     /// Issued access tokens → user mapping.
     tokens: RwLock<HashMap<String, IssuedToken>>,
+    /// Issued refresh tokens → user mapping (separate from access tokens).
+    refresh_tokens: RwLock<HashMap<String, IssuedToken>>,
     /// User Onshape tokens (keyed by Onshape user ID).
     pub(crate) user_tokens: RwLock<HashMap<String, UserOnshapeTokens>>,
     /// Allowlist of Onshape user IDs.
@@ -149,6 +152,7 @@ impl OAuthServerState {
             pending_auth: RwLock::new(HashMap::new()),
             auth_codes: RwLock::new(HashMap::new()),
             tokens: RwLock::new(HashMap::new()),
+            refresh_tokens: RwLock::new(HashMap::new()),
             user_tokens: RwLock::new(HashMap::new()),
             allowed_users: allowed_user_ids.into_iter().collect(),
             onshape_client_id,
@@ -336,7 +340,6 @@ struct AuthorizeParams {
     redirect_uri: String,
     state: Option<String>,
     code_challenge: Option<String>,
-    #[allow(dead_code)]
     code_challenge_method: Option<String>,
     #[allow(dead_code)]
     scope: Option<String>,
@@ -383,8 +386,20 @@ async fn authorize(
     }
     drop(clients);
 
-    // Store the MCP client's PKCE verifier (if provided) for later validation.
-    let pkce_verifier = params.code_challenge.clone();
+    // Validate PKCE code_challenge_method (we only support S256, per metadata).
+    if params.code_challenge.is_some() && params.code_challenge_method.as_deref() != Some("S256") {
+        eprintln!(
+            "[oauth] authorize: rejected unsupported code_challenge_method={:?}",
+            params.code_challenge_method
+        );
+        return Err((
+            http::StatusCode::BAD_REQUEST,
+            "code_challenge_method must be S256".to_string(),
+        ));
+    }
+
+    // Store the MCP client's PKCE code challenge (if provided) for later validation.
+    let pkce_code_challenge = params.code_challenge.clone();
 
     // Generate Onshape OAuth parameters.
     let (onshape_pkce_challenge, onshape_pkce_verifier) = PkceCodeChallenge::new_random_sha256();
@@ -394,7 +409,7 @@ async fn authorize(
     let pending = PendingAuth {
         client_id: params.client_id.clone(),
         redirect_uri: params.redirect_uri.clone(),
-        pkce_verifier,
+        pkce_code_challenge,
         mcp_state: params.state.clone().unwrap_or_default(),
         onshape_pkce_verifier,
     };
@@ -643,7 +658,7 @@ async fn onshape_callback(
         IssuedAuthCode {
             client_id: pending.client_id,
             redirect_uri: pending.redirect_uri.clone(),
-            pkce_verifier: pending.pkce_verifier,
+            pkce_code_challenge: pending.pkce_code_challenge,
             user_id: session_info.id.clone(),
         },
     );
@@ -679,7 +694,6 @@ struct TokenRequest {
     code: Option<String>,
     redirect_uri: Option<String>,
     client_id: Option<String>,
-    #[allow(dead_code)]
     client_secret: Option<String>,
     code_verifier: Option<String>,
     refresh_token: Option<String>,
@@ -735,13 +749,26 @@ async fn handle_auth_code_grant(
         return Err(token_error("invalid_client", "client_id mismatch"));
     }
 
+    // Enforce client authentication (client_secret_post).
+    let Some(ref provided_secret) = req.client_secret else {
+        return Err(token_error("invalid_client", "missing client_secret"));
+    };
+    let clients = state.clients.read().await;
+    let Some(registered) = clients.get(&issued_code.client_id) else {
+        return Err(token_error("invalid_client", "unknown client_id"));
+    };
+    if provided_secret != &registered.client_secret {
+        return Err(token_error("invalid_client", "invalid client_secret"));
+    }
+    drop(clients);
+
     // Validate redirect_uri.
     if req.redirect_uri.as_deref() != Some(&issued_code.redirect_uri) {
         return Err(token_error("invalid_grant", "redirect_uri mismatch"));
     }
 
     // Validate PKCE if the client provided a code_challenge during authorization.
-    if let Some(ref original_challenge) = issued_code.pkce_verifier {
+    if let Some(ref original_challenge) = issued_code.pkce_code_challenge {
         let Some(ref verifier) = req.code_verifier else {
             return Err(token_error("invalid_grant", "missing code_verifier"));
         };
@@ -763,16 +790,18 @@ async fn handle_auth_code_grant(
         access_token.clone(),
         IssuedToken {
             user_id: issued_code.user_id.clone(),
+            client_id: issued_code.client_id.clone(),
             issued_at: now,
             expires_at,
         },
     );
 
-    // Store refresh token → user mapping (reuse the tokens map with a prefix).
-    state.tokens.write().await.insert(
-        format!("refresh:{mcp_refresh_token}"),
+    // Store refresh token in a separate map (not the access token map).
+    state.refresh_tokens.write().await.insert(
+        mcp_refresh_token.clone(),
         IssuedToken {
             user_id: issued_code.user_id,
+            client_id: issued_code.client_id,
             issued_at: now,
             expires_at: now + chrono::Duration::days(30), // refresh tokens live longer
         },
@@ -794,10 +823,29 @@ async fn handle_refresh_token_grant(
         return Err(token_error("invalid_request", "missing refresh_token"));
     };
 
-    let key = format!("refresh:{refresh_token}");
+    // Enforce client authentication (client_secret_post).
+    let Some(ref client_id) = req.client_id else {
+        return Err(token_error("invalid_client", "missing client_id"));
+    };
+    let Some(ref provided_secret) = req.client_secret else {
+        return Err(token_error("invalid_client", "missing client_secret"));
+    };
+    let clients = state.clients.read().await;
+    let Some(registered) = clients.get(client_id.as_str()) else {
+        return Err(token_error("invalid_client", "unknown client_id"));
+    };
+    if provided_secret != &registered.client_secret {
+        return Err(token_error("invalid_client", "invalid client_secret"));
+    }
+    drop(clients);
 
-    // Consume the old refresh token.
-    let Some(old_token) = state.tokens.write().await.remove(&key) else {
+    // Consume the old refresh token from the dedicated refresh token map.
+    let Some(old_token) = state
+        .refresh_tokens
+        .write()
+        .await
+        .remove(refresh_token.as_str())
+    else {
         return Err(token_error(
             "invalid_grant",
             "unknown or expired refresh_token",
@@ -806,6 +854,14 @@ async fn handle_refresh_token_grant(
 
     if chrono::Utc::now() > old_token.expires_at {
         return Err(token_error("invalid_grant", "refresh_token expired"));
+    }
+
+    // Verify the refresh token was issued to this client.
+    if *client_id != old_token.client_id {
+        return Err(token_error(
+            "invalid_grant",
+            "refresh_token not bound to this client",
+        ));
     }
 
     // Issue new access + refresh tokens.
@@ -818,14 +874,16 @@ async fn handle_refresh_token_grant(
         new_access.clone(),
         IssuedToken {
             user_id: old_token.user_id.clone(),
+            client_id: client_id.clone(),
             issued_at: now,
             expires_at,
         },
     );
-    state.tokens.write().await.insert(
-        format!("refresh:{new_refresh}"),
+    state.refresh_tokens.write().await.insert(
+        new_refresh.clone(),
         IssuedToken {
             user_id: old_token.user_id,
+            client_id: client_id.clone(),
             issued_at: now,
             expires_at: now + chrono::Duration::days(30),
         },
