@@ -11,6 +11,7 @@ keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
 categories = ["development-tools"]
 
 [dependencies]
+base64.workspace = true
 chrono.workspace = true
 onshape-client-core.workspace = true
 onshape-mcp-resources.workspace = true

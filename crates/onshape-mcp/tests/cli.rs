@@ -858,6 +858,7 @@ fn tools_list_includes_api_tools() {
             "onshape_mcp_auth_login",
             "onshape_mcp_auth_status",
             "onshape_read_resource",
+            "onshape_screenshot",
         ],
         "tool list should contain exactly the expected tools"
     );

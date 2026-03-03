@@ -2,7 +2,19 @@
 
 How to get rendered images of a Part Studio via the Onshape API.
 
-## Essential Pattern
+## Preferred: `onshape_screenshot` Tool
+
+Use the `onshape_screenshot` tool instead of calling the shaded views endpoint directly.
+It handles `pixelSize=0` (auto-fit), view matrix computation, base64 decoding, and file
+saving automatically. Provide document/element IDs, a view spec (named preset like
+`"front"` or `"isometric"`, or custom azimuth/elevation angles), and an output file path.
+The tool saves the PNG and returns the file path — no base64 handling needed.
+
+Call the tool multiple times for multiple views.
+
+The rest of this document explains the underlying API for reference.
+
+## Raw API Endpoint
 
 Use `getPartStudioShadedViews` (`GET /partstudios/d/{did}/{wvm}/{wvmid}/e/{eid}/shadedviews`)
 to render a Part Studio server-side. The response is a JSON object with an `images` array
@@ -86,4 +98,4 @@ images. Useful for other purposes but not for quick visual inspection.
 
 3. **Large base64 strings** — A 500×500 auto-fit render produces a substantial base64
    string. Avoid passing it as a shell argument (argument length limits). Write to a
-   file first, then decode.
+   file first, then decode. The `onshape_screenshot` tool handles this automatically.
