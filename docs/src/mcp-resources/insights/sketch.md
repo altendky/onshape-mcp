@@ -356,7 +356,7 @@ Generates 5 entities from a center line:
 4. Left offset line
 5. Right offset line
 
-Plus 12 internal constraints (all with `sketchToolType: "SLOT"`):
+Plus 13 internal constraints (all with `sketchToolType: "SLOT"`):
 
 - 2 `COINCIDENT`: cap centers at center line endpoints
 - 2 `OFFSET`: side lines offset from center line (`localOffset` + `localMaster`)
