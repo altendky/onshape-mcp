@@ -2914,6 +2914,79 @@ mod tests {
     }
 
     #[test]
+    fn screenshot_output_height_zero_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert("output_height".to_string(), Value::Number(0.into()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains("output_height"));
+        assert!(msg.contains('0'));
+    }
+
+    #[test]
+    fn screenshot_output_width_too_large_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert("output_width".to_string(), Value::Number(4097.into()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains("output_width"));
+        assert!(msg.contains("4097"));
+    }
+
+    #[test]
+    fn screenshot_output_path_empty_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert("output_path".to_string(), Value::String(String::new()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains("output_path"));
+    }
+
+    #[test]
+    fn screenshot_output_path_traversal_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert(
+            "output_path".to_string(),
+            Value::String("../secret.png".to_string()),
+        );
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains(".."));
+    }
+
+    #[test]
     fn screenshot_builds_api_request_then() {
         let auth = not_configured();
         let spec = screenshot_spec();
