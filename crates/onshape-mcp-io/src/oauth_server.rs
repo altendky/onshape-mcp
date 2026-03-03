@@ -185,6 +185,13 @@ impl OAuthServerState {
 // ============================================================================
 
 /// Generate a cryptographically random hex string.
+///
+/// Uses `ThreadRng` (`ChaCha12` seeded from OS entropy), which is a CSPRNG
+/// suitable for security-critical material per the `rand` crate docs.
+/// `OsRng` would be preferable for direct OS entropy, but its fallible
+/// API (`try_fill_bytes`) would require error propagation through all
+/// callers. `ThreadRng` is an acceptable alternative: it is automatically
+/// seeded from `OsRng` and periodically reseeded.
 fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     rand::rng().fill(&mut buf[..]);
