@@ -1041,7 +1041,7 @@ pub(crate) async fn auth_middleware(
 /// - `GET /oauth/callback` — Onshape callback
 /// - `POST /oauth/token` — Token endpoint
 ///
-/// CORS is applied to metadata and token endpoints.
+/// CORS is applied to all OAuth router endpoints (not just metadata/token).
 ///
 /// Per RFC 9728 Section 3, when the protected resource URL has a path
 /// component (e.g. `https://example.com/mcp`), the well-known URI is
