@@ -583,7 +583,7 @@ where
 /// - Empty or whitespace-only strings produce an empty vec.
 /// - Each entry is trimmed. Empty entries (from trailing commas) are skipped.
 /// - The `:name` portion is optional.
-fn parse_allowed_users_csv(s: &str) -> Vec<AllowedUser> {
+pub fn parse_allowed_users_csv(s: &str) -> Vec<AllowedUser> {
     if s.trim().is_empty() {
         return Vec::new();
     }
