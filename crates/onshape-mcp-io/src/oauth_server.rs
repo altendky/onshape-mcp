@@ -283,32 +283,72 @@ struct RegisterResponse {
     token_endpoint_auth_method: String,
 }
 
+/// Supported grant types for this server.
+const SUPPORTED_GRANT_TYPES: &[&str] = &["authorization_code", "refresh_token"];
+/// Supported response types for this server.
+const SUPPORTED_RESPONSE_TYPES: &[&str] = &["code"];
+
 async fn register_client(
     State(state): State<Arc<OAuthServerState>>,
     Json(req): Json<RegisterRequest>,
-) -> impl IntoResponse {
-    let client_id = random_hex(16);
-    let client_secret = random_hex(32);
-
+) -> Result<Json<RegisterResponse>, (http::StatusCode, Json<serde_json::Value>)> {
     eprintln!(
         "[oauth] DCR: registering client name={:?} redirect_uris={:?}",
         req.client_name, req.redirect_uris
     );
 
+    // Validate redirect_uris is non-empty.
+    if req.redirect_uris.is_empty() {
+        return Err((
+            http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid_client_metadata",
+                "error_description": "redirect_uris must not be empty",
+            })),
+        ));
+    }
+
+    // Validate grant_types (default if empty, reject unsupported).
     let grant_types = if req.grant_types.is_empty() {
         vec![
             "authorization_code".to_string(),
             "refresh_token".to_string(),
         ]
     } else {
+        for gt in &req.grant_types {
+            if !SUPPORTED_GRANT_TYPES.contains(&gt.as_str()) {
+                return Err((
+                    http::StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "invalid_client_metadata",
+                        "error_description": format!("unsupported grant_type: {gt}"),
+                    })),
+                ));
+            }
+        }
         req.grant_types
     };
 
+    // Validate response_types (default if empty, reject unsupported).
     let response_types = if req.response_types.is_empty() {
         vec!["code".to_string()]
     } else {
+        for rt in &req.response_types {
+            if !SUPPORTED_RESPONSE_TYPES.contains(&rt.as_str()) {
+                return Err((
+                    http::StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "invalid_client_metadata",
+                        "error_description": format!("unsupported response_type: {rt}"),
+                    })),
+                ));
+            }
+        }
         req.response_types
     };
+
+    let client_id = random_hex(16);
+    let client_secret = random_hex(32);
 
     let registered = RegisteredClient {
         client_id: client_id.clone(),
@@ -324,7 +364,7 @@ async fn register_client(
 
     eprintln!("[oauth] DCR: issued client_id={client_id}");
 
-    Json(RegisterResponse {
+    Ok(Json(RegisterResponse {
         client_id,
         client_secret,
         client_name: req.client_name,
@@ -332,7 +372,7 @@ async fn register_client(
         grant_types,
         response_types,
         token_endpoint_auth_method: "client_secret_post".to_string(),
-    })
+    }))
 }
 
 // ============================================================================
