@@ -911,16 +911,29 @@ fn token_error(error: &str, description: &str) -> (http::StatusCode, Json<serde_
 // Auth Middleware
 // ============================================================================
 
+/// Build a 401 response with the required `WWW-Authenticate` header (RFC 6750).
+fn unauthorized_response(error: &str, description: &str) -> axum::response::Response {
+    (
+        http::StatusCode::UNAUTHORIZED,
+        [(
+            http::header::WWW_AUTHENTICATE,
+            format!("Bearer error=\"{error}\", error_description=\"{description}\""),
+        )],
+        description.to_string(),
+    )
+        .into_response()
+}
+
 /// Axum middleware that validates Bearer tokens on the MCP endpoint.
 ///
 /// Extracts the `Authorization: Bearer <token>` header, validates it
 /// against the OAuth server state, and inserts `UserContext` into the
-/// request extensions.
+/// request extensions.  Returns `WWW-Authenticate` on 401 per RFC 6750.
 pub(crate) async fn auth_middleware(
     State(state): State<Arc<OAuthServerState>>,
     mut request: http::Request<axum::body::Body>,
     next: middleware::Next,
-) -> Result<axum::response::Response, (http::StatusCode, String)> {
+) -> Result<axum::response::Response, axum::response::Response> {
     let method = request.method().clone();
     let uri = request.uri().clone();
 
@@ -932,25 +945,28 @@ pub(crate) async fn auth_middleware(
 
     let Some(auth_value) = auth_header else {
         eprintln!("[oauth] auth: {method} {uri} — missing Authorization header");
-        return Err((
-            http::StatusCode::UNAUTHORIZED,
-            "Missing Authorization header".to_string(),
+        return Err(unauthorized_response(
+            "invalid_request",
+            "Missing Authorization header",
         ));
     };
 
-    let Some(token) = auth_value.strip_prefix("Bearer ") else {
+    // Parse scheme case-insensitively per RFC 9110 Section 11.1.
+    let token = if auth_value.len() > 7 && auth_value[..7].eq_ignore_ascii_case("bearer ") {
+        &auth_value[7..]
+    } else {
         eprintln!("[oauth] auth: {method} {uri} — invalid Authorization header format");
-        return Err((
-            http::StatusCode::UNAUTHORIZED,
-            "Invalid Authorization header format".to_string(),
+        return Err(unauthorized_response(
+            "invalid_request",
+            "Invalid Authorization header format",
         ));
     };
 
     let Some(user_ctx) = state.validate_token(token).await else {
         eprintln!("[oauth] auth: {method} {uri} — invalid or expired token");
-        return Err((
-            http::StatusCode::UNAUTHORIZED,
-            "Invalid or expired token".to_string(),
+        return Err(unauthorized_response(
+            "invalid_token",
+            "Invalid or expired token",
         ));
     };
 
