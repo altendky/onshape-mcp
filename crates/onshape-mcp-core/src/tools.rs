@@ -1019,7 +1019,7 @@ fn tool_screenshot_def() -> Tool {
          azimuth/elevation angles. Call multiple times for multiple views.",
         Arc::new(input_schema),
     )
-    .annotate(ToolAnnotations::new().read_only(true).destructive(false))
+    .annotate(ToolAnnotations::new().read_only(false).destructive(false))
 }
 
 fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolResult {
