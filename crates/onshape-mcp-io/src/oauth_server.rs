@@ -272,7 +272,7 @@ struct RegisterRequest {
 }
 
 /// Response for `POST /oauth/register`.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct RegisterResponse {
     client_id: String,
     client_secret: String,
@@ -306,6 +306,21 @@ async fn register_client(
                 "error_description": "redirect_uris must not be empty",
             })),
         ));
+    }
+
+    // Validate redirect_uri syntax so malformed URIs fail fast at registration
+    // rather than causing a 500 during the OAuth callback after the Onshape
+    // authorization code has already been consumed.
+    for uri in &req.redirect_uris {
+        if url::Url::parse(uri).is_err() {
+            return Err((
+                http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_client_metadata",
+                    "error_description": format!("invalid redirect_uri: {uri}"),
+                })),
+            ));
+        }
     }
 
     // Validate grant_types (default if empty, reject unsupported).
@@ -1227,6 +1242,45 @@ mod tests {
 
         let result = register_client(State(state), Json(req)).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn dcr_rejects_invalid_redirect_uri_syntax() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec!["not a url".to_string()],
+            grant_types: vec![],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        assert!(result.is_err());
+        let (status, body) = result.expect_err("should reject invalid redirect URI");
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert_eq!(body.0["error"], "invalid_client_metadata");
+    }
+
+    #[tokio::test]
+    async fn dcr_rejects_mixed_valid_and_invalid_redirect_uris() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec![
+                "https://example.com/cb".to_string(),
+                "://broken".to_string(),
+            ],
+            grant_types: vec![],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        assert!(result.is_err());
+        let (status, body) = result.expect_err("should reject mixed valid/invalid redirect URIs");
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert_eq!(body.0["error"], "invalid_client_metadata");
     }
 
     #[tokio::test]
