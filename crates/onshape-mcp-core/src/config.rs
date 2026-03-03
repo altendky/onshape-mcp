@@ -1182,6 +1182,100 @@ mod tests {
     }
 
     // ====================================================================
+    // HttpTransportConfig Tests
+    // ====================================================================
+
+    #[test]
+    fn default_http_transport_config() {
+        let config = HttpTransportConfig::default();
+        assert_eq!(config.host, DEFAULT_TRANSPORT_HOST);
+        assert_eq!(config.port, DEFAULT_TRANSPORT_PORT);
+        assert!(config.public_url.is_none());
+        assert!(config.onshape_client_id.is_none());
+        assert!(config.onshape_client_secret.is_none());
+        assert!(config.allowed_users.is_empty());
+    }
+
+    #[test]
+    fn deserialize_http_transport_config_defaults() {
+        let toml_str = "";
+        let config: HttpTransportConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.host, DEFAULT_TRANSPORT_HOST);
+        assert_eq!(config.port, DEFAULT_TRANSPORT_PORT);
+        assert!(config.public_url.is_none());
+        assert!(config.onshape_client_id.is_none());
+        assert!(config.onshape_client_secret.is_none());
+        assert!(config.allowed_users.is_empty());
+    }
+
+    #[test]
+    fn deserialize_http_transport_config_full() {
+        let toml_str = r#"
+            host = "0.0.0.0"
+            port = 9090
+            public_url = "https://mcp.example.com"
+            onshape_client_id = "my-client-id"
+            onshape_client_secret = "my-secret"
+            allowed_users = "abc123:Alice,def456:Bob"
+        "#;
+        let config: HttpTransportConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.host, "0.0.0.0");
+        assert_eq!(config.port, 9090);
+        assert_eq!(
+            config.public_url.as_deref(),
+            Some("https://mcp.example.com")
+        );
+        assert_eq!(config.onshape_client_id.as_deref(), Some("my-client-id"));
+        assert_eq!(
+            config
+                .onshape_client_secret
+                .as_ref()
+                .map(|s| s.expose_secret().to_string()),
+            Some("my-secret".to_string())
+        );
+        assert_eq!(config.allowed_users.len(), 2);
+        assert_eq!(config.allowed_users[0].id, "abc123");
+        assert_eq!(config.allowed_users[0].name.as_deref(), Some("Alice"));
+        assert_eq!(config.allowed_users[1].id, "def456");
+        assert_eq!(config.allowed_users[1].name.as_deref(), Some("Bob"));
+    }
+
+    #[test]
+    fn deserialize_app_config_with_http_section() {
+        let toml_str = r#"
+            [http]
+            host = "0.0.0.0"
+            port = 3000
+            public_url = "https://example.com"
+        "#;
+        let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.http.host, "0.0.0.0");
+        assert_eq!(config.http.port, 3000);
+        assert_eq!(
+            config.http.public_url.as_deref(),
+            Some("https://example.com")
+        );
+    }
+
+    #[test]
+    fn deserialize_http_transport_config_allowed_users_toml_array() {
+        let toml_str = r#"
+            [[allowed_users]]
+            id = "user1"
+            name = "User One"
+
+            [[allowed_users]]
+            id = "user2"
+        "#;
+        let config: HttpTransportConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.allowed_users.len(), 2);
+        assert_eq!(config.allowed_users[0].id, "user1");
+        assert_eq!(config.allowed_users[0].name.as_deref(), Some("User One"));
+        assert_eq!(config.allowed_users[1].id, "user2");
+        assert!(config.allowed_users[1].name.is_none());
+    }
+
+    // ====================================================================
     // AuthInventory Construction Tests
     // ====================================================================
 
