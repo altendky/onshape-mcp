@@ -747,7 +747,7 @@ struct TokenRequest {
 }
 
 /// Response for `POST /oauth/token`.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct TokenResponseBody {
     access_token: String,
     token_type: String,
@@ -1079,4 +1079,473 @@ pub(crate) fn oauth_router(state: Arc<OAuthServerState>) -> Router {
         .route("/oauth/token", routing::post(token_endpoint))
         .layer(cors)
         .with_state(state)
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic, clippy::similar_names)]
+mod tests {
+    use super::*;
+    use sha2::Digest as _;
+
+    /// Helper: create a test `OAuthServerState` with a single allowed user.
+    fn test_state() -> OAuthServerState {
+        OAuthServerState::new(
+            "https://example.com".to_string(),
+            "onshape-client-id".to_string(),
+            SecretString::from("onshape-client-secret"),
+            vec!["allowed-user-1".to_string()],
+        )
+    }
+
+    /// Helper: register a client and return (`client_id`, `client_secret`).
+    async fn register_test_client(state: &OAuthServerState) -> (String, String) {
+        let client_id = random_hex(16);
+        let client_secret = random_hex(32);
+        state.clients.write().await.insert(
+            client_id.clone(),
+            RegisteredClient {
+                client_id: client_id.clone(),
+                client_secret: client_secret.clone(),
+                redirect_uris: vec!["https://example.com/callback".to_string()],
+            },
+        );
+        (client_id, client_secret)
+    }
+
+    /// Helper: insert an access token and return the token string.
+    async fn insert_access_token(
+        state: &OAuthServerState,
+        user_id: &str,
+        client_id: &str,
+    ) -> String {
+        let token = random_hex(32);
+        let now = chrono::Utc::now();
+        state.tokens.write().await.insert(
+            token.clone(),
+            IssuedToken {
+                user_id: user_id.to_string(),
+                client_id: client_id.to_string(),
+                issued_at: now,
+                expires_at: now + chrono::Duration::seconds(TOKEN_LIFETIME_SECS),
+            },
+        );
+        // Also insert user tokens so validate_token can find them.
+        state.user_tokens.write().await.insert(
+            user_id.to_string(),
+            UserOnshapeTokens {
+                access_token: "onshape-access-token".to_string(),
+                refresh_token: "onshape-refresh-token".to_string(),
+                expires_at: Some(now + chrono::Duration::hours(1)),
+            },
+        );
+        token
+    }
+
+    // ================================================================
+    // validate_token tests
+    // ================================================================
+
+    #[tokio::test]
+    async fn validate_token_accepts_valid_access_token() {
+        let state = test_state();
+        let (client_id, _) = register_test_client(&state).await;
+        let token = insert_access_token(&state, "allowed-user-1", &client_id).await;
+
+        let result = state.validate_token(&token).await;
+        assert!(result.is_some());
+        let ctx = result.expect("should be Some");
+        assert_eq!(ctx.user_id, "allowed-user-1");
+    }
+
+    #[tokio::test]
+    async fn validate_token_rejects_expired_token() {
+        let state = test_state();
+        let token = random_hex(32);
+        let now = chrono::Utc::now();
+        state.tokens.write().await.insert(
+            token.clone(),
+            IssuedToken {
+                user_id: "allowed-user-1".to_string(),
+                client_id: "some-client".to_string(),
+                issued_at: now - chrono::Duration::hours(2),
+                expires_at: now - chrono::Duration::hours(1), // expired
+            },
+        );
+
+        let result = state.validate_token(&token).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn validate_token_rejects_unknown_token() {
+        let state = test_state();
+        let result = state.validate_token("nonexistent-token").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn validate_token_rejects_refresh_token() {
+        // Refresh tokens are stored in a separate map, so they should
+        // never be accepted as bearer tokens.
+        let state = test_state();
+        let refresh_token = random_hex(32);
+        let now = chrono::Utc::now();
+        state.refresh_tokens.write().await.insert(
+            refresh_token.clone(),
+            IssuedToken {
+                user_id: "allowed-user-1".to_string(),
+                client_id: "some-client".to_string(),
+                issued_at: now,
+                expires_at: now + chrono::Duration::days(30),
+            },
+        );
+
+        // The refresh token should NOT be findable via validate_token.
+        let result = state.validate_token(&refresh_token).await;
+        assert!(result.is_none());
+
+        // Even with the old "refresh:" prefix convention, it should not work.
+        let prefixed = format!("refresh:{refresh_token}");
+        let result = state.validate_token(&prefixed).await;
+        assert!(result.is_none());
+    }
+
+    // ================================================================
+    // DCR validation tests
+    // ================================================================
+
+    #[tokio::test]
+    async fn dcr_rejects_empty_redirect_uris() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: Some("test".to_string()),
+            redirect_uris: vec![],
+            grant_types: vec![],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn dcr_rejects_unsupported_grant_type() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec!["https://example.com/cb".to_string()],
+            grant_types: vec!["implicit".to_string()],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn dcr_rejects_unsupported_response_type() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec!["https://example.com/cb".to_string()],
+            grant_types: vec![],
+            response_types: vec!["token".to_string()],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn dcr_accepts_valid_registration() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: Some("My App".to_string()),
+            redirect_uris: vec!["https://example.com/cb".to_string()],
+            grant_types: vec!["authorization_code".to_string()],
+            response_types: vec!["code".to_string()],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state.clone()), Json(req)).await;
+        assert!(result.is_ok());
+
+        let response = result.expect("should be Ok");
+        assert!(!response.client_id.is_empty());
+        assert!(!response.client_secret.is_empty());
+        assert_eq!(response.token_endpoint_auth_method, "client_secret_post");
+    }
+
+    // ================================================================
+    // Token endpoint tests (auth code grant)
+    // ================================================================
+
+    #[tokio::test]
+    async fn auth_code_grant_rejects_missing_client_secret() {
+        let state = test_state();
+        let (client_id, _client_secret) = register_test_client(&state).await;
+
+        // Insert an auth code.
+        let code = random_hex(32);
+        state.auth_codes.write().await.insert(
+            code.clone(),
+            IssuedAuthCode {
+                client_id: client_id.clone(),
+                redirect_uri: "https://example.com/callback".to_string(),
+                pkce_code_challenge: None,
+                user_id: "allowed-user-1".to_string(),
+            },
+        );
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some(code),
+            redirect_uri: Some("https://example.com/callback".to_string()),
+            client_id: Some(client_id),
+            client_secret: None, // missing!
+            code_verifier: None,
+            refresh_token: None,
+        };
+
+        let result = handle_auth_code_grant(&state, &req).await;
+        assert!(result.is_err());
+        let (status, json) = result.expect_err("should be Err");
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert_eq!(json.0["error"], "invalid_client");
+    }
+
+    #[tokio::test]
+    async fn auth_code_grant_rejects_wrong_client_secret() {
+        let state = test_state();
+        let (client_id, _client_secret) = register_test_client(&state).await;
+
+        let code = random_hex(32);
+        state.auth_codes.write().await.insert(
+            code.clone(),
+            IssuedAuthCode {
+                client_id: client_id.clone(),
+                redirect_uri: "https://example.com/callback".to_string(),
+                pkce_code_challenge: None,
+                user_id: "allowed-user-1".to_string(),
+            },
+        );
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some(code),
+            redirect_uri: Some("https://example.com/callback".to_string()),
+            client_id: Some(client_id),
+            client_secret: Some("wrong-secret".to_string()),
+            code_verifier: None,
+            refresh_token: None,
+        };
+
+        let result = handle_auth_code_grant(&state, &req).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn auth_code_grant_validates_pkce_s256() {
+        use base64::Engine;
+
+        let state = test_state();
+        let (client_id, client_secret) = register_test_client(&state).await;
+
+        // Create a PKCE challenge/verifier pair.
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let digest = sha2::Sha256::digest(verifier.as_bytes());
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
+
+        let code = random_hex(32);
+        state.auth_codes.write().await.insert(
+            code.clone(),
+            IssuedAuthCode {
+                client_id: client_id.clone(),
+                redirect_uri: "https://example.com/callback".to_string(),
+                pkce_code_challenge: Some(challenge),
+                user_id: "allowed-user-1".to_string(),
+            },
+        );
+
+        // Insert user tokens so the token issuance can succeed.
+        state.user_tokens.write().await.insert(
+            "allowed-user-1".to_string(),
+            UserOnshapeTokens {
+                access_token: "onshape-at".to_string(),
+                refresh_token: "onshape-rt".to_string(),
+                expires_at: None,
+            },
+        );
+
+        // Correct verifier should succeed.
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some(code),
+            redirect_uri: Some("https://example.com/callback".to_string()),
+            client_id: Some(client_id.clone()),
+            client_secret: Some(client_secret.clone()),
+            code_verifier: Some(verifier.to_string()),
+            refresh_token: None,
+        };
+
+        let result = handle_auth_code_grant(&state, &req).await;
+        assert!(result.is_ok());
+        let body = result.expect("should be Ok");
+        assert_eq!(body.token_type, "Bearer");
+        assert!(!body.access_token.is_empty());
+        assert!(body.refresh_token.is_some());
+    }
+
+    #[tokio::test]
+    async fn auth_code_grant_rejects_wrong_pkce_verifier() {
+        use base64::Engine;
+
+        let state = test_state();
+        let (client_id, client_secret) = register_test_client(&state).await;
+
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(sha2::Sha256::digest(b"correct-verifier"));
+
+        let code = random_hex(32);
+        state.auth_codes.write().await.insert(
+            code.clone(),
+            IssuedAuthCode {
+                client_id: client_id.clone(),
+                redirect_uri: "https://example.com/callback".to_string(),
+                pkce_code_challenge: Some(challenge),
+                user_id: "allowed-user-1".to_string(),
+            },
+        );
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some(code),
+            redirect_uri: Some("https://example.com/callback".to_string()),
+            client_id: Some(client_id),
+            client_secret: Some(client_secret),
+            code_verifier: Some("wrong-verifier".to_string()),
+            refresh_token: None,
+        };
+
+        let result = handle_auth_code_grant(&state, &req).await;
+        assert!(result.is_err());
+    }
+
+    // ================================================================
+    // Refresh token grant tests
+    // ================================================================
+
+    #[tokio::test]
+    async fn refresh_grant_rejects_missing_client_credentials() {
+        let state = test_state();
+        let req = TokenRequest {
+            grant_type: "refresh_token".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: None, // missing
+            client_secret: None,
+            code_verifier: None,
+            refresh_token: Some("some-refresh-token".to_string()),
+        };
+
+        let result = handle_refresh_token_grant(&state, &req).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn refresh_grant_rejects_wrong_client_binding() {
+        let state = test_state();
+        let (client_a_id, client_a_secret) = register_test_client(&state).await;
+        let (client_b_id, client_b_secret) = register_test_client(&state).await;
+
+        // Insert a refresh token bound to client A.
+        let refresh_token = random_hex(32);
+        let now = chrono::Utc::now();
+        state.refresh_tokens.write().await.insert(
+            refresh_token.clone(),
+            IssuedToken {
+                user_id: "allowed-user-1".to_string(),
+                client_id: client_a_id.clone(),
+                issued_at: now,
+                expires_at: now + chrono::Duration::days(30),
+            },
+        );
+        // Need user tokens for the lookup.
+        state.user_tokens.write().await.insert(
+            "allowed-user-1".to_string(),
+            UserOnshapeTokens {
+                access_token: "at".to_string(),
+                refresh_token: "rt".to_string(),
+                expires_at: None,
+            },
+        );
+
+        // Client B should NOT be able to use client A's refresh token.
+        let req = TokenRequest {
+            grant_type: "refresh_token".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some(client_b_id),
+            client_secret: Some(client_b_secret),
+            code_verifier: None,
+            refresh_token: Some(refresh_token),
+        };
+
+        let result = handle_refresh_token_grant(&state, &req).await;
+        assert!(result.is_err());
+
+        // Suppress unused variable warnings.
+        let _ = (client_a_secret, client_a_id);
+    }
+
+    #[tokio::test]
+    async fn refresh_grant_succeeds_with_correct_client() {
+        let state = test_state();
+        let (client_id, client_secret) = register_test_client(&state).await;
+
+        let refresh_token = random_hex(32);
+        let now = chrono::Utc::now();
+        state.refresh_tokens.write().await.insert(
+            refresh_token.clone(),
+            IssuedToken {
+                user_id: "allowed-user-1".to_string(),
+                client_id: client_id.clone(),
+                issued_at: now,
+                expires_at: now + chrono::Duration::days(30),
+            },
+        );
+        state.user_tokens.write().await.insert(
+            "allowed-user-1".to_string(),
+            UserOnshapeTokens {
+                access_token: "at".to_string(),
+                refresh_token: "rt".to_string(),
+                expires_at: None,
+            },
+        );
+
+        let req = TokenRequest {
+            grant_type: "refresh_token".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some(client_id),
+            client_secret: Some(client_secret),
+            code_verifier: None,
+            refresh_token: Some(refresh_token.clone()),
+        };
+
+        let result = handle_refresh_token_grant(&state, &req).await;
+        assert!(result.is_ok());
+
+        // The old refresh token should be consumed (single-use).
+        assert!(
+            !state
+                .refresh_tokens
+                .read()
+                .await
+                .contains_key(&refresh_token)
+        );
+    }
 }
