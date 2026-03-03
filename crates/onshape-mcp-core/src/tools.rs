@@ -1098,18 +1098,6 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
         query_params.insert("includeWires".to_string(), iw.to_string());
     }
 
-    let request = match spec.build_request(
-        "getPartStudioShadedViews",
-        &path_params,
-        &query_params,
-        None,
-    ) {
-        Ok(req) => req,
-        Err(e) => {
-            return tool_input_error(format!("failed to build shaded views request: {e}"));
-        }
-    };
-
     // --- Prepare data for the callback closure ---
 
     let label = view_label(&input.view);
@@ -1123,6 +1111,18 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
     {
         return tool_input_error("output_path must not contain '..' segments");
     }
+
+    let request = match spec.build_request(
+        "getPartStudioShadedViews",
+        &path_params,
+        &query_params,
+        None,
+    ) {
+        Ok(req) => req,
+        Err(e) => {
+            return tool_input_error(format!("failed to build shaded views request: {e}"));
+        }
+    };
 
     // --- Return the two-phase effect: API call, then file writes ---
 
