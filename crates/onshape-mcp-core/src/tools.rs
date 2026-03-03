@@ -1049,6 +1049,16 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
         ));
     }
 
+    for (name, value) in [
+        ("did", input.did.as_str()),
+        ("wvmid", input.wvmid.as_str()),
+        ("eid", input.eid.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return tool_input_error(format!("{name} must not be empty"));
+        }
+    }
+
     // --- Build the API request ---
 
     let view_matrix = view_matrix_string(&input.view);
