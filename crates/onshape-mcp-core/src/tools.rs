@@ -1113,7 +1113,16 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
     // --- Prepare data for the callback closure ---
 
     let label = view_label(&input.view);
-    let output_path = PathBuf::from(input.output_path);
+    let output_path = PathBuf::from(&input.output_path);
+    if input.output_path.trim().is_empty() || output_path.file_name().is_none() {
+        return tool_input_error("output_path must include a file name");
+    }
+    if output_path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return tool_input_error("output_path must not contain '..' segments");
+    }
 
     // --- Return the two-phase effect: API call, then file writes ---
 
