@@ -67,7 +67,8 @@ struct PendingAuth {
     /// PKCE code challenge from the MCP client's auth request (RFC 7636).
     pkce_code_challenge: Option<String>,
     /// The CSRF state token from the MCP client's auth request.
-    mcp_state: String,
+    /// `None` when the client omitted the optional `state` parameter.
+    mcp_state: Option<String>,
     /// PKCE verifier for the Onshape leg of the flow.
     onshape_pkce_verifier: PkceCodeVerifier,
 }
@@ -472,7 +473,7 @@ async fn authorize(
         client_id: params.client_id.clone(),
         redirect_uri: params.redirect_uri.clone(),
         pkce_code_challenge,
-        mcp_state: params.state.clone().unwrap_or_default(),
+        mcp_state: params.state.clone(),
         onshape_pkce_verifier,
     };
     state
@@ -737,10 +738,13 @@ async fn onshape_callback(
             format!("invalid redirect URI: {e}"),
         )
     })?;
-    redirect
-        .query_pairs_mut()
-        .append_pair("code", &mcp_code)
-        .append_pair("state", &pending.mcp_state);
+    {
+        let mut qp = redirect.query_pairs_mut();
+        qp.append_pair("code", &mcp_code);
+        if let Some(ref state) = pending.mcp_state {
+            qp.append_pair("state", state);
+        }
+    }
 
     Ok(Redirect::to(redirect.as_str()))
 }
