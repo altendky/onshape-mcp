@@ -85,10 +85,10 @@ impl Default for ApiConfig {
 }
 
 /// Default host for the HTTP transport server.
-pub const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
+pub const DEFAULT_TRANSPORT_HOST: &str = "127.0.0.1";
 
 /// Default port for the HTTP transport server.
-pub const DEFAULT_HTTP_PORT: u16 = 8080;
+pub const DEFAULT_TRANSPORT_PORT: u16 = 8080;
 
 /// HTTP transport configuration.
 ///
@@ -97,10 +97,10 @@ pub const DEFAULT_HTTP_PORT: u16 = 8080;
 #[derive(Deserialize)]
 pub struct HttpTransportConfig {
     /// Listen address (default: `127.0.0.1`).
-    #[serde(default = "default_http_host")]
+    #[serde(default = "default_transport_host")]
     pub host: String,
     /// Listen port (default: `8080`).
-    #[serde(default = "default_http_port")]
+    #[serde(default = "default_transport_port")]
     pub port: u16,
     /// Public URL of the server (e.g. `https://mcp.example.com`).
     ///
@@ -129,8 +129,8 @@ pub struct HttpTransportConfig {
 impl Default for HttpTransportConfig {
     fn default() -> Self {
         Self {
-            host: DEFAULT_HTTP_HOST.to_string(),
-            port: DEFAULT_HTTP_PORT,
+            host: DEFAULT_TRANSPORT_HOST.to_string(),
+            port: DEFAULT_TRANSPORT_PORT,
             public_url: None,
             onshape_client_id: None,
             onshape_client_secret: None,
@@ -452,13 +452,13 @@ const fn default_http_timeout() -> Duration {
 }
 
 /// Default host for the HTTP transport.
-fn default_http_host() -> String {
-    DEFAULT_HTTP_HOST.to_string()
+fn default_transport_host() -> String {
+    DEFAULT_TRANSPORT_HOST.to_string()
 }
 
 /// Default port for the HTTP transport.
-const fn default_http_port() -> u16 {
-    DEFAULT_HTTP_PORT
+const fn default_transport_port() -> u16 {
+    DEFAULT_TRANSPORT_PORT
 }
 
 /// Deserializes a duration from either an integer (seconds) or a string like "5m", "300s".
