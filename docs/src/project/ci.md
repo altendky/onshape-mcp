@@ -11,15 +11,65 @@ This section documents the manual configuration required in GitHub repository se
 | Require PR before merge | Yes |
 | Required approvals | 0 (increase when contributors join) |
 | Require status checks | Yes — `all` job only |
-| Require merge queue | Yes |
-| Require branches up-to-date | No (merge queue handles this) |
+| Require merge queue | No (Mergify handles this) |
+| Require branches up-to-date | No (Mergify merge queue handles this) |
 | Show update branch button | Always |
 | Require signed commits | Yes |
 | Include administrators | Yes |
 
-### Merge Queue
+### Merge Queue (Mergify)
 
-Merge queue enabled to guarantee main stays green. PRs merge only after passing CI on the queued merge commit. This replaces the need for "require branches to be up-to-date" which can cause CI thrashing.
+[Mergify](https://mergify.com) provides merge queue functionality since GitHub's native merge
+queue is not available on personal repositories. Mergify is configured via `.mergify.yml` in
+the repository root.
+
+**How it works:**
+
+1. Apply the `queue` label to a PR
+2. Once CI passes on the PR branch (`check-success = all`), Mergify auto-queues it
+3. Mergify creates a temporary branch merging the PR into `main` and runs CI again
+4. If CI passes on the merged branch, Mergify merges the PR
+5. If CI fails, the PR is dequeued
+
+This two-step CI pattern catches real errors on the PR itself (before entering the queue)
+while only infrastructure flakes need to be retried in the queue.
+
+**Flaky failure handling:**
+
+Mergify CI Insights Auto-Retry is configured (via the Mergify dashboard) to automatically
+retry failed CI jobs up to 2 times. This handles transient infrastructure failures (runner
+provisioning, network timeouts, rate limits) without manual intervention.
+
+| Setting | Value |
+| ------- | ----- |
+| Configuration | `.mergify.yml` |
+| Queue entry | `queue` label + CI green |
+| Merge gate | `check-success = all` |
+| Merge method | Merge commits |
+| Checks timeout | 90 minutes |
+| Parallel checks | 1 (no speculative checks) |
+| Auto-retry | 2 retries (dashboard-configured) |
+
+### CI Insights
+
+Mergify CI Insights provides test-level analytics by ingesting JUnit XML reports from CI runs.
+This enables flaky test detection, auto-retry for infrastructure failures, and test performance
+tracking.
+
+**Test report upload:**
+
+The Rust test workflow (`reflow-rust.yml`) uploads JUnit XML reports to Mergify CI Insights
+after each test job. Nextest generates JUnit output via the `ci` profile configured in
+`.config/nextest.toml`. The `mergifyio/gha-mergify-ci` action uploads the report using the
+`MERGIFY_TOKEN` secret.
+
+| Setting | Value |
+| ------- | ----- |
+| Nextest config | `.config/nextest.toml` |
+| Nextest profile | `ci` |
+| JUnit output path | `target/nextest/ci/junit.xml` |
+| Upload action | `mergifyio/gha-mergify-ci@v8` |
+| Secret | `MERGIFY_TOKEN` (application key with `ci` scope) |
 
 ### Merge Strategy
 
@@ -61,6 +111,7 @@ Store credentials in repository secrets:
 
 | File | Purpose |
 | ------ | --------- |
+| `.mergify.yml` | Mergify merge queue and autoqueue configuration |
 | `.github/workflows/ci.yml` | Entry point for CI and releases, calls reusable workflows, `all` job aggregation |
 | `.github/workflows/reflow-library.yml` | Reusable workflow that outputs matrix configuration |
 | `.github/workflows/reflow-pre-commit.yml` | Reusable workflow for pre-commit checks (5 platform jobs) |
@@ -82,7 +133,6 @@ The top-level `ci.yml` workflow uses a concurrency group to cancel redundant PR 
 | `pull_request` | `workflow_ref` + PR number | New push cancels previous run |
 | `push` (main) | `run_id` (unique) | Runs are never cancelled |
 | `push` (tag) | `run_id` (unique) | Runs are never cancelled |
-| `merge_group` | `run_id` (unique) | Runs are never cancelled |
 
 The concurrency group is only set on `ci.yml`. Reusable workflows (`reflow-*.yml`) inherit cancellation from the caller — when `ci.yml` is cancelled, all its called workflows are cancelled along with it.
 
@@ -94,7 +144,7 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 ┌──────────────────────────────────────────────────────────────────┐
 │           ci.yml (entry point for CI and releases)                │
 ├──────────────────────────────────────────────────────────────────┤
-│  triggers: push (main, v* tags), pull_request, merge_group       │
+│  triggers: push (main, v* tags), pull_request                     │
 │                                                                   │
 │  jobs:                                                            │
 │    pre-commit:                                                    │
@@ -323,6 +373,8 @@ environments, verifying that statically-linked musl binaries work correctly on g
 
 | Tool | Purpose |
 | ------ | --------- |
+| [Mergify](https://mergify.com) | Merge queue, autoqueue, CI Insights auto-retry |
+| [mergifyio/gha-mergify-ci](https://github.com/mergifyio/gha-mergify-ci) | Upload JUnit test results to Mergify CI Insights |
 | [pre-commit/action](https://github.com/pre-commit/action) | Runs pre-commit hooks in CI |
 | [re-actors/alls-green](https://github.com/re-actors/alls-green) | Aggregate job status |
 | [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) | Rust toolchain installation |

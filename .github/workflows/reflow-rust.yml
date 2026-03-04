@@ -174,4 +174,11 @@ jobs:
 
       - name: Run tests
         if: matrix.libc.matrix != 'musl'
-        run: cargo-nextest nextest run --archive-file nextest-archive.tar.zst --workspace-remap .
+        run: cargo-nextest nextest run --profile ci --archive-file nextest-archive.tar.zst --workspace-remap .
+
+      - name: Upload test results to Mergify CI Insights
+        if: success() || failure()
+        uses: mergifyio/gha-mergify-ci@v8
+        with:
+          token: ${{ secrets.MERGIFY_TOKEN }}
+          report_path: target/nextest/ci/junit.xml
