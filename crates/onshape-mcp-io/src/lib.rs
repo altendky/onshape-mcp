@@ -1510,10 +1510,12 @@ pub async fn run_http(
     let app = oauth_server::oauth_router(oauth_state).merge(mcp_router);
 
     // Bind and serve. Bracket IPv6 hosts to produce valid socket addresses.
-    let bind_addr = if host.contains(':') {
-        format!("[{host}]:{port}")
+    // Normalize by stripping any existing brackets so we don't double-bracket.
+    let normalized_host = host.trim_start_matches('[').trim_end_matches(']');
+    let bind_addr = if normalized_host.contains(':') {
+        format!("[{normalized_host}]:{port}")
     } else {
-        format!("{host}:{port}")
+        format!("{normalized_host}:{port}")
     };
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     eprintln!("HTTP transport listening on {bind_addr}");
