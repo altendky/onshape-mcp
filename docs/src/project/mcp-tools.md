@@ -18,6 +18,7 @@ All MCP tools use the `onshape_` prefix to avoid collisions with other MCP serve
 | -------- | --------- | --------- |
 | `onshape_api_` | Onshape REST API operations | `onshape_api_search` |
 | `onshape_mcp_` | MCP server administration | `onshape_mcp_auth_status` |
+| `onshape_` | Higher-level convenience tools | `onshape_screenshot` |
 
 ## Transport Support
 
@@ -68,6 +69,7 @@ These are advisory hints for MCP clients, not security enforcement.
 | `onshape_api_search` | true | false |
 | `onshape_api_explain` | true | false |
 | `onshape_api_call` | false | true |
+| `onshape_screenshot` | true | false |
 
 ## Server Administration Tools
 
@@ -218,6 +220,68 @@ All endpoint metadata comes from the Onshape OpenAPI specification (`crates/onsh
 | Server URL | Parsed from `servers[0].url` in the spec (currently `v14`, the API base-path version) |
 | License | Apache 2.0 (see `crates/onshape-mcp-io/ONSHAPE-API-LICENSE`) |
 | Loading | Embedded at compile time via `include_str!()` |
+
+## Convenience Tools
+
+Higher-level tools that wrap Onshape API endpoints with agent-friendly interfaces.
+
+### `onshape_screenshot`
+
+Take a screenshot of a Part Studio. Renders a single view server-side and saves the PNG to disk. Returns the file path (not image data), so the agent never needs to handle base64. Call multiple times for multiple views.
+
+Wraps the `getPartStudioShadedViews` endpoint with these improvements:
+
+- **Always uses `pixelSize=0`** (auto-fit) so parts fill the image
+- **Angular view control** via named presets or azimuth/elevation instead of raw 3x4 matrices
+- **Automatic base64 decode and file save**
+- **Computed view matrix included in the response** for debugging
+
+**Input:**
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `did` | `string` | Yes | Document ID |
+| `wvm` | `string` | Yes | `"w"`, `"v"`, or `"m"` |
+| `wvmid` | `string` | Yes | Workspace/Version/Microversion ID |
+| `eid` | `string` | Yes | Part Studio element ID |
+| `view` | `object` | Yes | View specification (see below) |
+| `output_path` | `string` | Yes | Full file path for the output PNG (e.g., `"/tmp/screenshot.png"`) |
+| `output_height` | `integer` | No | Image height in pixels (default: 500) |
+| `output_width` | `integer` | No | Image width in pixels (default: 500) |
+| `edges` | `string` | No | `"show"` or `"hide"` (default: `"show"`) |
+| `use_anti_aliasing` | `boolean` | No | Default: false |
+| `show_all_parts` | `boolean` | No | Default: false |
+| `include_surfaces` | `boolean` | No | Default: false |
+| `include_wires` | `boolean` | No | Default: false |
+
+**View Specification** (tagged enum, discriminated by `type`):
+
+```json
+{"type": "preset", "name": "front"}
+{"type": "preset", "name": "isometric"}
+{"type": "angles", "azimuth": 45, "elevation": 30}
+```
+
+Available presets: `front`, `back`, `top`, `bottom`, `left`, `right`, `isometric`.
+
+For angles: `azimuth` is horizontal orbit in degrees (0=front, 90=right, 180=back, 270=left). `elevation` is vertical tilt above horizontal (-90 to 90).
+
+**Output:** Two content blocks:
+
+1. Structured JSON:
+
+```json
+{
+  "path": "/tmp/screenshot.png",
+  "view": "front",
+  "view_matrix": "front",
+  "status": "ok"
+}
+```
+
+1. Human-readable summary with file path, view label, and computed view matrix.
+
+**Effect Pattern:** Uses `OnshapeApiRequestThen` → `WriteFiles`. The core crate builds the API request, the I/O layer executes it, the core callback decodes the base64 image (pure computation) and returns a `WriteFiles` effect, and the I/O layer writes the file to disk. The core's format callback then produces the final result from the write outcome.
 
 ## Tool Parameters
 

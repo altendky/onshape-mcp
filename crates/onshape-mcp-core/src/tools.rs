@@ -10,7 +10,10 @@
 //! - `OnshapeApiRequest` — the tool needs an HTTP request executed by the I/O layer
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
+
+use base64::Engine;
 
 use rmcp::{
     ErrorData,
@@ -37,6 +40,42 @@ pub enum SideEffect {
     /// Update the runtime credential validation state.
     UpdateValidation(ValidationState),
 }
+
+// ============================================================================
+// File Write Effect Types
+// ============================================================================
+
+/// A file to be written to disk by the I/O layer.
+///
+/// This is a pure data description of the write — no I/O is performed here.
+pub struct FileWrite {
+    /// The target file path.
+    pub path: PathBuf,
+    /// The file contents (raw bytes).
+    pub data: Vec<u8>,
+}
+
+/// The outcome of a single file write attempt, reported by the I/O layer.
+pub enum FileWriteResult {
+    /// The file was written successfully.
+    Success {
+        /// The path that was written.
+        path: PathBuf,
+    },
+    /// The file write failed.
+    Error {
+        /// The path that was attempted.
+        path: PathBuf,
+        /// Human-readable error message.
+        message: String,
+    },
+}
+
+/// Callback type for formatting the result of file writes.
+///
+/// Receives the outcomes of each file write and produces the final
+/// [`CallToolResult`] to return to the caller.
+pub type WriteFilesFormatter = Box<dyn FnOnce(&[FileWriteResult]) -> CallToolResult + Send>;
 
 /// How the OAuth login flow should operate.
 ///
@@ -95,6 +134,17 @@ pub enum ToolResult {
     OAuthLoginFlow {
         /// The login mode (proxy or direct).
         mode: LoginMode,
+    },
+    /// Tool needs files written to disk.
+    ///
+    /// The I/O layer writes each [`FileWrite`] and reports outcomes via
+    /// [`FileWriteResult`]. The `format` callback then produces the final
+    /// [`CallToolResult`] based on what succeeded or failed.
+    WriteFiles {
+        /// Files to write.
+        files: Vec<FileWrite>,
+        /// Callback that formats the final tool result from write outcomes.
+        format: WriteFilesFormatter,
     },
 }
 
@@ -172,6 +222,7 @@ pub fn list_tools() -> Vec<Tool> {
         tool_api_call_def(),
         tool_list_resources_def(),
         tool_read_resource_def(),
+        tool_screenshot_def(),
     ]
 }
 
@@ -220,6 +271,13 @@ pub fn call_tool(
         }
         "onshape_list_resources" => ToolResult::Immediate(Ok(call_list_resources())),
         "onshape_read_resource" => ToolResult::Immediate(call_read_resource(arguments)),
+        "onshape_screenshot" => {
+            let spec = match require_spec(spec) {
+                Ok(s) => s,
+                Err(e) => return ToolResult::Immediate(Err(e)),
+            };
+            call_screenshot(arguments, spec)
+        }
         _ => ToolResult::Immediate(Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
             format!("Unknown tool: {name}"),
@@ -308,6 +366,91 @@ pub struct ReadResourceInput {
     /// The URI of the resource to read (e.g., `"insights:shaded-views"`).
     /// Use `onshape_list_resources` to discover available URIs.
     pub uri: String,
+}
+
+/// Input schema for `onshape_screenshot`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ScreenshotInput {
+    /// Document ID.
+    pub did: String,
+    /// Context type: `"w"` (workspace), `"v"` (version), or `"m"` (microversion).
+    pub wvm: String,
+    /// Workspace, version, or microversion ID.
+    pub wvmid: String,
+    /// Part Studio element ID.
+    pub eid: String,
+
+    /// View specification (named preset or custom angles).
+    pub view: ViewSpec,
+
+    /// Full file path for the output PNG (e.g., `"/tmp/screenshot.png"`).
+    pub output_path: String,
+
+    /// Image height in pixels. Defaults to 500.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_height: Option<u32>,
+    /// Image width in pixels. Defaults to 500.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_width: Option<u32>,
+    /// Edge visibility: `"show"` (default) or `"hide"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edges: Option<String>,
+    /// Enable anti-aliasing for smoother edges. Defaults to false.
+    /// Can cause failures on very large images.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_anti_aliasing: Option<bool>,
+    /// Show all parts regardless of user visibility settings. Defaults to false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_all_parts: Option<bool>,
+    /// Include surfaces (only effective when `show_all_parts` is true). Defaults to false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_surfaces: Option<bool>,
+    /// Include wire bodies. Defaults to false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_wires: Option<bool>,
+}
+
+/// A view specification for a screenshot. Either a named preset or custom
+/// azimuth/elevation angles.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type")]
+pub enum ViewSpec {
+    /// A named view preset.
+    #[serde(rename = "preset")]
+    Preset {
+        /// The preset name.
+        name: ViewPreset,
+    },
+    /// Custom view angles (orbit around the model).
+    #[serde(rename = "angles")]
+    Angles {
+        /// Horizontal orbit angle in degrees. 0 = front, 90 = right,
+        /// 180 = back, 270 = left.
+        azimuth: f64,
+        /// Vertical tilt in degrees above the horizontal plane.
+        /// 0 = horizontal, 90 = top-down, -90 = bottom-up.
+        elevation: f64,
+    },
+}
+
+/// Named view presets for Part Studio screenshots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewPreset {
+    /// Front view (looking along -Y).
+    Front,
+    /// Back view (looking along +Y).
+    Back,
+    /// Top view (looking along -Z).
+    Top,
+    /// Bottom view (looking along +Z).
+    Bottom,
+    /// Left view (looking along +X).
+    Left,
+    /// Right view (looking along -X).
+    Right,
+    /// Isometric view (~azimuth 45°, elevation 35.26°).
+    Isometric,
 }
 
 // ============================================================================
@@ -759,6 +902,400 @@ fn call_read_resource(arguments: Option<&Map<String, Value>>) -> Result<CallTool
     }
 }
 
+// ============================================================================
+// Screenshot Tool
+// ============================================================================
+
+/// Compute the `viewMatrix` parameter string for a [`ViewSpec`].
+///
+/// Returns either a named preset string (e.g. `"front"`) or a comma-separated
+/// 12-number rotation matrix for the Onshape shaded views API.
+///
+/// The Onshape view matrix is a 3×4 row-major matrix that transforms model
+/// coordinates to view coordinates:
+/// - View x = right, y = up, z = toward viewer
+/// - Model x = right, y = forward (into screen in front view), z = up
+fn view_matrix_string(spec: &ViewSpec) -> String {
+    match spec {
+        ViewSpec::Preset { name } => match name {
+            ViewPreset::Front => "front".to_string(),
+            ViewPreset::Back => "back".to_string(),
+            ViewPreset::Top => "top".to_string(),
+            ViewPreset::Bottom => "bottom".to_string(),
+            ViewPreset::Left => "left".to_string(),
+            ViewPreset::Right => "right".to_string(),
+            ViewPreset::Isometric => {
+                // Approximate isometric: azimuth=45°, elevation=35.264° (arctan(1/√2))
+                view_matrix_from_angles(45.0, 35.264_389_682_754_654)
+            }
+        },
+        ViewSpec::Angles { azimuth, elevation } => view_matrix_from_angles(*azimuth, *elevation),
+    }
+}
+
+/// Compute a 12-number view matrix string from azimuth and elevation angles.
+///
+/// - `azimuth`: horizontal orbit in degrees (0 = front, 90 = right, 180 = back, 270 = left)
+/// - `elevation`: vertical tilt in degrees above horizontal (0 = level, 90 = top-down)
+///
+/// The matrix is returned as 12 comma-separated floats (3 rows × 4 columns, row-major).
+///
+/// ## Derivation
+///
+/// We build a camera rotation that orbits around the model's vertical axis (Z-up)
+/// then tilts up/down. The Onshape view matrix M transforms model coords to view
+/// coords where (x=right, y=up, z=toward-viewer).
+///
+/// Starting from the front view (looking along -Y):
+/// 1. Rotate around Z by azimuth (camera orbits horizontally)
+/// 2. Tilt by elevation (camera looks up/down)
+///
+/// The resulting view axes (expressed in model space) are:
+/// - `view_x` (right): `(-sin(a), cos(a), 0)` — perpendicular to look direction in XY plane
+/// - `view_y` (up):    `(-cos(a)*sin(e), -sin(a)*sin(e), cos(e))` — tilted up
+/// - `view_z` (toward viewer): `(cos(a)*cos(e), sin(a)*cos(e), sin(e))` — look direction negated
+///
+/// The view matrix rows are `[view_x | 0]`, `[view_y | 0]`, `[view_z | 0]`
+/// (no translation — the API auto-centers on the model).
+fn view_matrix_from_angles(azimuth_deg: f64, elevation_deg: f64) -> String {
+    let a = azimuth_deg.to_radians();
+    let e = elevation_deg.to_radians();
+
+    let (sin_a, cos_a) = a.sin_cos();
+    let (sin_e, cos_e) = e.sin_cos();
+
+    // Row 1: view X axis (right) in model coords
+    let r00 = -sin_a;
+    let r01 = cos_a;
+    let r02 = 0.0;
+
+    // Row 2: view Y axis (up) in model coords
+    let r10 = -cos_a * sin_e;
+    let r11 = -sin_a * sin_e;
+    let r12 = cos_e;
+
+    // Row 3: view Z axis (toward viewer) in model coords
+    let r20 = cos_a * cos_e;
+    let r21 = sin_a * cos_e;
+    let r22 = sin_e;
+
+    format!("{r00},{r01},{r02},0,{r10},{r11},{r12},0,{r20},{r21},{r22},0")
+}
+
+/// Human-readable label for a view spec, used in result messages.
+fn view_label(spec: &ViewSpec) -> String {
+    match spec {
+        ViewSpec::Preset { name } => match name {
+            ViewPreset::Front => "front".to_string(),
+            ViewPreset::Back => "back".to_string(),
+            ViewPreset::Top => "top".to_string(),
+            ViewPreset::Bottom => "bottom".to_string(),
+            ViewPreset::Left => "left".to_string(),
+            ViewPreset::Right => "right".to_string(),
+            ViewPreset::Isometric => "isometric".to_string(),
+        },
+        ViewSpec::Angles { azimuth, elevation } => {
+            format!("azimuth={azimuth}\u{00b0}, elevation={elevation}\u{00b0}")
+        }
+    }
+}
+
+#[allow(clippy::expect_used)]
+fn tool_screenshot_def() -> Tool {
+    let schema = schemars::schema_for!(ScreenshotInput);
+    let input_schema: Value = serde_json::to_value(schema)
+        .expect("ScreenshotInput schema serialization should never fail");
+    let input_schema = input_schema
+        .as_object()
+        .cloned()
+        .expect("Schema should be a JSON object");
+
+    Tool::new(
+        "onshape_screenshot",
+        "Take a screenshot of a Part Studio. Renders a single view server-side \
+         and saves the PNG to disk. Returns the file path. Always uses auto-fit \
+         (pixelSize=0) so parts fill the image. Accepts named view presets \
+         (front, back, top, bottom, left, right, isometric) or custom \
+         azimuth/elevation angles. Call multiple times for multiple views.",
+        Arc::new(input_schema),
+    )
+    .annotate(ToolAnnotations::new().read_only(false).destructive(false))
+}
+
+fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolResult {
+    const MAX_SCREENSHOT_DIM: u32 = 4096;
+
+    let input: ScreenshotInput = match parse_arguments(arguments) {
+        Ok(input) => input,
+        Err(e) => return tool_input_error(e.message),
+    };
+
+    // --- Validate inputs ---
+
+    if let Some(ref edges) = input.edges
+        && edges != "show"
+        && edges != "hide"
+    {
+        return tool_input_error(format!(
+            "invalid edges value \"{edges}\": expected \"show\" or \"hide\""
+        ));
+    }
+
+    let valid_wvm = ["w", "v", "m"];
+    if !valid_wvm.contains(&input.wvm.as_str()) {
+        return tool_input_error(format!(
+            "invalid wvm value \"{}\": expected \"w\", \"v\", or \"m\"",
+            input.wvm
+        ));
+    }
+
+    for (name, value) in [
+        ("did", input.did.as_str()),
+        ("wvmid", input.wvmid.as_str()),
+        ("eid", input.eid.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return tool_input_error(format!("{name} must not be empty"));
+        }
+    }
+
+    // --- Build the API request ---
+
+    let view_matrix = view_matrix_string(&input.view);
+
+    let path_params: HashMap<String, String> = [
+        ("did".to_string(), input.did.clone()),
+        ("wvm".to_string(), input.wvm.clone()),
+        ("wvmid".to_string(), input.wvmid.clone()),
+        ("eid".to_string(), input.eid.clone()),
+    ]
+    .into_iter()
+    .collect();
+
+    let mut query_params: HashMap<String, String> = HashMap::new();
+    query_params.insert("viewMatrix".to_string(), view_matrix.clone());
+    query_params.insert("pixelSize".to_string(), "0".to_string());
+
+    if let Some(h) = input.output_height {
+        if h == 0 || h > MAX_SCREENSHOT_DIM {
+            return tool_input_error(format!(
+                "invalid output_height {h}: expected 1..={MAX_SCREENSHOT_DIM}"
+            ));
+        }
+        query_params.insert("outputHeight".to_string(), h.to_string());
+    }
+    if let Some(w) = input.output_width {
+        if w == 0 || w > MAX_SCREENSHOT_DIM {
+            return tool_input_error(format!(
+                "invalid output_width {w}: expected 1..={MAX_SCREENSHOT_DIM}"
+            ));
+        }
+        query_params.insert("outputWidth".to_string(), w.to_string());
+    }
+    if let Some(ref edges) = input.edges {
+        query_params.insert("edges".to_string(), edges.clone());
+    }
+    if let Some(aa) = input.use_anti_aliasing {
+        query_params.insert("useAntiAliasing".to_string(), aa.to_string());
+    }
+    if let Some(sap) = input.show_all_parts {
+        query_params.insert("showAllParts".to_string(), sap.to_string());
+    }
+    if let Some(is) = input.include_surfaces {
+        query_params.insert("includeSurfaces".to_string(), is.to_string());
+    }
+    if let Some(iw) = input.include_wires {
+        query_params.insert("includeWires".to_string(), iw.to_string());
+    }
+
+    // --- Prepare data for the callback closure ---
+
+    let label = view_label(&input.view);
+    let output_path = PathBuf::from(&input.output_path);
+    if input.output_path.trim().is_empty() || output_path.file_name().is_none() {
+        return tool_input_error("output_path must include a file name");
+    }
+    if output_path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return tool_input_error("output_path must not contain '..' segments");
+    }
+
+    let request = match spec.build_request(
+        "getPartStudioShadedViews",
+        &path_params,
+        &query_params,
+        None,
+    ) {
+        Ok(req) => req,
+        Err(e) => {
+            return tool_input_error(format!("failed to build shaded views request: {e}"));
+        }
+    };
+
+    // --- Return the two-phase effect: API call, then file writes ---
+
+    ToolResult::OnshapeApiRequestThen {
+        request,
+        then: Box::new(move |status, body| {
+            process_screenshot_response(status, body, output_path, label, view_matrix)
+        }),
+    }
+}
+
+/// Process the shaded views API response: decode the base64 image and produce
+/// a [`ToolResult::WriteFiles`] effect.
+///
+/// Extracted from [`call_screenshot`] to keep function lengths manageable.
+fn process_screenshot_response(
+    status: u16,
+    body: &str,
+    output_path: PathBuf,
+    label: String,
+    view_matrix: String,
+) -> (ToolResult, Vec<SideEffect>) {
+    if !(200..300).contains(&status) {
+        return (
+            ToolResult::Immediate(Ok(CallToolResult {
+                content: vec![Content::text(format!(
+                    "Shaded views API error (HTTP {status}): {body}"
+                ))],
+                is_error: Some(true),
+                structured_content: None,
+                meta: None,
+            })),
+            vec![],
+        );
+    }
+
+    // Parse the response JSON.
+    let response: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                tool_input_error(format!("failed to parse shaded views response: {e}")),
+                vec![],
+            );
+        }
+    };
+
+    // Extract the first image from the images array.
+    // Response shape: { "images": ["base64string"] }
+    let Some(images) = response.get("images").and_then(Value::as_array) else {
+        return (
+            tool_input_error("shaded views response missing \"images\" array"),
+            vec![],
+        );
+    };
+
+    let Some(first_image) = images.first() else {
+        return (
+            tool_input_error("shaded views response returned empty \"images\" array"),
+            vec![],
+        );
+    };
+
+    let Some(b64_str) = first_image.as_str() else {
+        return (
+            tool_input_error("first image in response is not a string"),
+            vec![],
+        );
+    };
+
+    // Decode base64 image into bytes.
+    let engine = base64::engine::general_purpose::STANDARD;
+    let data = match engine.decode(b64_str) {
+        Ok(d) => d,
+        Err(e) => {
+            return (
+                tool_input_error(format!("failed to decode base64 image: {e}")),
+                vec![],
+            );
+        }
+    };
+
+    let file_write = FileWrite {
+        path: output_path,
+        data,
+    };
+
+    (
+        ToolResult::WriteFiles {
+            files: vec![file_write],
+            format: Box::new(move |results: &[FileWriteResult]| {
+                let Some(result) = results.first() else {
+                    return CallToolResult {
+                        content: vec![Content::text("internal error: no file write results")],
+                        is_error: Some(true),
+                        structured_content: None,
+                        meta: None,
+                    };
+                };
+                format_screenshot_result(result, &label, &view_matrix)
+            }),
+        },
+        vec![],
+    )
+}
+
+/// Format the final [`CallToolResult`] for the screenshot tool.
+///
+/// Produces both structured JSON and a human-readable summary.
+fn format_screenshot_result(
+    result: &FileWriteResult,
+    label: &str,
+    view_matrix: &str,
+) -> CallToolResult {
+    match result {
+        FileWriteResult::Success { path } => {
+            let structured = serde_json::json!({
+                "path": path.display().to_string(),
+                "view": label,
+                "view_matrix": view_matrix,
+                "status": "ok"
+            });
+            let summary = format!(
+                "Saved screenshot: {} ({label}, viewMatrix={view_matrix})",
+                path.display()
+            );
+            CallToolResult {
+                content: vec![
+                    Content::json(&structured)
+                        .unwrap_or_else(|_| Content::text(structured.to_string())),
+                    Content::text(summary),
+                ],
+                is_error: Some(false),
+                structured_content: None,
+                meta: None,
+            }
+        }
+        FileWriteResult::Error { path, message } => {
+            let structured = serde_json::json!({
+                "path": path.display().to_string(),
+                "view": label,
+                "view_matrix": view_matrix,
+                "status": "error",
+                "error": message
+            });
+            let summary = format!(
+                "FAILED to save screenshot: {} ({label}, viewMatrix={view_matrix}) -- {message}",
+                path.display()
+            );
+            CallToolResult {
+                content: vec![
+                    Content::json(&structured)
+                        .unwrap_or_else(|_| Content::text(structured.to_string())),
+                    Content::text(summary),
+                ],
+                is_error: Some(true),
+                structured_content: None,
+                meta: None,
+            }
+        }
+    }
+}
+
 /// Unwrap the `OpenAPI` spec reference or return an internal error.
 fn require_spec(spec: Option<&OpenApiSpec>) -> Result<&OpenApiSpec, ErrorData> {
     spec.ok_or_else(|| ErrorData::new(ErrorCode::INTERNAL_ERROR, "OpenAPI spec not loaded", None))
@@ -900,6 +1437,9 @@ mod tests {
             ToolResult::OAuthLoginFlow { .. } => {
                 panic!("expected Immediate, got OAuthLoginFlow")
             }
+            ToolResult::WriteFiles { .. } => {
+                panic!("expected Immediate, got WriteFiles")
+            }
         }
     }
 
@@ -913,6 +1453,9 @@ mod tests {
             }
             ToolResult::OAuthLoginFlow { .. } => {
                 panic!("expected Immediate Err, got OAuthLoginFlow")
+            }
+            ToolResult::WriteFiles { .. } => {
+                panic!("expected Immediate Err, got WriteFiles")
             }
         }
     }
@@ -955,6 +1498,9 @@ mod tests {
             }
             ToolResult::OAuthLoginFlow { .. } => {
                 panic!("expected ApiRequest, got OAuthLoginFlow")
+            }
+            ToolResult::WriteFiles { .. } => {
+                panic!("expected ApiRequest, got WriteFiles")
             }
         }
     }
@@ -1004,9 +1550,9 @@ mod tests {
     }
 
     #[test]
-    fn list_tools_has_seven_tools() {
+    fn list_tools_has_eight_tools() {
         let tools = list_tools();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 8);
     }
 
     // --- auth_status tests ---
@@ -1625,6 +2171,9 @@ mod tests {
             ToolResult::OAuthLoginFlow { .. } => {
                 panic!("expected ApiRequestThen, got OAuthLoginFlow")
             }
+            ToolResult::WriteFiles { .. } => {
+                panic!("expected ApiRequestThen, got WriteFiles")
+            }
         }
     }
 
@@ -1642,6 +2191,9 @@ mod tests {
             }
             ToolResult::OnshapeApiRequestThen { .. } => {
                 panic!("expected OAuthLoginFlow, got ApiRequestThen")
+            }
+            ToolResult::WriteFiles { .. } => {
+                panic!("expected OAuthLoginFlow, got WriteFiles")
             }
         }
     }
@@ -2046,5 +2598,611 @@ mod tests {
             None,
         ));
         assert!(msg.contains("invalid"));
+    }
+
+    // ====================================================================
+    // Screenshot Tool Tests
+    // ====================================================================
+
+    #[allow(clippy::type_complexity)]
+    fn assert_write_files(result: ToolResult) -> (Vec<FileWrite>, WriteFilesFormatter) {
+        match result {
+            ToolResult::WriteFiles { files, format } => (files, format),
+            ToolResult::Immediate(Ok(_)) => panic!("expected WriteFiles, got Immediate Ok"),
+            ToolResult::Immediate(Err(e)) => {
+                panic!("expected WriteFiles, got Immediate Err: {e:?}")
+            }
+            ToolResult::OnshapeApiRequest { .. } => {
+                panic!("expected WriteFiles, got ApiRequest")
+            }
+            ToolResult::OnshapeApiRequestThen { .. } => {
+                panic!("expected WriteFiles, got ApiRequestThen")
+            }
+            ToolResult::OAuthLoginFlow { .. } => {
+                panic!("expected WriteFiles, got OAuthLoginFlow")
+            }
+        }
+    }
+
+    // --- View matrix computation tests ---
+
+    #[test]
+    fn view_matrix_front_preset_is_named() {
+        let spec = ViewSpec::Preset {
+            name: ViewPreset::Front,
+        };
+        assert_eq!(view_matrix_string(&spec), "front");
+    }
+
+    #[test]
+    fn view_matrix_back_preset_is_named() {
+        let spec = ViewSpec::Preset {
+            name: ViewPreset::Back,
+        };
+        assert_eq!(view_matrix_string(&spec), "back");
+    }
+
+    #[test]
+    fn view_matrix_top_preset_is_named() {
+        let spec = ViewSpec::Preset {
+            name: ViewPreset::Top,
+        };
+        assert_eq!(view_matrix_string(&spec), "top");
+    }
+
+    #[test]
+    fn view_matrix_bottom_preset_is_named() {
+        let spec = ViewSpec::Preset {
+            name: ViewPreset::Bottom,
+        };
+        assert_eq!(view_matrix_string(&spec), "bottom");
+    }
+
+    #[test]
+    fn view_matrix_left_preset_is_named() {
+        let spec = ViewSpec::Preset {
+            name: ViewPreset::Left,
+        };
+        assert_eq!(view_matrix_string(&spec), "left");
+    }
+
+    #[test]
+    fn view_matrix_right_preset_is_named() {
+        let spec = ViewSpec::Preset {
+            name: ViewPreset::Right,
+        };
+        assert_eq!(view_matrix_string(&spec), "right");
+    }
+
+    #[test]
+    fn view_matrix_isometric_is_computed() {
+        let spec = ViewSpec::Preset {
+            name: ViewPreset::Isometric,
+        };
+        let matrix = view_matrix_string(&spec);
+        // Should be a 12-number comma-separated string, not a named preset.
+        assert!(!matrix.chars().all(char::is_alphabetic));
+        let parts: Vec<&str> = matrix.split(',').collect();
+        assert_eq!(parts.len(), 12, "view matrix should have 12 numbers");
+        for part in parts {
+            part.parse::<f64>()
+                .expect("each part should be a valid float");
+        }
+    }
+
+    #[test]
+    fn view_matrix_front_angles_matches_front_view() {
+        // Azimuth=0, elevation=0 should produce the front view.
+        // Front view: x right, z up, -y toward viewer.
+        // Row 1 (view X in model): (0, 1, 0) — but let's check the math:
+        //   r00 = -sin(0) = 0, r01 = cos(0) = 1, r02 = 0
+        // Row 2 (view Y in model):
+        //   r10 = -cos(0)*sin(0) = 0, r11 = -sin(0)*sin(0) = 0, r12 = cos(0) = 1
+        // Row 3 (view Z in model):
+        //   r20 = cos(0)*cos(0) = 1, r21 = sin(0)*cos(0) = 0, r22 = sin(0) = 0
+        let matrix = view_matrix_from_angles(0.0, 0.0);
+        let parts: Vec<f64> = matrix
+            .split(',')
+            .map(|s| s.parse().expect("should be a float"))
+            .collect();
+        assert_eq!(parts.len(), 12);
+
+        // Row 1: view X = (0, 1, 0) in model space
+        assert!((parts[0] - 0.0).abs() < 1e-10);
+        assert!((parts[1] - 1.0).abs() < 1e-10);
+        assert!((parts[2] - 0.0).abs() < 1e-10);
+        assert!((parts[3] - 0.0).abs() < 1e-10);
+
+        // Row 2: view Y = (0, 0, 1) in model space
+        assert!((parts[4] - 0.0).abs() < 1e-10);
+        assert!((parts[5] - 0.0).abs() < 1e-10);
+        assert!((parts[6] - 1.0).abs() < 1e-10);
+        assert!((parts[7] - 0.0).abs() < 1e-10);
+
+        // Row 3: view Z = (1, 0, 0) in model space
+        assert!((parts[8] - 1.0).abs() < 1e-10);
+        assert!((parts[9] - 0.0).abs() < 1e-10);
+        assert!((parts[10] - 0.0).abs() < 1e-10);
+        assert!((parts[11] - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn view_matrix_top_angles_matches_identity() {
+        // Azimuth=0, elevation=90 should correspond to looking straight down
+        // (top view). The Onshape docs say the identity matrix is the top view.
+        let matrix = view_matrix_from_angles(0.0, 90.0);
+        let parts: Vec<f64> = matrix
+            .split(',')
+            .map(|s| s.parse().expect("should be a float"))
+            .collect();
+        assert_eq!(parts.len(), 12);
+
+        // Row 1: view X = (0, 1, 0)
+        assert!((parts[0] - 0.0).abs() < 1e-10);
+        assert!((parts[1] - 1.0).abs() < 1e-10);
+        assert!((parts[2] - 0.0).abs() < 1e-10);
+        assert!((parts[3] - 0.0).abs() < 1e-10);
+
+        // Row 2: view Y = (1, 0, 0) — model +X is view up when looking down
+        // r10 = -cos(0)*sin(90) = -1, r11 = -sin(0)*sin(90) = 0, r12 = cos(90) = 0
+        // Hmm, that's (-1, 0, 0). Let me reconsider...
+        // Looking straight down, the "up" in view space is toward model -X.
+        assert!((parts[4] - -1.0).abs() < 1e-10);
+        assert!((parts[5] - 0.0).abs() < 1e-10);
+        assert!((parts[6] - 0.0).abs() < 1e-10);
+        assert!((parts[7] - 0.0).abs() < 1e-10);
+
+        // Row 3: view Z = (0, 0, 1)
+        // r20 = cos(0)*cos(90) ≈ 0, r21 = sin(0)*cos(90) ≈ 0, r22 = sin(90) = 1
+        assert!((parts[8] - 0.0).abs() < 1e-10);
+        assert!((parts[9] - 0.0).abs() < 1e-10);
+        assert!((parts[10] - 1.0).abs() < 1e-10);
+        assert!((parts[11] - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    #[allow(clippy::suboptimal_flops)]
+    fn view_matrix_columns_are_orthonormal() {
+        // For any angles, the 3x3 rotation part should be orthonormal.
+        for (az, el) in [(0.0, 0.0), (45.0, 35.0), (90.0, 0.0), (180.0, -45.0)] {
+            let matrix = view_matrix_from_angles(az, el);
+            let p: Vec<f64> = matrix
+                .split(',')
+                .map(|s| s.parse().expect("should be a float"))
+                .collect();
+
+            // Extract columns of the 3x3 rotation.
+            let col0 = [p[0], p[4], p[8]];
+            let col1 = [p[1], p[5], p[9]];
+            let col2 = [p[2], p[6], p[10]];
+
+            let dot =
+                |a: &[f64; 3], b: &[f64; 3]| -> f64 { a[0] * b[0] + a[1] * b[1] + a[2] * b[2] };
+            let norm = |a: &[f64; 3]| -> f64 { dot(a, a).sqrt() };
+
+            // Each column should have unit length.
+            assert!(
+                (norm(&col0) - 1.0).abs() < 1e-10,
+                "col0 not unit at az={az}, el={el}"
+            );
+            assert!(
+                (norm(&col1) - 1.0).abs() < 1e-10,
+                "col1 not unit at az={az}, el={el}"
+            );
+            assert!(
+                (norm(&col2) - 1.0).abs() < 1e-10,
+                "col2 not unit at az={az}, el={el}"
+            );
+
+            // Columns should be orthogonal.
+            assert!(
+                dot(&col0, &col1).abs() < 1e-10,
+                "col0·col1 != 0 at az={az}, el={el}"
+            );
+            assert!(
+                dot(&col0, &col2).abs() < 1e-10,
+                "col0·col2 != 0 at az={az}, el={el}"
+            );
+            assert!(
+                dot(&col1, &col2).abs() < 1e-10,
+                "col1·col2 != 0 at az={az}, el={el}"
+            );
+
+            // Determinant should be positive (right-handed).
+            let det = col0[0] * (col1[1] * col2[2] - col1[2] * col2[1])
+                - col0[1] * (col1[0] * col2[2] - col1[2] * col2[0])
+                + col0[2] * (col1[0] * col2[1] - col1[1] * col2[0]);
+            assert!(
+                (det - 1.0).abs() < 1e-10,
+                "determinant != 1 at az={az}, el={el}: {det}"
+            );
+        }
+    }
+
+    // --- Screenshot tool input validation tests ---
+
+    fn screenshot_spec() -> OpenApiSpec {
+        OpenApiSpec::from_json(
+            r#"{
+                "openapi": "3.0.1",
+                "info": { "title": "Test API", "version": "1.0" },
+                "servers": [{ "url": "https://cad.onshape.com/api/v1" }],
+                "paths": {
+                    "/partstudios/d/{did}/{wvm}/{wvmid}/e/{eid}/shadedviews": {
+                        "get": {
+                            "operationId": "getPartStudioShadedViews",
+                            "summary": "Get shaded views",
+                            "tags": ["PartStudio"],
+                            "parameters": [
+                                {"name":"did","in":"path","required":true,"schema":{"type":"string"}},
+                                {"name":"wvm","in":"path","required":true,"schema":{"type":"string"}},
+                                {"name":"wvmid","in":"path","required":true,"schema":{"type":"string"}},
+                                {"name":"eid","in":"path","required":true,"schema":{"type":"string"}},
+                                {"name":"viewMatrix","in":"query","schema":{"type":"string"}},
+                                {"name":"outputHeight","in":"query","schema":{"type":"integer"}},
+                                {"name":"outputWidth","in":"query","schema":{"type":"integer"}},
+                                {"name":"pixelSize","in":"query","schema":{"type":"number"}},
+                                {"name":"edges","in":"query","schema":{"type":"string"}},
+                                {"name":"useAntiAliasing","in":"query","schema":{"type":"boolean"}},
+                                {"name":"showAllParts","in":"query","schema":{"type":"boolean"}},
+                                {"name":"includeSurfaces","in":"query","schema":{"type":"boolean"}},
+                                {"name":"includeWires","in":"query","schema":{"type":"boolean"}}
+                            ],
+                            "responses": { "200": {} }
+                        }
+                    }
+                },
+                "components": { "schemas": {} }
+            }"#,
+        )
+        .expect("screenshot test spec should parse")
+    }
+
+    fn screenshot_args(view_json: &str) -> Map<String, Value> {
+        let mut args = Map::new();
+        args.insert("did".to_string(), Value::String("doc1".to_string()));
+        args.insert("wvm".to_string(), Value::String("w".to_string()));
+        args.insert("wvmid".to_string(), Value::String("ws1".to_string()));
+        args.insert("eid".to_string(), Value::String("elem1".to_string()));
+        let view: Value = serde_json::from_str(view_json).expect("test view JSON");
+        args.insert("view".to_string(), view);
+        args.insert(
+            "output_path".to_string(),
+            Value::String("/tmp/test-screenshot.png".to_string()),
+        );
+        args
+    }
+
+    #[test]
+    fn list_tools_includes_screenshot() {
+        let tools = list_tools();
+        assert!(tools.iter().any(|t| t.name == "onshape_screenshot"));
+    }
+
+    #[test]
+    fn screenshot_invalid_edges_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert("edges".to_string(), Value::String("invisible".to_string()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains("invisible"));
+    }
+
+    #[test]
+    fn screenshot_invalid_wvm_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert("wvm".to_string(), Value::String("x".to_string()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains("\"x\""));
+    }
+
+    #[test]
+    fn screenshot_output_height_zero_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert("output_height".to_string(), Value::Number(0.into()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains("output_height"));
+        assert!(msg.contains('0'));
+    }
+
+    #[test]
+    fn screenshot_output_width_too_large_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert("output_width".to_string(), Value::Number(4097.into()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains("output_width"));
+        assert!(msg.contains("4097"));
+    }
+
+    #[test]
+    fn screenshot_output_path_empty_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert("output_path".to_string(), Value::String(String::new()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains("output_path"));
+    }
+
+    #[test]
+    fn screenshot_output_path_traversal_returns_error() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert(
+            "output_path".to_string(),
+            Value::String("../secret.png".to_string()),
+        );
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains(".."));
+    }
+
+    #[test]
+    fn screenshot_builds_api_request_then() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+
+        let result = call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (request, _then) = assert_api_request_then(result);
+        assert!(request.path.contains("/shadedviews"));
+
+        // Should have pixelSize=0.
+        let pixel_size = request.query_params.iter().find(|(k, _)| k == "pixelSize");
+        assert_eq!(
+            pixel_size.map(|(_, v)| v.as_str()),
+            Some("0"),
+            "pixelSize should always be 0"
+        );
+
+        // Should have viewMatrix=front.
+        let view_matrix = request.query_params.iter().find(|(k, _)| k == "viewMatrix");
+        assert_eq!(view_matrix.map(|(_, v)| v.as_str()), Some("front"));
+    }
+
+    #[test]
+    fn screenshot_callback_api_error_returns_immediate() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+
+        let result = call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (_request, then) = assert_api_request_then(result);
+        let (tool_result, side_effects) = then(500, "Internal Server Error");
+        assert!(side_effects.is_empty());
+        let call_result = assert_immediate_ok(tool_result);
+        assert_eq!(call_result.is_error, Some(true));
+    }
+
+    #[test]
+    fn screenshot_callback_success_returns_write_files() {
+        let engine = base64::engine::general_purpose::STANDARD;
+
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+
+        let result = call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (_request, then) = assert_api_request_then(result);
+
+        // Simulate a successful API response with a base64-encoded PNG.
+        let fake_png = b"fake png data";
+        let encoded = engine.encode(fake_png);
+        let body = serde_json::json!({ "images": [encoded] }).to_string();
+
+        let (tool_result, side_effects) = then(200, &body);
+        assert!(side_effects.is_empty());
+
+        let (files, _format) = assert_write_files(tool_result);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].data, fake_png);
+        assert_eq!(
+            files[0].path,
+            std::path::PathBuf::from("/tmp/test-screenshot.png")
+        );
+    }
+
+    #[test]
+    fn screenshot_format_result_success_includes_view_matrix() {
+        let result = FileWriteResult::Success {
+            path: std::path::PathBuf::from("/tmp/screenshot.png"),
+        };
+
+        let call_result = format_screenshot_result(&result, "front", "front");
+        assert_eq!(call_result.is_error, Some(false));
+        assert_eq!(call_result.content.len(), 2);
+
+        // JSON content should include view_matrix.
+        let json_text = call_result.content[0]
+            .as_text()
+            .expect("first content should be text");
+        let json: Value = serde_json::from_str(&json_text.text).expect("should be valid JSON");
+        assert_eq!(json["view_matrix"], "front");
+        assert_eq!(json["status"], "ok");
+
+        // Human-readable content should include viewMatrix.
+        let text = call_result.content[1]
+            .as_text()
+            .expect("second content should be text");
+        assert!(text.text.contains("viewMatrix=front"));
+        assert!(text.text.contains("/tmp/screenshot.png"));
+    }
+
+    #[test]
+    fn screenshot_format_result_failure() {
+        let result = FileWriteResult::Error {
+            path: std::path::PathBuf::from("/tmp/screenshot.png"),
+            message: "Permission denied".to_string(),
+        };
+
+        let call_result = format_screenshot_result(&result, "top", "top");
+        assert_eq!(call_result.is_error, Some(true));
+
+        let json_text = call_result.content[0]
+            .as_text()
+            .expect("first content should be text");
+        let json: Value = serde_json::from_str(&json_text.text).expect("should be valid JSON");
+        assert_eq!(json["status"], "error");
+        assert_eq!(json["error"], "Permission denied");
+
+        let text = call_result.content[1]
+            .as_text()
+            .expect("second content should be text");
+        assert!(text.text.contains("FAILED"));
+        assert!(text.text.contains("Permission denied"));
+    }
+
+    #[test]
+    fn screenshot_optional_params_passed_to_request() {
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert("output_height".to_string(), Value::Number(1000.into()));
+        args.insert("output_width".to_string(), Value::Number(800.into()));
+        args.insert("edges".to_string(), Value::String("hide".to_string()));
+        args.insert("use_anti_aliasing".to_string(), Value::Bool(true));
+        args.insert("show_all_parts".to_string(), Value::Bool(true));
+
+        let result = call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (request, _then) = assert_api_request_then(result);
+
+        let find_param = |name: &str| -> Option<String> {
+            request
+                .query_params
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(find_param("outputHeight"), Some("1000".to_string()));
+        assert_eq!(find_param("outputWidth"), Some("800".to_string()));
+        assert_eq!(find_param("edges"), Some("hide".to_string()));
+        assert_eq!(find_param("useAntiAliasing"), Some("true".to_string()));
+        assert_eq!(find_param("showAllParts"), Some("true".to_string()));
+    }
+
+    #[test]
+    fn screenshot_custom_output_path() {
+        let engine = base64::engine::general_purpose::STANDARD;
+
+        let auth = not_configured();
+        let spec = screenshot_spec();
+        let mut args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
+        args.insert(
+            "output_path".to_string(),
+            Value::String("/home/user/my-part.png".to_string()),
+        );
+
+        let result = call_tool(
+            "onshape_screenshot",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (_request, then) = assert_api_request_then(result);
+
+        let body = serde_json::json!({ "images": [engine.encode(b"data")] }).to_string();
+        let (tool_result, _) = then(200, &body);
+        let (files, _format) = assert_write_files(tool_result);
+        assert_eq!(
+            files[0].path,
+            std::path::PathBuf::from("/home/user/my-part.png")
+        );
+    }
+
+    #[test]
+    fn view_spec_preset_deserializes() {
+        let json = r#"{"type": "preset", "name": "isometric"}"#;
+        let spec: ViewSpec = serde_json::from_str(json).expect("should deserialize");
+        match spec {
+            ViewSpec::Preset { name } => assert_eq!(name, ViewPreset::Isometric),
+            ViewSpec::Angles { .. } => panic!("expected Preset"),
+        }
+    }
+
+    #[test]
+    fn view_spec_angles_deserializes() {
+        let json = r#"{"type": "angles", "azimuth": 45.0, "elevation": 30.0}"#;
+        let spec: ViewSpec = serde_json::from_str(json).expect("should deserialize");
+        match spec {
+            ViewSpec::Angles { azimuth, elevation } => {
+                assert!((azimuth - 45.0).abs() < f64::EPSILON);
+                assert!((elevation - 30.0).abs() < f64::EPSILON);
+            }
+            ViewSpec::Preset { .. } => panic!("expected Angles"),
+        }
     }
 }
