@@ -1412,6 +1412,9 @@ pub async fn run_http(
     if !parsed_public_url.has_host() {
         return Err("http.public_url must include a host".into());
     }
+    if parsed_public_url.query().is_some() || parsed_public_url.fragment().is_some() {
+        return Err("http.public_url must not include query parameters or fragments".into());
+    }
     let public_url = public_url.trim_end_matches('/').to_string();
     let onshape_client_id = config
         .http
