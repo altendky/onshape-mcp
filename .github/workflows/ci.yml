@@ -6,7 +6,6 @@ on:
     tags: ["v*"]
   pull_request:
     branches: ["**"]
-  merge_group:
 
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
@@ -24,6 +23,7 @@ jobs:
   rust:
     name: Rust
     uses: ./.github/workflows/reflow-rust.yml
+    secrets: inherit
 
   coverage:
     name: Coverage
