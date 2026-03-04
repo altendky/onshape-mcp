@@ -33,7 +33,7 @@ oauth2 = { version = "5", default-features = false }
 oauth2-reqwest = "0.1.0-alpha.3"
 open = "5"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
-rmcp = "0.17"
+rmcp = "1.0"
 schemars = "1"
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
