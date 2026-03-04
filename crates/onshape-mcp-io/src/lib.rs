@@ -1415,7 +1415,14 @@ pub async fn run_http(
     if parsed_public_url.query().is_some() || parsed_public_url.fragment().is_some() {
         return Err("http.public_url must not include query parameters or fragments".into());
     }
-    let public_url = public_url.trim_end_matches('/').to_string();
+    // Strip trailing slash from the path for consistent path extension via
+    // Url::path_segments_mut().extend().
+    let public_url = {
+        let mut url = parsed_public_url;
+        let trimmed = url.path().trim_end_matches('/').to_string();
+        url.set_path(&trimmed);
+        url
+    };
     let onshape_client_id = config
         .http
         .onshape_client_id
@@ -1521,9 +1528,16 @@ pub async fn run_http(
         format!("{normalized_host}:{port}")
     };
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    let mcp_endpoint = {
+        let mut url = public_url.clone();
+        url.path_segments_mut()
+            .map_err(|()| "public_url cannot be a base URL")?
+            .push("mcp");
+        url
+    };
     eprintln!("HTTP transport listening on {bind_addr}");
     eprintln!("Public URL: {public_url}");
-    eprintln!("MCP endpoint: {public_url}/mcp");
+    eprintln!("MCP endpoint: {mcp_endpoint}");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {

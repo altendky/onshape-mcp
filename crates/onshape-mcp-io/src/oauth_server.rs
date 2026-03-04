@@ -131,8 +131,8 @@ pub(crate) struct OAuthServerState {
     onshape_client_id: String,
     /// Onshape OAuth app client secret (operator's app).
     onshape_client_secret: SecretString,
-    /// Public URL of this MCP server.
-    public_url: String,
+    /// Public URL of this MCP server (validated at construction time).
+    public_url: url::Url,
 }
 
 /// MCP access token lifetime (1 hour, matching Onshape).
@@ -147,8 +147,11 @@ const AUTH_CODE_TTL_SECS: i64 = 600;
 
 impl OAuthServerState {
     /// Create a new OAuth server state.
+    ///
+    /// `public_url` must be a validated URL with no query or fragment.
+    /// Trailing path slashes are stripped to ensure consistent path extension.
     pub(crate) fn new(
-        public_url: String,
+        public_url: url::Url,
         onshape_client_id: String,
         onshape_client_secret: SecretString,
         allowed_user_ids: Vec<String>,
@@ -165,6 +168,23 @@ impl OAuthServerState {
             onshape_client_secret,
             public_url,
         }
+    }
+
+    /// Build a URL by extending the public URL's path with additional segments.
+    ///
+    /// # Panics
+    ///
+    /// Cannot panic: `public_url` is validated at construction time to use
+    /// an `http`/`https` scheme with a host, so `path_segments_mut()` always
+    /// succeeds (it only fails for cannot-be-a-base URLs like `data:` or
+    /// `mailto:`).
+    #[allow(clippy::expect_used)]
+    fn url_with_path(&self, segments: &[&str]) -> String {
+        let mut url = self.public_url.clone();
+        url.path_segments_mut()
+            .expect("public_url is validated to have a host, so path_segments_mut cannot fail")
+            .extend(segments);
+        url.into()
     }
 
     /// Validate a bearer token and return the user context if valid.
@@ -234,8 +254,8 @@ async fn protected_resource_metadata(
     State(state): State<Arc<OAuthServerState>>,
 ) -> impl IntoResponse {
     Json(serde_json::json!({
-        "resource": format!("{}/mcp", state.public_url),
-        "authorization_servers": [state.public_url],
+        "resource": state.url_with_path(&["mcp"]),
+        "authorization_servers": [state.public_url.as_str()],
         "bearer_methods_supported": ["header"],
     }))
 }
@@ -246,12 +266,11 @@ async fn protected_resource_metadata(
 async fn authorization_server_metadata(
     State(state): State<Arc<OAuthServerState>>,
 ) -> impl IntoResponse {
-    let base = &state.public_url;
     Json(serde_json::json!({
-        "issuer": base,
-        "authorization_endpoint": format!("{base}/oauth/authorize"),
-        "token_endpoint": format!("{base}/oauth/token"),
-        "registration_endpoint": format!("{base}/oauth/register"),
+        "issuer": state.public_url.as_str(),
+        "authorization_endpoint": state.url_with_path(&["oauth", "authorize"]),
+        "token_endpoint": state.url_with_path(&["oauth", "token"]),
+        "registration_endpoint": state.url_with_path(&["oauth", "register"]),
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["client_secret_post"],
@@ -492,7 +511,7 @@ async fn authorize(
         &state.onshape_client_id,
         state.onshape_client_secret.expose_secret(),
     );
-    let callback_url = format!("{}/oauth/callback", state.public_url);
+    let callback_url = state.url_with_path(&["oauth", "callback"]);
     let redirect_url = oauth2::RedirectUrl::new(callback_url).map_err(|e| {
         (
             http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -553,7 +572,7 @@ async fn exchange_onshape_code(
     )
     .set_auth_type(oauth2::AuthType::RequestBody);
 
-    let callback_url = format!("{}/oauth/callback", state.public_url);
+    let callback_url = state.url_with_path(&["oauth", "callback"]);
     let redirect_url = oauth2::RedirectUrl::new(callback_url).map_err(|e| {
         (
             http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -1120,7 +1139,7 @@ mod tests {
     /// Helper: create a test `OAuthServerState` with a single allowed user.
     fn test_state() -> OAuthServerState {
         OAuthServerState::new(
-            "https://example.com".to_string(),
+            url::Url::parse("https://example.com").expect("valid test URL"),
             "onshape-client-id".to_string(),
             SecretString::from("onshape-client-secret"),
             vec!["allowed-user-1".to_string()],
