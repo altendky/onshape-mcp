@@ -43,12 +43,6 @@
       "groupName": "Rust toolchain"
     },
 
-    // Group GitHub Actions updates
-    {
-      "matchManagers": ["github-actions"],
-      "groupName": "GitHub Actions"
-    },
-
     // Override extractVersion for nextest (version_prefix workaround)
     {
       "matchDepNames": ["github:nextest-rs/nextest"],
