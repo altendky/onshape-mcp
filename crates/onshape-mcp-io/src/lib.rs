@@ -274,11 +274,7 @@ impl ServerHandler for OnshapeMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         // Core returns Vec<Tool> directly - no conversion needed
-        std::future::ready(Ok(ListToolsResult {
-            tools: tools::list_tools(),
-            next_cursor: None,
-            meta: None,
-        }))
+        std::future::ready(Ok(ListToolsResult::with_all_items(tools::list_tools())))
     }
 
     fn list_resources(
@@ -286,11 +282,9 @@ impl ServerHandler for OnshapeMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
-        std::future::ready(Ok(ListResourcesResult {
-            resources: onshape_mcp_resources::list_resources(),
-            next_cursor: None,
-            meta: None,
-        }))
+        std::future::ready(Ok(ListResourcesResult::with_all_items(
+            onshape_mcp_resources::list_resources(),
+        )))
     }
 
     fn read_resource(
@@ -452,16 +446,11 @@ async fn dispatch_tool_result(
             ToolResult::OAuthLoginFlow { mode } => {
                 // In HTTP mode, login_state is None — return informative message.
                 let Some(login_state) = login_state else {
-                    return Ok(CallToolResult {
-                        content: vec![rmcp::model::Content::text(
-                            "Authentication is handled via the browser OAuth flow \
-                             when connecting to this server. You do not need to \
-                             run the login tool manually.",
-                        )],
-                        is_error: Some(false),
-                        structured_content: None,
-                        meta: None,
-                    });
+                    return Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+                        "Authentication is handled via the browser OAuth flow \
+                         when connecting to this server. You do not need to \
+                         run the login tool manually.",
+                    )]));
                 };
                 return handle_oauth_login_flow(mode, login_state).await;
             }
@@ -560,32 +549,22 @@ struct RawResponse {
 
 /// Error response when credentials are not configured.
 fn not_configured_error() -> CallToolResult {
-    CallToolResult {
-        content: vec![rmcp::model::Content::text(
-            "Cannot execute API call: credentials are not configured. \
-             Set access_key and secret_key via config file, environment \
-             variables, or CLI flags. For OAuth, run the authorization flow \
-             to obtain tokens.",
-        )],
-        is_error: Some(true),
-        structured_content: None,
-        meta: None,
-    }
+    CallToolResult::error(vec![rmcp::model::Content::text(
+        "Cannot execute API call: credentials are not configured. \
+         Set access_key and secret_key via config file, environment \
+         variables, or CLI flags. For OAuth, run the authorization flow \
+         to obtain tokens.",
+    )])
 }
 
 /// Error response when OAuth is pending (client creds present but no tokens).
 fn oauth_pending_error() -> CallToolResult {
-    CallToolResult {
-        content: vec![rmcp::model::Content::text(
-            "Cannot execute API call: OAuth authorization not yet completed. \
-             Complete the OAuth flow in your editor (e.g. via the OpenCode plugin) \
-             to obtain access tokens. The server will automatically detect the \
-             new tokens once they are written.",
-        )],
-        is_error: Some(true),
-        structured_content: None,
-        meta: None,
-    }
+    CallToolResult::error(vec![rmcp::model::Content::text(
+        "Cannot execute API call: OAuth authorization not yet completed. \
+         Complete the OAuth flow in your editor (e.g. via the OpenCode plugin) \
+         to obtain access tokens. The server will automatically detect the \
+         new tokens once they are written.",
+    )])
 }
 
 /// Execute a raw API request, returning the HTTP status and body.
@@ -837,27 +816,19 @@ async fn handle_oauth_login_flow(
             login.set_active(handle.session);
             drop(login);
 
-            Ok(CallToolResult {
-                content: vec![rmcp::model::Content::text(format!(
+            Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+                format!(
                     "The OAuth authorization flow has started. You MUST present the \
-                     following URL to the user and instruct them to open it in their \
-                     browser to authorize:\n\n{authorize_url}\n\n\
-                     After they authorize in the browser, the server will automatically \
-                     detect the new tokens via the local callback.",
-                ))],
-                is_error: Some(false),
-                structured_content: None,
-                meta: None,
-            })
+                 following URL to the user and instruct them to open it in their \
+                 browser to authorize:\n\n{authorize_url}\n\n\
+                 After they authorize in the browser, the server will automatically \
+                 detect the new tokens via the local callback.",
+                ),
+            )]))
         }
-        Err(e) => Ok(CallToolResult {
-            content: vec![rmcp::model::Content::text(format!(
-                "Failed to start login flow: {e}"
-            ))],
-            is_error: Some(true),
-            structured_content: None,
-            meta: None,
-        }),
+        Err(e) => Ok(CallToolResult::error(vec![rmcp::model::Content::text(
+            format!("Failed to start login flow: {e}"),
+        )])),
     }
 }
 
