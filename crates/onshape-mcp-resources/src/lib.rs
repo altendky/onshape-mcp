@@ -253,9 +253,6 @@ mod tests {
             names.contains(&"shaded-views"),
             "should have shaded-views insight"
         );
-        assert!(
-            names.contains(&"sketch-constraints"),
-            "should have sketch-constraints insight"
-        );
+        assert!(names.contains(&"sketch"), "should have sketch insight");
     }
 }

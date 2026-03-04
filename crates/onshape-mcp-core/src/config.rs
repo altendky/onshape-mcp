@@ -62,9 +62,12 @@ pub struct AuthConfig {
     pub check_interval: Duration,
 }
 
-/// HTTP client configuration.
+/// Onshape API client configuration (request timeouts, etc.).
+///
+/// Previously named `HttpConfig` with TOML section `[http]`. Renamed to `[api]`
+/// to avoid ambiguity with the new HTTP transport subcommand.
 #[derive(Deserialize)]
-pub struct HttpConfig {
+pub struct ApiConfig {
     /// Request timeout for Onshape API calls (default: 30 seconds).
     #[serde(
         default = "default_http_timeout",
@@ -73,12 +76,77 @@ pub struct HttpConfig {
     pub timeout: Duration,
 }
 
-impl Default for HttpConfig {
+impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             timeout: DEFAULT_HTTP_TIMEOUT,
         }
     }
+}
+
+/// Default host for the HTTP transport server.
+pub const DEFAULT_TRANSPORT_HOST: &str = "127.0.0.1";
+
+/// Default port for the HTTP transport server.
+pub const DEFAULT_TRANSPORT_PORT: u16 = 8080;
+
+/// HTTP transport configuration.
+///
+/// Used by the `onshape-mcp http` subcommand to serve the MCP server
+/// over Streamable HTTP with per-user OAuth authentication.
+#[derive(Deserialize)]
+pub struct HttpTransportConfig {
+    /// Listen address (default: `127.0.0.1`).
+    #[serde(default = "default_transport_host")]
+    pub host: String,
+    /// Listen port (default: `8080`).
+    #[serde(default = "default_transport_port")]
+    pub port: u16,
+    /// Public URL of the server (e.g. `https://mcp.example.com`).
+    ///
+    /// Required — used in OAuth metadata endpoint URLs. The server will
+    /// fail at startup with a clear error if this is missing.
+    #[serde(default)]
+    pub public_url: Option<String>,
+    /// Onshape OAuth application client ID.
+    #[serde(default)]
+    pub onshape_client_id: Option<String>,
+    /// Onshape OAuth application client secret.
+    #[serde(default)]
+    pub onshape_client_secret: Option<SecretString>,
+    /// Allowlist of Onshape user IDs permitted to connect.
+    ///
+    /// Empty list = fail-closed (nobody allowed).
+    ///
+    /// Supports two formats:
+    /// - **TOML array of objects**: `[[http.allowed_users]]` with `id` and optional `name`
+    /// - **Comma-separated string** (e.g. from env vars):
+    ///   `id1:name1,id2:name2` or just `id1,id2` (names are optional)
+    #[serde(default, deserialize_with = "deserialize_allowed_users")]
+    pub allowed_users: Vec<AllowedUser>,
+}
+
+impl Default for HttpTransportConfig {
+    fn default() -> Self {
+        Self {
+            host: DEFAULT_TRANSPORT_HOST.to_string(),
+            port: DEFAULT_TRANSPORT_PORT,
+            public_url: None,
+            onshape_client_id: None,
+            onshape_client_secret: None,
+            allowed_users: Vec::new(),
+        }
+    }
+}
+
+/// An entry in the HTTP transport allowlist.
+#[derive(Deserialize, Clone, Debug)]
+pub struct AllowedUser {
+    /// Onshape user ID (e.g. `6073e74c7f81d1054fca4373`).
+    pub id: String,
+    /// Human-readable name (ignored at runtime, for config readability).
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// Top-level application configuration.
@@ -87,9 +155,12 @@ pub struct AppConfig {
     /// Authentication settings.
     #[serde(default)]
     pub auth: AuthConfig,
-    /// HTTP client settings.
+    /// Onshape API client settings (timeouts, etc.).
     #[serde(default)]
-    pub http: HttpConfig,
+    pub api: ApiConfig,
+    /// HTTP transport settings (for `onshape-mcp http` subcommand).
+    #[serde(default)]
+    pub http: HttpTransportConfig,
 }
 
 // ============================================================================
@@ -380,6 +451,16 @@ const fn default_http_timeout() -> Duration {
     DEFAULT_HTTP_TIMEOUT
 }
 
+/// Default host for the HTTP transport.
+fn default_transport_host() -> String {
+    DEFAULT_TRANSPORT_HOST.to_string()
+}
+
+/// Default port for the HTTP transport.
+const fn default_transport_port() -> u16 {
+    DEFAULT_TRANSPORT_PORT
+}
+
 /// Deserializes a duration from either an integer (seconds) or a string like "5m", "300s".
 ///
 /// Supported suffixes: `s` (seconds), `m` (minutes), `h` (hours).
@@ -453,6 +534,81 @@ fn parse_duration_str(s: &str) -> Result<Duration, String> {
     num.checked_mul(multiplier)
         .map(Duration::from_secs)
         .ok_or_else(|| format!("invalid duration \"{s}\": value overflows"))
+}
+
+/// Deserializes `allowed_users` from either a TOML array of objects or a
+/// comma-separated string (useful for environment variables).
+///
+/// String format: `id1:name1,id2:name2` or just `id1,id2`.
+/// The `:name` portion is optional and ignored at runtime.
+fn deserialize_allowed_users<'de, D>(deserializer: D) -> Result<Vec<AllowedUser>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct AllowedUsersVisitor;
+
+    impl<'de> de::Visitor<'de> for AllowedUsersVisitor {
+        type Value = Vec<AllowedUser>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str(
+                "a list of allowed users (TOML array of {id, name} objects) \
+                 or a comma-separated string like \"id1:name1,id2:name2\"",
+            )
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Vec<AllowedUser>, E> {
+            Ok(parse_allowed_users_csv(value))
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Vec<AllowedUser>, A::Error> {
+            let mut users = Vec::new();
+            while let Some(user) = seq.next_element()? {
+                users.push(user);
+            }
+            Ok(users)
+        }
+    }
+
+    deserializer.deserialize_any(AllowedUsersVisitor)
+}
+
+/// Parse a comma-separated string of `id:name` pairs into `AllowedUser` entries.
+///
+/// - Empty or whitespace-only strings produce an empty vec.
+/// - Each entry is trimmed. Empty entries (from trailing commas) are skipped.
+/// - The `:name` portion is optional.
+pub fn parse_allowed_users_csv(s: &str) -> Vec<AllowedUser> {
+    if s.trim().is_empty() {
+        return Vec::new();
+    }
+    s.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .filter_map(|entry| {
+            if let Some((id, name)) = entry.split_once(':') {
+                let id = id.trim();
+                if id.is_empty() {
+                    return None;
+                }
+                let name = name.trim();
+                Some(AllowedUser {
+                    id: id.to_string(),
+                    name: (!name.is_empty()).then(|| name.to_string()),
+                })
+            } else {
+                Some(AllowedUser {
+                    id: entry.to_string(),
+                    name: None,
+                })
+            }
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -970,64 +1126,158 @@ mod tests {
     }
 
     // ====================================================================
-    // HttpConfig Tests
+    // ApiConfig Tests
     // ====================================================================
 
     #[test]
-    fn default_http_config() {
-        let config = HttpConfig::default();
+    fn default_api_config() {
+        let config = ApiConfig::default();
         assert_eq!(config.timeout, Duration::from_secs(30));
     }
 
     #[test]
-    fn deserialize_http_config_with_timeout() {
+    fn deserialize_api_config_with_timeout() {
         let toml_str = r#"
             timeout = "10s"
         "#;
-        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        let config: ApiConfig = toml::from_str(toml_str).expect("should deserialize");
         assert_eq!(config.timeout, Duration::from_secs(10));
     }
 
     #[test]
-    fn deserialize_http_config_timeout_minutes() {
+    fn deserialize_api_config_timeout_minutes() {
         let toml_str = r#"
             timeout = "2m"
         "#;
-        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        let config: ApiConfig = toml::from_str(toml_str).expect("should deserialize");
         assert_eq!(config.timeout, Duration::from_secs(120));
     }
 
     #[test]
-    fn deserialize_http_config_timeout_integer() {
+    fn deserialize_api_config_timeout_integer() {
         let toml_str = r"
             timeout = 45
         ";
-        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        let config: ApiConfig = toml::from_str(toml_str).expect("should deserialize");
         assert_eq!(config.timeout, Duration::from_secs(45));
     }
 
     #[test]
-    fn deserialize_http_config_defaults() {
+    fn deserialize_api_config_defaults() {
         let toml_str = "";
-        let config: HttpConfig = toml::from_str(toml_str).expect("should deserialize");
+        let config: ApiConfig = toml::from_str(toml_str).expect("should deserialize");
         assert_eq!(config.timeout, DEFAULT_HTTP_TIMEOUT);
     }
 
     #[test]
-    fn deserialize_app_config_with_http_section() {
+    fn deserialize_app_config_with_api_section() {
         let toml_str = r#"
             [auth]
             access_key = "ak"
             secret_key = "sk"
 
-            [http]
+            [api]
             timeout = "60s"
         "#;
 
         let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
         let inv = AuthInventory::from_config(&config.auth, TokenStatus::Absent);
         assert_eq!(resolve_auth(config.auth.method, &inv), ResolvedAuth::Basic);
-        assert_eq!(config.http.timeout, Duration::from_secs(60));
+        assert_eq!(config.api.timeout, Duration::from_secs(60));
+    }
+
+    // ====================================================================
+    // HttpTransportConfig Tests
+    // ====================================================================
+
+    #[test]
+    fn default_http_transport_config() {
+        let config = HttpTransportConfig::default();
+        assert_eq!(config.host, DEFAULT_TRANSPORT_HOST);
+        assert_eq!(config.port, DEFAULT_TRANSPORT_PORT);
+        assert!(config.public_url.is_none());
+        assert!(config.onshape_client_id.is_none());
+        assert!(config.onshape_client_secret.is_none());
+        assert!(config.allowed_users.is_empty());
+    }
+
+    #[test]
+    fn deserialize_http_transport_config_defaults() {
+        let toml_str = "";
+        let config: HttpTransportConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.host, DEFAULT_TRANSPORT_HOST);
+        assert_eq!(config.port, DEFAULT_TRANSPORT_PORT);
+        assert!(config.public_url.is_none());
+        assert!(config.onshape_client_id.is_none());
+        assert!(config.onshape_client_secret.is_none());
+        assert!(config.allowed_users.is_empty());
+    }
+
+    #[test]
+    fn deserialize_http_transport_config_full() {
+        let toml_str = r#"
+            host = "0.0.0.0"
+            port = 9090
+            public_url = "https://mcp.example.com"
+            onshape_client_id = "my-client-id"
+            onshape_client_secret = "my-secret"
+            allowed_users = "abc123:Alice,def456:Bob"
+        "#;
+        let config: HttpTransportConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.host, "0.0.0.0");
+        assert_eq!(config.port, 9090);
+        assert_eq!(
+            config.public_url.as_deref(),
+            Some("https://mcp.example.com")
+        );
+        assert_eq!(config.onshape_client_id.as_deref(), Some("my-client-id"));
+        assert_eq!(
+            config
+                .onshape_client_secret
+                .as_ref()
+                .map(|s| s.expose_secret().to_string()),
+            Some("my-secret".to_string())
+        );
+        assert_eq!(config.allowed_users.len(), 2);
+        assert_eq!(config.allowed_users[0].id, "abc123");
+        assert_eq!(config.allowed_users[0].name.as_deref(), Some("Alice"));
+        assert_eq!(config.allowed_users[1].id, "def456");
+        assert_eq!(config.allowed_users[1].name.as_deref(), Some("Bob"));
+    }
+
+    #[test]
+    fn deserialize_app_config_with_http_section() {
+        let toml_str = r#"
+            [http]
+            host = "0.0.0.0"
+            port = 3000
+            public_url = "https://example.com"
+        "#;
+        let config: AppConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.http.host, "0.0.0.0");
+        assert_eq!(config.http.port, 3000);
+        assert_eq!(
+            config.http.public_url.as_deref(),
+            Some("https://example.com")
+        );
+    }
+
+    #[test]
+    fn deserialize_http_transport_config_allowed_users_toml_array() {
+        let toml_str = r#"
+            [[allowed_users]]
+            id = "user1"
+            name = "User One"
+
+            [[allowed_users]]
+            id = "user2"
+        "#;
+        let config: HttpTransportConfig = toml::from_str(toml_str).expect("should deserialize");
+        assert_eq!(config.allowed_users.len(), 2);
+        assert_eq!(config.allowed_users[0].id, "user1");
+        assert_eq!(config.allowed_users[0].name.as_deref(), Some("User One"));
+        assert_eq!(config.allowed_users[1].id, "user2");
+        assert!(config.allowed_users[1].name.is_none());
     }
 
     // ====================================================================
@@ -1175,5 +1425,117 @@ mod tests {
         };
         let result = resolve_auth(AuthMethod::OAuth, &inv);
         assert!(matches!(result, ResolvedAuth::OAuthReady { .. }));
+    }
+
+    // ====================================================================
+    // Allowed Users CSV Parsing Tests
+    // ====================================================================
+
+    #[test]
+    fn allowed_users_csv_with_names() {
+        let users = parse_allowed_users_csv("abc123:alice,def456:bob");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert_eq!(users[0].name.as_deref(), Some("alice"));
+        assert_eq!(users[1].id, "def456");
+        assert_eq!(users[1].name.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn allowed_users_csv_without_names() {
+        let users = parse_allowed_users_csv("abc123,def456");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert!(users[0].name.is_none());
+        assert_eq!(users[1].id, "def456");
+        assert!(users[1].name.is_none());
+    }
+
+    #[test]
+    fn allowed_users_csv_mixed() {
+        let users = parse_allowed_users_csv("abc123:alice,def456");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert_eq!(users[0].name.as_deref(), Some("alice"));
+        assert_eq!(users[1].id, "def456");
+        assert!(users[1].name.is_none());
+    }
+
+    #[test]
+    fn allowed_users_csv_empty_string() {
+        let users = parse_allowed_users_csv("");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_whitespace_only() {
+        let users = parse_allowed_users_csv("   ");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_with_whitespace() {
+        let users = parse_allowed_users_csv(" abc123 : alice , def456 : bob ");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert_eq!(users[0].name.as_deref(), Some("alice"));
+        assert_eq!(users[1].id, "def456");
+        assert_eq!(users[1].name.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn allowed_users_csv_trailing_comma() {
+        let users = parse_allowed_users_csv("abc123:alice,");
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].id, "abc123");
+    }
+
+    #[test]
+    fn allowed_users_csv_single_entry() {
+        let users = parse_allowed_users_csv("60a1b2c3d4e5f60708091011:altendky");
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].id, "60a1b2c3d4e5f60708091011");
+        assert_eq!(users[0].name.as_deref(), Some("altendky"));
+    }
+
+    #[test]
+    fn allowed_users_csv_rejects_empty_id_with_name() {
+        // ":somename" has an empty id — should be silently skipped
+        let users = parse_allowed_users_csv(":somename");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_rejects_bare_colon() {
+        // ":" has empty id and empty name — should be silently skipped
+        let users = parse_allowed_users_csv(":");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_rejects_whitespace_colon() {
+        // "  :  " has empty id after trimming — should be silently skipped
+        let users = parse_allowed_users_csv("  :  ");
+        assert!(users.is_empty());
+    }
+
+    #[test]
+    fn allowed_users_csv_skips_empty_id_among_valid() {
+        // Mix of valid and invalid entries — only valid ones survive
+        let users = parse_allowed_users_csv("abc123:alice,:badname,def456");
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].id, "abc123");
+        assert_eq!(users[0].name.as_deref(), Some("alice"));
+        assert_eq!(users[1].id, "def456");
+        assert!(users[1].name.is_none());
+    }
+
+    #[test]
+    fn allowed_users_csv_empty_name_becomes_none() {
+        // "abc123:" has a valid id but empty name — name should be None
+        let users = parse_allowed_users_csv("abc123:");
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].id, "abc123");
+        assert!(users[0].name.is_none());
     }
 }
