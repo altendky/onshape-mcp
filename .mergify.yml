@@ -1,0 +1,14 @@
+queue_rules:
+  - name: default
+    autoqueue: true
+    queue_conditions:
+      - label = queue
+      - base = main
+      - check-success = all
+    merge_conditions:
+      - check-success = all
+    merge_method: merge
+    checks_timeout: 90 min
+
+merge_queue:
+  max_parallel_checks: 1

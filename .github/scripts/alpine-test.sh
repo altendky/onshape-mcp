@@ -13,5 +13,5 @@ apk add --no-cache curl bash tar gzip
 # Setup nextest
 "$REPO_ROOT/.github/actions/setup-nextest/setup.sh"
 
-# Run tests from archive
-cargo-nextest nextest run --archive-file nextest-archive.tar.zst --workspace-remap .
+# Run tests from archive with CI profile (produces JUnit XML for Mergify CI Insights)
+cargo-nextest nextest run --profile ci --archive-file nextest-archive.tar.zst --workspace-remap .
