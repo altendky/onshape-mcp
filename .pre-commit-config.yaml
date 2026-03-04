@@ -81,6 +81,13 @@ repos:
         pass_filenames: false
         stages: [manual]
 
+      - id: mise-lock
+        name: mise lock
+        entry: mise install --locked --dry-run
+        language: system
+        files: (^mise\.toml$|^mise\.lock$)
+        pass_filenames: false
+
       - id: sync-versions
         name: sync versions
         entry: node scripts/sync-versions.js

@@ -7,6 +7,11 @@ backend = "aqua:EmbarkStudios/cargo-deny"
 "platforms.macos-x64" = { checksum = "sha256:c42163655413f7e872638cd8c4345a327b512ef0ab99109e9cced691b95af5fb", url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.0/cargo-deny-0.19.0-x86_64-apple-darwin.tar.gz"}
 "platforms.windows-x64" = { checksum = "sha256:413f0e2ce780d0d14ba8e9339f9fb033419a8a971ec7714faec518e4a664bdb0", url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.0/cargo-deny-0.19.0-x86_64-pc-windows-msvc.tar.gz"}
 
+[[tools."aqua:superfly/flyctl"]]
+version = "0.3.95"
+backend = "aqua:superfly/flyctl"
+"platforms.linux-x64" = { checksum = "sha256:9a6ef2178a078ebb32b2232a4a0644c408a250c1f4736d1e139f2de5bae74407", url = "https://github.com/superfly/flyctl/releases/download/v0.3.95/flyctl_0.3.95_Linux_x86_64.tar.gz"}
+
 [[tools."aqua:taiki-e/cargo-llvm-cov"]]
 version = "0.8.4"
 backend = "aqua:taiki-e/cargo-llvm-cov"
@@ -42,7 +47,7 @@ backend = "core:node"
 "platforms.windows-x64" = { checksum = "sha256:313fa40c0d7b18575821de8cb17483031fe07d95de5994f6f435f3b345f85c66", url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-win-x64.zip"}
 
 [[tools."npm:wrangler"]]
-version = "4.69.0"
+version = "4.70.0"
 backend = "npm:wrangler"
 
 [[tools."pipx:pre-commit"]]

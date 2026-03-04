@@ -223,25 +223,20 @@ pub const CATCH_PHRASE: &str =
 /// * `version` - The server version (typically from `CARGO_PKG_VERSION`)
 #[must_use]
 pub fn server_info(name: &str, version: &str) -> ServerInfo {
-    ServerInfo {
-        capabilities: ServerCapabilities::builder()
+    ServerInfo::new(
+        ServerCapabilities::builder()
             .enable_tools()
             .enable_resources()
             .build(),
-        server_info: Implementation {
-            name: name.into(),
-            version: version.into(),
-            ..Default::default()
-        },
-        instructions: Some(format!(
-            "Onshape MCP server for CAD integration. \
-             This server provides insight resources with practical Onshape API \
-             guidance. Before calling endpoints for the first time, list and \
-             read relevant resources to avoid common pitfalls. \
-             {CATCH_PHRASE}"
-        )),
-        ..Default::default()
-    }
+    )
+    .with_server_info(Implementation::new(name, version))
+    .with_instructions(format!(
+        "Onshape MCP server for CAD integration. \
+         This server provides insight resources with practical Onshape API \
+         guidance. Before calling endpoints for the first time, list and \
+         read relevant resources to avoid common pitfalls. \
+         {CATCH_PHRASE}"
+    ))
 }
 
 #[cfg(test)]

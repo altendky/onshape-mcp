@@ -155,12 +155,9 @@ pub enum ToolResult {
 /// (typically an LLM) can act on — as opposed to protocol-level
 /// `Err(ErrorData)` which signals handler/infrastructure breakage.
 fn tool_input_error(message: impl Into<String>) -> ToolResult {
-    ToolResult::Immediate(Ok(CallToolResult {
-        content: vec![Content::text(message.into())],
-        is_error: Some(true),
-        structured_content: None,
-        meta: None,
-    }))
+    ToolResult::Immediate(Ok(CallToolResult::error(vec![Content::text(
+        message.into(),
+    )])))
 }
 
 /// Convert a raw HTTP response from the Onshape API into a [`CallToolResult`].
@@ -190,20 +187,10 @@ pub fn process_api_response(status: u16, body: &str) -> Result<CallToolResult, E
             Content::text(body)
         };
 
-        Ok(CallToolResult {
-            content: vec![content],
-            is_error: Some(false),
-            structured_content: None,
-            meta: None,
-        })
+        Ok(CallToolResult::success(vec![content]))
     } else {
         let content = Content::text(format!("API error (HTTP {status}): {body}"));
-        Ok(CallToolResult {
-            content: vec![content],
-            is_error: Some(true),
-            structured_content: None,
-            meta: None,
-        })
+        Ok(CallToolResult::error(vec![content]))
     }
 }
 
@@ -618,12 +605,7 @@ fn call_auth_status(
             Ok(c) => c,
             Err(e) => return ToolResult::Immediate(Err(e)),
         };
-        return ToolResult::Immediate(Ok(CallToolResult {
-            content: vec![content],
-            is_error: Some(false),
-            structured_content: None,
-            meta: None,
-        }));
+        return ToolResult::Immediate(Ok(CallToolResult::success(vec![content])));
     }
 
     // validate=true: actively check credentials via GET /users/sessioninfo.
@@ -660,12 +642,7 @@ fn call_auth_status(
                 };
                 let result = AuthStatusResult::new(&resolved_auth, Some(&valid_state), now);
                 let tool_result = match Content::json(&result) {
-                    Ok(c) => ToolResult::Immediate(Ok(CallToolResult {
-                        content: vec![c],
-                        is_error: Some(false),
-                        structured_content: None,
-                        meta: None,
-                    })),
+                    Ok(c) => ToolResult::Immediate(Ok(CallToolResult::success(vec![c]))),
                     Err(e) => ToolResult::Immediate(Err(e)),
                 };
                 (tool_result, vec![SideEffect::UpdateValidation(valid_state)])
@@ -677,12 +654,7 @@ fn call_auth_status(
                 };
                 let result = AuthStatusResult::new(&resolved_auth, Some(&invalid_state), now);
                 let tool_result = match Content::json(&result) {
-                    Ok(c) => ToolResult::Immediate(Ok(CallToolResult {
-                        content: vec![c],
-                        is_error: Some(false),
-                        structured_content: None,
-                        meta: None,
-                    })),
+                    Ok(c) => ToolResult::Immediate(Ok(CallToolResult::success(vec![c]))),
                     Err(e) => ToolResult::Immediate(Err(e)),
                 };
                 (
@@ -693,12 +665,7 @@ fn call_auth_status(
                 // Unexpected status — don't update validation state.
                 let result = AuthStatusResult::new(&resolved_auth, None, now);
                 let mut auth_result = match Content::json(&result) {
-                    Ok(c) => CallToolResult {
-                        content: vec![c],
-                        is_error: Some(false),
-                        structured_content: None,
-                        meta: None,
-                    },
+                    Ok(c) => CallToolResult::success(vec![c]),
                     Err(e) => {
                         return (ToolResult::Immediate(Err(e)), vec![]);
                     }
@@ -772,12 +739,7 @@ fn call_api_search(
         )
     })?;
 
-    Ok(CallToolResult {
-        content: vec![content],
-        is_error: Some(false),
-        structured_content: None,
-        meta: None,
-    })
+    Ok(CallToolResult::success(vec![content]))
 }
 
 fn call_api_explain(
@@ -788,12 +750,7 @@ fn call_api_explain(
     let detail = match spec.explain(&input.endpoint) {
         Ok(d) => d,
         Err(e) => {
-            return Ok(CallToolResult {
-                content: vec![Content::text(format!("{e}"))],
-                is_error: Some(true),
-                structured_content: None,
-                meta: None,
-            });
+            return Ok(CallToolResult::error(vec![Content::text(format!("{e}"))]));
         }
     };
 
@@ -805,12 +762,7 @@ fn call_api_explain(
         )
     })?;
 
-    Ok(CallToolResult {
-        content: vec![content],
-        is_error: Some(false),
-        structured_content: None,
-        meta: None,
-    })
+    Ok(CallToolResult::success(vec![content]))
 }
 
 fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolResult {
@@ -862,12 +814,7 @@ fn call_list_resources() -> CallToolResult {
         );
     }
 
-    CallToolResult {
-        content: vec![Content::text(output)],
-        is_error: Some(false),
-        structured_content: None,
-        meta: None,
-    }
+    CallToolResult::success(vec![Content::text(output)])
 }
 
 fn call_read_resource(arguments: Option<&Map<String, Value>>) -> Result<CallToolResult, ErrorData> {
@@ -878,27 +825,17 @@ fn call_read_resource(arguments: Option<&Map<String, Value>>) -> Result<CallTool
         .find(|e| e.uri == input.uri);
 
     if let Some(entry) = entry {
-        Ok(CallToolResult {
-            content: vec![Content::text(entry.content)],
-            is_error: Some(false),
-            structured_content: None,
-            meta: None,
-        })
+        Ok(CallToolResult::success(vec![Content::text(entry.content)]))
     } else {
         let available: Vec<&str> = onshape_mcp_resources::RESOURCES
             .iter()
             .map(|e| e.uri)
             .collect();
-        Ok(CallToolResult {
-            content: vec![Content::text(format!(
-                "Resource not found: {}. Available URIs: {}",
-                input.uri,
-                available.join(", ")
-            ))],
-            is_error: Some(true),
-            structured_content: None,
-            meta: None,
-        })
+        Ok(CallToolResult::error(vec![Content::text(format!(
+            "Resource not found: {}. Available URIs: {}",
+            input.uri,
+            available.join(", ")
+        ))]))
     }
 }
 
@@ -1157,14 +1094,9 @@ fn process_screenshot_response(
 ) -> (ToolResult, Vec<SideEffect>) {
     if !(200..300).contains(&status) {
         return (
-            ToolResult::Immediate(Ok(CallToolResult {
-                content: vec![Content::text(format!(
-                    "Shaded views API error (HTTP {status}): {body}"
-                ))],
-                is_error: Some(true),
-                structured_content: None,
-                meta: None,
-            })),
+            ToolResult::Immediate(Ok(CallToolResult::error(vec![Content::text(format!(
+                "Shaded views API error (HTTP {status}): {body}"
+            ))]))),
             vec![],
         );
     }
@@ -1225,12 +1157,9 @@ fn process_screenshot_response(
             files: vec![file_write],
             format: Box::new(move |results: &[FileWriteResult]| {
                 let Some(result) = results.first() else {
-                    return CallToolResult {
-                        content: vec![Content::text("internal error: no file write results")],
-                        is_error: Some(true),
-                        structured_content: None,
-                        meta: None,
-                    };
+                    return CallToolResult::error(vec![Content::text(
+                        "internal error: no file write results",
+                    )]);
                 };
                 format_screenshot_result(result, &label, &view_matrix)
             }),
@@ -1259,16 +1188,11 @@ fn format_screenshot_result(
                 "Saved screenshot: {} ({label}, viewMatrix={view_matrix})",
                 path.display()
             );
-            CallToolResult {
-                content: vec![
-                    Content::json(&structured)
-                        .unwrap_or_else(|_| Content::text(structured.to_string())),
-                    Content::text(summary),
-                ],
-                is_error: Some(false),
-                structured_content: None,
-                meta: None,
-            }
+            CallToolResult::success(vec![
+                Content::json(&structured)
+                    .unwrap_or_else(|_| Content::text(structured.to_string())),
+                Content::text(summary),
+            ])
         }
         FileWriteResult::Error { path, message } => {
             let structured = serde_json::json!({
@@ -1282,16 +1206,11 @@ fn format_screenshot_result(
                 "FAILED to save screenshot: {} ({label}, viewMatrix={view_matrix}) -- {message}",
                 path.display()
             );
-            CallToolResult {
-                content: vec![
-                    Content::json(&structured)
-                        .unwrap_or_else(|_| Content::text(structured.to_string())),
-                    Content::text(summary),
-                ],
-                is_error: Some(true),
-                structured_content: None,
-                meta: None,
-            }
+            CallToolResult::error(vec![
+                Content::json(&structured)
+                    .unwrap_or_else(|_| Content::text(structured.to_string())),
+                Content::text(summary),
+            ])
         }
     }
 }
@@ -2396,8 +2315,8 @@ mod tests {
             "should list shaded-views URI"
         );
         assert!(
-            text.text.contains("insights:sketch-constraints"),
-            "should list sketch-constraints URI"
+            text.text.contains("insights:sketch"),
+            "should list sketch URI"
         );
         assert!(text.text.contains("Shaded Views"), "should include title");
     }
