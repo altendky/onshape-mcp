@@ -2396,8 +2396,8 @@ mod tests {
             "should list shaded-views URI"
         );
         assert!(
-            text.text.contains("insights:sketch-constraints"),
-            "should list sketch-constraints URI"
+            text.text.contains("insights:sketch"),
+            "should list sketch URI"
         );
         assert!(text.text.contains("Shaded Views"), "should include title");
     }
