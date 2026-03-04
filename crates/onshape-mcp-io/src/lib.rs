@@ -375,9 +375,52 @@ impl ServerHandler for OnshapeMcpServer {
                         Err(e) => return Err(e),
                     }
                 }
+                ToolResult::WriteFiles { files, format } => {
+                    let results = write_files(&files).await;
+                    return Ok(format(&results));
+                }
             }
         }
     }
+}
+
+// ============================================================================
+// File Write Execution
+// ============================================================================
+
+/// Write files to disk as requested by [`ToolResult::WriteFiles`].
+///
+/// Creates the parent directory for each file if it does not exist.
+/// Returns one [`tools::FileWriteResult`] per input file.
+async fn write_files(files: &[tools::FileWrite]) -> Vec<tools::FileWriteResult> {
+    let mut results = Vec::with_capacity(files.len());
+    for file in files {
+        // Ensure the parent directory exists.
+        if let Some(parent) = file.path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            results.push(tools::FileWriteResult::Error {
+                path: file.path.clone(),
+                message: format!("failed to create directory {}: {e}", parent.display()),
+            });
+            continue;
+        }
+
+        match tokio::fs::write(&file.path, &file.data).await {
+            Ok(()) => {
+                results.push(tools::FileWriteResult::Success {
+                    path: file.path.clone(),
+                });
+            }
+            Err(e) => {
+                results.push(tools::FileWriteResult::Error {
+                    path: file.path.clone(),
+                    message: format!("failed to write file: {e}"),
+                });
+            }
+        }
+    }
+    results
 }
 
 // ============================================================================
