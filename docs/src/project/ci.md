@@ -68,7 +68,7 @@ after each test job. Nextest generates JUnit output via the `ci` profile configu
 | Nextest config | `.config/nextest.toml` |
 | Nextest profile | `ci` |
 | JUnit output path | `target/nextest/ci/junit.xml` |
-| Upload action | `mergifyio/gha-mergify-ci@v8` |
+| Upload action | `mergifyio/gha-mergify-ci@6875ab3991ec1db831576df1cd00a7870603aa9e # v8` |
 | Secret | `MERGIFY_TOKEN` (application key with `ci` scope) |
 
 ### Merge Strategy
