@@ -1415,6 +1415,13 @@ pub async fn run_http(
     if parsed_public_url.query().is_some() || parsed_public_url.fragment().is_some() {
         return Err("http.public_url must not include query parameters or fragments".into());
     }
+    if parsed_public_url.path() != "/" {
+        return Err(
+            "http.public_url must not include a path (e.g. use 'https://example.com' \
+             not 'https://example.com/prefix') — the server mounts all endpoints at the root"
+                .into(),
+        );
+    }
     // Strip trailing slash from the path for consistent path extension via
     // Url::path_segments_mut().extend().
     let public_url = {
