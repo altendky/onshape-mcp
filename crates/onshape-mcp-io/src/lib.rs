@@ -1404,6 +1404,12 @@ pub async fn run_http(
         .public_url
         .clone()
         .ok_or("http.public_url is required for the HTTP transport")?;
+    let parsed_public_url = url::Url::parse(&public_url)
+        .map_err(|e| format!("http.public_url must be a valid absolute URL: {e}"))?;
+    if !parsed_public_url.has_host() {
+        return Err("http.public_url must include a host".into());
+    }
+    let public_url = public_url.trim_end_matches('/').to_string();
     let onshape_client_id = config
         .http
         .onshape_client_id
