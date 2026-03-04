@@ -93,6 +93,8 @@ struct IssuedAuthCode {
     pkce_code_challenge: Option<String>,
     /// Onshape user ID associated with this code.
     user_id: String,
+    /// When this code was issued (used to enforce [`AUTH_CODE_TTL_SECS`]).
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// An issued MCP access token → user mapping.
@@ -135,6 +137,9 @@ pub(crate) struct OAuthServerState {
 
 /// MCP access token lifetime (1 hour, matching Onshape).
 const TOKEN_LIFETIME_SECS: i64 = 3600;
+
+/// Maximum lifetime of an authorization code (RFC 6749 §4.1.2 recommends ≤10 min).
+const AUTH_CODE_TTL_SECS: i64 = 600;
 
 // ============================================================================
 // State Construction
@@ -723,6 +728,7 @@ async fn onshape_callback(
             redirect_uri: pending.redirect_uri.clone(),
             pkce_code_challenge: pending.pkce_code_challenge,
             user_id: session_info.id.clone(),
+            created_at: chrono::Utc::now(),
         },
     );
 
@@ -809,6 +815,11 @@ async fn handle_auth_code_grant(
     let Some(issued_code) = state.auth_codes.write().await.remove(code.as_str()) else {
         return Err(token_error("invalid_grant", "unknown or expired code"));
     };
+
+    // Reject expired authorization codes (RFC 6749 §4.1.2).
+    if chrono::Utc::now() > issued_code.created_at + chrono::Duration::seconds(AUTH_CODE_TTL_SECS) {
+        return Err(token_error("invalid_grant", "unknown or expired code"));
+    }
 
     // Validate client_id.
     if req.client_id.as_deref() != Some(&issued_code.client_id) {
@@ -1355,6 +1366,7 @@ mod tests {
                 redirect_uri: "https://example.com/callback".to_string(),
                 pkce_code_challenge: None,
                 user_id: "allowed-user-1".to_string(),
+                created_at: chrono::Utc::now(),
             },
         );
 
@@ -1388,6 +1400,7 @@ mod tests {
                 redirect_uri: "https://example.com/callback".to_string(),
                 pkce_code_challenge: None,
                 user_id: "allowed-user-1".to_string(),
+                created_at: chrono::Utc::now(),
             },
         );
 
@@ -1425,6 +1438,7 @@ mod tests {
                 redirect_uri: "https://example.com/callback".to_string(),
                 pkce_code_challenge: Some(challenge),
                 user_id: "allowed-user-1".to_string(),
+                created_at: chrono::Utc::now(),
             },
         );
 
@@ -1475,6 +1489,7 @@ mod tests {
                 redirect_uri: "https://example.com/callback".to_string(),
                 pkce_code_challenge: Some(challenge),
                 user_id: "allowed-user-1".to_string(),
+                created_at: chrono::Utc::now(),
             },
         );
 
@@ -1490,6 +1505,40 @@ mod tests {
 
         let result = handle_auth_code_grant(&state, &req).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn auth_code_grant_rejects_expired_code() {
+        let state = test_state();
+        let (client_id, client_secret) = register_test_client(&state).await;
+
+        let code = random_hex(32);
+        state.auth_codes.write().await.insert(
+            code.clone(),
+            IssuedAuthCode {
+                client_id: client_id.clone(),
+                redirect_uri: "https://example.com/callback".to_string(),
+                pkce_code_challenge: None,
+                user_id: "allowed-user-1".to_string(),
+                created_at: chrono::Utc::now() - chrono::Duration::seconds(AUTH_CODE_TTL_SECS + 1),
+            },
+        );
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some(code),
+            redirect_uri: Some("https://example.com/callback".to_string()),
+            client_id: Some(client_id),
+            client_secret: Some(client_secret),
+            code_verifier: None,
+            refresh_token: None,
+        };
+
+        let result = handle_auth_code_grant(&state, &req).await;
+        assert!(result.is_err());
+        let (status, json) = result.expect_err("should be Err");
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert_eq!(json.0["error"], "invalid_grant");
     }
 
     // ================================================================
