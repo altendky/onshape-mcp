@@ -26,6 +26,11 @@
         "ONSHAPE_MCP_NPM_COMMAND": "./target/release/onshape-mcp"
       },
       "enabled": false
+    },
+    "onshape-rust-http": {
+      "type": "remote",
+      "url": "http://localhost:8080/mcp",
+      "enabled": false
     }
   }
 }

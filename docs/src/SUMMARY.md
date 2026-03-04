@@ -29,7 +29,8 @@
 # Insights
 
 - [Shaded Views](mcp-resources/insights/shaded-views.md)
-- [Sketch Constraints](mcp-resources/insights/sketch-constraints.md)
+- [Sketch](mcp-resources/insights/sketch.md)
+- [Extrude](mcp-resources/insights/extrude.md)
 
 # Project Management
 

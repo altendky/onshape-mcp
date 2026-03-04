@@ -51,6 +51,38 @@ enum Command {
         #[command(subcommand)]
         action: AuthCommand,
     },
+    /// Run the MCP server over Streamable HTTP transport.
+    ///
+    /// Serves the MCP endpoint at `/mcp` with per-user OAuth authentication
+    /// via Onshape. Requires `public_url`, `onshape_client_id`, and
+    /// `onshape_client_secret` to be configured.
+    Http {
+        /// Listen address (overrides config file).
+        #[arg(long)]
+        host: Option<String>,
+
+        /// Listen port (overrides config file).
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// Public URL of this server (overrides config file).
+        #[arg(long)]
+        public_url: Option<String>,
+
+        /// Onshape OAuth app client ID (overrides config file).
+        #[arg(long)]
+        onshape_client_id: Option<String>,
+
+        /// Onshape OAuth app client secret (overrides config file).
+        #[arg(long)]
+        onshape_client_secret: Option<String>,
+
+        /// Comma-separated list of allowed users (id:name pairs).
+        ///
+        /// Overrides config file. Example: `--allowed-users "abc123:Alice,def456:Bob"`
+        #[arg(long)]
+        allowed_users: Option<String>,
+    },
 }
 
 /// Authentication subcommands.
@@ -78,6 +110,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     match cli.command {
         Some(Command::Auth { ref action }) => handle_auth_command(action, &cli).await,
+        Some(Command::Http {
+            ref host,
+            ref port,
+            ref public_url,
+            ref onshape_client_id,
+            ref onshape_client_secret,
+            ref allowed_users,
+        }) => {
+            run_http_server(
+                &cli,
+                host.clone(),
+                *port,
+                public_url.clone(),
+                onshape_client_id.clone(),
+                onshape_client_secret.clone(),
+                allowed_users.clone(),
+            )
+            .await
+        }
         None => run_server(cli).await,
     }
 }
@@ -112,6 +163,45 @@ async fn run_server(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + S
             })?;
 
     onshape_mcp_io::run(NAME, VERSION, config).await
+}
+
+/// Run the MCP server over Streamable HTTP transport.
+#[allow(clippy::too_many_arguments)]
+async fn run_http_server(
+    cli: &Cli,
+    host: Option<String>,
+    port: Option<u16>,
+    public_url: Option<String>,
+    onshape_client_id: Option<String>,
+    onshape_client_secret: Option<String>,
+    allowed_users: Option<String>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let cli_overrides = build_cli_overrides(cli);
+
+    let mut config =
+        onshape_mcp_io::config::load_config_with_overrides(cli.config.as_deref(), cli_overrides)?;
+
+    // Apply HTTP-specific CLI overrides.
+    if let Some(h) = host {
+        config.http.host = h;
+    }
+    if let Some(p) = port {
+        config.http.port = p;
+    }
+    if let Some(url) = public_url {
+        config.http.public_url = Some(url);
+    }
+    if let Some(id) = onshape_client_id {
+        config.http.onshape_client_id = Some(id);
+    }
+    if let Some(secret) = onshape_client_secret {
+        config.http.onshape_client_secret = Some(secrecy::SecretString::from(secret));
+    }
+    if let Some(users_csv) = allowed_users {
+        config.http.allowed_users = onshape_mcp_core::config::parse_allowed_users_csv(&users_csv);
+    }
+
+    onshape_mcp_io::run_http(NAME, VERSION, config).await
 }
 
 /// Handle `auth` subcommands.
