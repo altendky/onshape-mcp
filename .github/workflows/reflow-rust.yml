@@ -141,6 +141,8 @@ jobs:
     needs: [library, resolve-versions, build]
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
     continue-on-error: ${{ matrix.rust.matrix == 'beta' }}
+    env:
+      MERGIFY_TOKEN_AVAILABLE: ${{ secrets.MERGIFY_TOKEN != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -174,4 +176,11 @@ jobs:
 
       - name: Run tests
         if: matrix.libc.matrix != 'musl'
-        run: cargo-nextest nextest run --archive-file nextest-archive.tar.zst --workspace-remap .
+        run: cargo-nextest nextest run --profile ci --archive-file nextest-archive.tar.zst --workspace-remap .
+
+      - name: Upload test results to Mergify CI Insights
+        if: (success() || failure()) && env.MERGIFY_TOKEN_AVAILABLE == 'true'
+        uses: mergifyio/gha-mergify-ci@6875ab3991ec1db831576df1cd00a7870603aa9e # v8
+        with:
+          token: ${{ secrets.MERGIFY_TOKEN }}
+          report_path: target/nextest/ci/junit.xml
