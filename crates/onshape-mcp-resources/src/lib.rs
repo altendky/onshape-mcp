@@ -19,7 +19,7 @@
 //! No Rust code changes are needed in either case.
 
 use rmcp::model::{
-    Annotated, Annotations, RawResource, ReadResourceResult, ResourceContents, Role,
+    AnnotateAble, Annotated, RawResource, ReadResourceResult, ResourceContents, Role,
 };
 
 // ============================================================================
@@ -86,22 +86,15 @@ pub enum ResourceError {
 pub fn list_resources() -> Vec<Annotated<RawResource>> {
     RESOURCES
         .iter()
-        .map(|entry| Annotated {
-            raw: RawResource {
-                uri: entry.uri.into(),
-                name: entry.name.into(),
-                title: Some(entry.title.into()),
-                description: Some(entry.description.into()),
-                mime_type: Some("text/markdown".into()),
-                size: Some(u32::try_from(entry.content.len()).unwrap_or(u32::MAX)),
-                icons: None,
-                meta: None,
-            },
-            annotations: Some(Annotations {
-                audience: Some(vec![Role::Assistant]),
-                priority: Some(0.8),
-                last_modified: None,
-            }),
+        .map(|entry| {
+            RawResource::new(entry.uri, entry.name)
+                .with_title(entry.title)
+                .with_description(entry.description)
+                .with_mime_type("text/markdown")
+                .with_size(u32::try_from(entry.content.len()).unwrap_or(u32::MAX))
+                .no_annotation()
+                .with_audience(vec![Role::Assistant])
+                .with_priority(0.8)
         })
         .collect()
 }
@@ -115,13 +108,10 @@ pub fn read_resource(uri: &str) -> ResourceResult {
     let result = RESOURCES
         .iter()
         .find(|entry| entry.uri == uri)
-        .map(|entry| ReadResourceResult {
-            contents: vec![ResourceContents::TextResourceContents {
-                uri: entry.uri.into(),
-                mime_type: Some("text/markdown".into()),
-                text: entry.content.into(),
-                meta: None,
-            }],
+        .map(|entry| {
+            ReadResourceResult::new(vec![
+                ResourceContents::text(entry.content, entry.uri).with_mime_type("text/markdown"),
+            ])
         })
         .ok_or_else(|| ResourceError::NotFound(uri.into()));
 

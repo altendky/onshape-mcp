@@ -35,7 +35,7 @@ oauth2-reqwest = "0.1.0-alpha.3"
 open = "5"
 rand = "0.9"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
-rmcp = "0.17"
+rmcp = "1.0"
 schemars = "1"
 sha2 = "0.10"
 secrecy = { version = "0.10", features = ["serde"] }
