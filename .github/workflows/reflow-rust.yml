@@ -177,7 +177,7 @@ jobs:
         run: cargo-nextest nextest run --profile ci --archive-file nextest-archive.tar.zst --workspace-remap .
 
       - name: Upload test results to Mergify CI Insights
-        if: success() || failure()
+        if: always()
         uses: mergifyio/gha-mergify-ci@v8
         with:
           token: ${{ secrets.MERGIFY_TOKEN }}
