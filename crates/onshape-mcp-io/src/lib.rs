@@ -1406,6 +1406,9 @@ pub async fn run_http(
         .ok_or("http.public_url is required for the HTTP transport")?;
     let parsed_public_url = url::Url::parse(&public_url)
         .map_err(|e| format!("http.public_url must be a valid absolute URL: {e}"))?;
+    if !matches!(parsed_public_url.scheme(), "http" | "https") {
+        return Err("http.public_url must use http:// or https://".into());
+    }
     if !parsed_public_url.has_host() {
         return Err("http.public_url must include a host".into());
     }
