@@ -106,7 +106,7 @@ else
 
 	if [ "$PATCH" -gt 0 ]; then
 		# Current version is a point release (e.g., 1.94.1)
-		# Try previous patch within the same minor
+		# Search the same minor for any available patch version
 		SEARCH_MINOR="$MINOR"
 	elif [ "$MINOR" -gt 0 ]; then
 		# Current version is X.Y.0, search the previous minor
