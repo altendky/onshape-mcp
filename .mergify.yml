@@ -1,6 +1,7 @@
 queue_rules:
   - name: default
     autoqueue: true
+    branch_protection_injection_mode: merge
     queue_conditions:
       - label = queue
       - base = main
