@@ -34,6 +34,8 @@ check_docker_hub_tag() {
 # Function to find the latest available version for a given major.minor on Docker Hub
 # Queries the Docker Hub API and filters for exact version-alpine tags
 # Returns: the version string (e.g., "1.93.1") or empty if none found
+# TODO: page_size=100 is Docker Hub's maximum; handle pagination if tag counts
+#       per minor version ever exceed 100 (currently ~33 at most historically)
 find_latest_docker_version() {
 	local major="$1"
 	local minor="$2"
