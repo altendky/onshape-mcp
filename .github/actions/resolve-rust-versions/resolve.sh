@@ -72,10 +72,14 @@ is_within_grace_period() {
 	[ "$age_seconds" -le "$grace_seconds" ]
 }
 
-# Get stable version from rustup
-echo "Querying rustup for stable version..."
-RUSTUP_STABLE=$(get_rustup_version "stable")
-echo "Rustup stable: $RUSTUP_STABLE"
+# Fetch stable channel TOML once, then parse both version and date from it.
+# This avoids a TOCTOU race where two separate fetches could see different
+# channel states if the TOML is updated between them (e.g., on release day).
+echo "Querying rustup for stable channel..."
+STABLE_TOML=$(curl -sSf "https://static.rust-lang.org/dist/channel-rust-stable.toml")
+RUSTUP_STABLE=$(echo "$STABLE_TOML" | yq -p toml '.pkg.rust.version' | grep -oP '^\S+')
+STABLE_RELEASE_DATE=$(echo "$STABLE_TOML" | yq -p toml '.date')
+echo "Rustup stable: $RUSTUP_STABLE (released $STABLE_RELEASE_DATE)"
 
 # Get beta version from rustup
 echo "Querying rustup for beta version..."
@@ -92,11 +96,10 @@ else
 	echo "::warning::Docker Hub does not have rust:${RUSTUP_STABLE}-alpine"
 	STABLE_DOCKER_AVAILABLE="false"
 
-	# Check when the current stable was released via the rustup channel TOML
-	# If it was released recently (within the grace period), Docker Hub likely
-	# hasn't caught up yet — this is expected on release day
-	RELEASE_DATE=$(get_rustup_release_date "stable")
-	echo "Rustup stable release date: $RELEASE_DATE"
+	# STABLE_RELEASE_DATE was already parsed from the same TOML fetch as RUSTUP_STABLE.
+	# If the stable was released recently (within the grace period), Docker Hub likely
+	# hasn't caught up yet — this is expected on release day.
+	echo "Rustup stable release date: $STABLE_RELEASE_DATE"
 
 	# Find the latest previous version available on Docker Hub
 	# by searching for the previous minor version's tags
@@ -125,13 +128,13 @@ else
 		# Grace period is based on how recently the current stable was released,
 		# not on when Docker Hub last updated the previous version.
 		# On release day, Docker Hub needs time to build and publish new images.
-		if is_within_grace_period "${RELEASE_DATE}T00:00:00Z" "$GRACE_PERIOD_HOURS"; then
-			echo "::warning::Using previous version ${PREV_VERSION} (stable ${RUSTUP_STABLE} released ${RELEASE_DATE}, within ${GRACE_PERIOD_HOURS}h grace period)"
+		if is_within_grace_period "${STABLE_RELEASE_DATE}T00:00:00Z" "$GRACE_PERIOD_HOURS"; then
+			echo "::warning::Using previous version ${PREV_VERSION} (stable ${RUSTUP_STABLE} released ${STABLE_RELEASE_DATE}, within ${GRACE_PERIOD_HOURS}h grace period)"
 			RESOLVED_STABLE="$PREV_VERSION"
 			STABLE_DOCKER_AVAILABLE="true"
 		else
 			echo "::error::Docker Hub lag exceeds grace period of ${GRACE_PERIOD_HOURS} hours"
-			echo "::error::Stable ${RUSTUP_STABLE} was released ${RELEASE_DATE} but Docker Hub still lacks rust:${RUSTUP_STABLE}-alpine"
+			echo "::error::Stable ${RUSTUP_STABLE} was released ${STABLE_RELEASE_DATE} but Docker Hub still lacks rust:${RUSTUP_STABLE}-alpine"
 			exit 1
 		fi
 	else
