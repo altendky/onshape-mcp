@@ -128,7 +128,10 @@ else
 		# Grace period is based on how recently the current stable was released,
 		# not on when Docker Hub last updated the previous version.
 		# On release day, Docker Hub needs time to build and publish new images.
-		if is_within_grace_period "${STABLE_RELEASE_DATE}T00:00:00Z" "$GRACE_PERIOD_HOURS"; then
+		# Anchor to end-of-day since STABLE_RELEASE_DATE is date-only (no time).
+		# This ensures the grace period is at least GRACE_PERIOD_HOURS from the
+		# actual release moment, at the cost of up to ~24h extra tolerance.
+		if is_within_grace_period "${STABLE_RELEASE_DATE}T23:59:59Z" "$GRACE_PERIOD_HOURS"; then
 			echo "::warning::Using previous version ${PREV_VERSION} (stable ${RUSTUP_STABLE} released ${STABLE_RELEASE_DATE}, within ${GRACE_PERIOD_HOURS}h grace period)"
 			RESOLVED_STABLE="$PREV_VERSION"
 			STABLE_DOCKER_AVAILABLE="true"
