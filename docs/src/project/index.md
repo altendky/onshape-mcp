@@ -26,6 +26,11 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 - [npm Wrapper](npm-wrapper.md) — npm package design for `npx` installation
 - [OAuth Proxy](oauth-proxy.md) — Cloudflare Worker token exchange proxy for OAuth2
 
+### Knowledge Pipeline
+
+- [Knowledge Pipeline](knowledge-pipeline/index.md) — Self-supervised methodology for building CAD API knowledge
+- [Knowledge Base](../knowledge/index.md) — Layered source knowledge produced by the pipeline
+
 ### Project Management
 
 - [Implementation](implementation.md) — Phase checklist, roadmap
