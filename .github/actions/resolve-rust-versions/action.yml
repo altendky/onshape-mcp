@@ -8,7 +8,7 @@ inputs:
   grace-period-hours:
     description: Grace period in hours for version lag between sources
     required: false
-    default: "24"
+    default: "48"
 
 outputs:
   msrv:
