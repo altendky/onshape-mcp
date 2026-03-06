@@ -8,15 +8,6 @@ backend = "aqua:EmbarkStudios/cargo-deny"
 "platforms.windows-x64" = { checksum = "sha256:413f0e2ce780d0d14ba8e9339f9fb033419a8a971ec7714faec518e4a664bdb0", url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.0/cargo-deny-0.19.0-x86_64-pc-windows-msvc.tar.gz"}
 
 [[tools."aqua:superfly/flyctl"]]
-version = "0.4.17"
-backend = "aqua:superfly/flyctl"
-"platforms.linux-arm64" = { checksum = "sha256:fe315d9dc7613494230ac61c72c559a107904732446b3802a2d6d19cf104f535", url = "https://github.com/superfly/flyctl/releases/download/v0.4.17/flyctl_0.4.17_Linux_arm64.tar.gz"}
-"platforms.linux-x64" = { checksum = "sha256:46f1c8a9ea09905de4f70d386d216a0f88167fd8a3c6f6d6d0c6775b166e0834", url = "https://github.com/superfly/flyctl/releases/download/v0.4.17/flyctl_0.4.17_Linux_x86_64.tar.gz"}
-"platforms.macos-arm64" = { checksum = "sha256:54b53648d27633d56ddbb0301ef69f3f5181664c27efadc9404f377dec14cf6a", url = "https://github.com/superfly/flyctl/releases/download/v0.4.17/flyctl_0.4.17_macOS_arm64.tar.gz"}
-"platforms.macos-x64" = { checksum = "sha256:5680022bd6bd8db84207c6387e3d98f5da8bf98cf96a79e841d5deec06b45bc9", url = "https://github.com/superfly/flyctl/releases/download/v0.4.17/flyctl_0.4.17_macOS_x86_64.tar.gz"}
-"platforms.windows-x64" = { checksum = "sha256:d4c21b58b0062072e4063e6520302d5e09a30118146073d27134298dff3e2672", url = "https://github.com/superfly/flyctl/releases/download/v0.4.17/flyctl_0.4.17_Windows_x86_64.zip"}
-
-[[tools."aqua:superfly/flyctl"]]
 version = "0.4.19"
 backend = "aqua:superfly/flyctl"
 "platforms.linux-arm64" = { checksum = "sha256:79976d10111d43896e3369c28ddaa3b05ddd1eeea3676ee7f605c647bc773b09", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_Linux_arm64.tar.gz"}
@@ -58,10 +49,6 @@ backend = "core:node"
 "platforms.macos-arm64" = { checksum = "sha256:a1a54f46a750d2523d628d924aab61758a51c9dad3e0238beb14141be9615dd3", url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-darwin-arm64.tar.gz"}
 "platforms.macos-x64" = { checksum = "sha256:f2879eb810e25993a0578e5d878930266fd2eafcffe9f2839b3d8db354d4879e", url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-darwin-x64.tar.gz"}
 "platforms.windows-x64" = { checksum = "sha256:313fa40c0d7b18575821de8cb17483031fe07d95de5994f6f435f3b345f85c66", url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-win-x64.zip"}
-
-[[tools."npm:wrangler"]]
-version = "4.70.0"
-backend = "npm:wrangler"
 
 [[tools."npm:wrangler"]]
 version = "4.71.0"
