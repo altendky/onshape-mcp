@@ -26,6 +26,22 @@
 - [npm Wrapper](project/npm-wrapper.md)
 - [OAuth Proxy](project/oauth-proxy.md)
 
+# Knowledge Pipeline
+
+- [Overview](project/knowledge-pipeline/index.md)
+  - [Architecture](project/knowledge-pipeline/architecture.md)
+  - [Methodology](project/knowledge-pipeline/methodology.md)
+  - [Reference Models](project/knowledge-pipeline/reference-models.md)
+  - [Open Questions](project/knowledge-pipeline/open-questions.md)
+
+# Knowledge Base
+
+- [Overview](knowledge/index.md)
+  - [Generic CAD Concepts](knowledge/generic-cad/index.md)
+  - [Onshape Domain Model](knowledge/onshape-domain/index.md)
+  - [API Mechanics](knowledge/api-mechanics/index.md)
+  - [Workflow Patterns](knowledge/workflow-patterns/index.md)
+
 # Insights
 
 - [Shaded Views](mcp-resources/insights/shaded-views.md)
