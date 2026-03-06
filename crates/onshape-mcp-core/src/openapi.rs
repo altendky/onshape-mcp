@@ -34,6 +34,10 @@ pub enum OpenApiError {
     /// Invalid parameters for an API call.
     #[error("invalid parameters: {reason}")]
     InvalidParams { reason: String },
+
+    /// The requested schema was not found.
+    #[error("schema not found: {schema_name}")]
+    SchemaNotFound { schema_name: String },
 }
 
 // ============================================================================
@@ -161,6 +165,30 @@ struct ParsedParameter {
 // OpenApiSpec
 // ============================================================================
 
+/// Detail of a component schema, returned by schema lookup.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SchemaDetail {
+    /// The schema name (e.g., `"BTMParameterEnum-145"`).
+    pub name: String,
+    /// Description from the schema, if present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Parent schema name from `allOf.$ref`, if this is a subtype.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// Merged properties (own + inherited from parent via `allOf`).
+    pub properties: Value,
+    /// Required property names, if specified.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub required: Vec<String>,
+    /// Valid `btType` discriminator values, if this schema is polymorphic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtypes: Option<Vec<String>>,
+    /// The discriminator property name (typically `"btType"`), if present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discriminator_property: Option<String>,
+}
+
 /// A parsed and indexed `OpenAPI` specification.
 #[derive(Debug)]
 pub struct OpenApiSpec {
@@ -170,6 +198,8 @@ pub struct OpenApiSpec {
     endpoints: HashMap<String, ParsedEndpoint>,
     /// Ordered list of operation IDs (for consistent search output).
     operation_ids: Vec<String>,
+    /// Component schemas from the spec, for `$ref` resolution and schema lookup.
+    components: HashMap<String, Value>,
 }
 
 impl OpenApiSpec {
@@ -237,6 +267,7 @@ impl OpenApiSpec {
             server_url,
             endpoints,
             operation_ids,
+            components,
         })
     }
 
@@ -422,9 +453,213 @@ impl OpenApiSpec {
         })
     }
 
+    /// Look up a component schema by name and return its detail.
+    ///
+    /// Merges parent properties (from `allOf.$ref`) into a flat `properties`
+    /// object, annotates polymorphic `$ref` properties with `x-bttype-options`,
+    /// and includes the discriminator subtypes if the schema is polymorphic.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the schema name is not found in the spec's components.
+    pub fn lookup_schema(&self, name: &str) -> Result<SchemaDetail, OpenApiError> {
+        let schema = self
+            .components
+            .get(name)
+            .ok_or_else(|| OpenApiError::SchemaNotFound {
+                schema_name: name.to_string(),
+            })?;
+
+        let description = schema
+            .get("description")
+            .and_then(Value::as_str)
+            .map(String::from);
+
+        // Extract discriminator info from this schema.
+        let discriminator = schema.get("discriminator");
+        let discriminator_property = discriminator
+            .and_then(|d| d.get("propertyName"))
+            .and_then(Value::as_str)
+            .map(String::from);
+        let subtypes = discriminator
+            .and_then(|d| d.get("mapping"))
+            .and_then(Value::as_object)
+            .map(|m| m.keys().cloned().collect::<Vec<_>>());
+
+        // Merge properties from allOf (parent) and own properties.
+        let mut merged_props = serde_json::Map::new();
+        let mut parent = None;
+        let mut required: Vec<String> = Vec::new();
+
+        // Collect required from the top-level schema.
+        if let Some(req) = schema.get("required").and_then(Value::as_array) {
+            for r in req {
+                if let Some(s) = r.as_str() {
+                    required.push(s.to_string());
+                }
+            }
+        }
+
+        // Walk allOf to find parent ref and merge properties.
+        if let Some(all_of) = schema.get("allOf").and_then(Value::as_array) {
+            for item in all_of {
+                if let Some(ref_str) = item.get("$ref").and_then(Value::as_str) {
+                    // This is the parent reference.
+                    if let Some(parent_name) = ref_str.strip_prefix("#/components/schemas/") {
+                        parent = Some(parent_name.to_string());
+                        // Merge parent properties (one level only).
+                        if let Some(parent_schema) = self.components.get(parent_name) {
+                            if let Some(props) =
+                                parent_schema.get("properties").and_then(Value::as_object)
+                            {
+                                for (k, v) in props {
+                                    merged_props.insert(k.clone(), v.clone());
+                                }
+                            }
+                            // Collect parent required.
+                            if let Some(req) =
+                                parent_schema.get("required").and_then(Value::as_array)
+                            {
+                                for r in req {
+                                    if let Some(s) = r.as_str()
+                                        && !required.contains(&s.to_string())
+                                    {
+                                        required.push(s.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(props) = item.get("properties").and_then(Value::as_object) {
+                    // Inline properties from allOf item.
+                    for (k, v) in props {
+                        merged_props.insert(k.clone(), v.clone());
+                    }
+                    // Collect required from allOf item.
+                    if let Some(req) = item.get("required").and_then(Value::as_array) {
+                        for r in req {
+                            if let Some(s) = r.as_str()
+                                && !required.contains(&s.to_string())
+                            {
+                                required.push(s.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Merge top-level properties (override parent if same key).
+        if let Some(props) = schema.get("properties").and_then(Value::as_object) {
+            for (k, v) in props {
+                merged_props.insert(k.clone(), v.clone());
+            }
+        }
+
+        // Annotate properties that reference polymorphic schemas.
+        let annotated =
+            Self::annotate_discriminators(&Value::Object(merged_props), &self.components);
+        let properties = annotated;
+
+        Ok(SchemaDetail {
+            name: name.to_string(),
+            description,
+            parent,
+            properties,
+            required,
+            subtypes,
+            discriminator_property,
+        })
+    }
+
     // ========================================================================
     // Private helpers
     // ========================================================================
+
+    /// Walk a schema's properties and annotate any `$ref` (or `items.$ref`)
+    /// that points to a schema with a `discriminator.mapping` by adding an
+    /// `x-bttype-options` array listing the valid btType values.
+    ///
+    /// Only examines one level of properties (does not recurse into subtypes).
+    fn annotate_discriminators(schema: &Value, components: &HashMap<String, Value>) -> Value {
+        let Some(props) = schema.as_object() else {
+            return schema.clone();
+        };
+
+        let mut annotated = props.clone();
+
+        for (key, value) in props {
+            let annotated_value = Self::annotate_single_property(value, components);
+            if annotated_value != *value {
+                annotated.insert(key.clone(), annotated_value);
+            }
+        }
+
+        Value::Object(annotated)
+    }
+
+    /// Check a single property value for `$ref` or `items.$ref` pointing to
+    /// a schema with a discriminator, and annotate it with `x-bttype-options`.
+    fn annotate_single_property(value: &Value, components: &HashMap<String, Value>) -> Value {
+        // Direct $ref
+        if let Some(ref_str) = value.get("$ref").and_then(Value::as_str)
+            && let Some(options) = Self::discriminator_options(ref_str, components)
+        {
+            let mut annotated = value.as_object().cloned().unwrap_or_default();
+            annotated.insert("x-bttype-options".to_string(), Value::Array(options));
+            return Value::Object(annotated);
+        }
+
+        // items.$ref (for array properties)
+        if let Some(items) = value.get("items")
+            && let Some(ref_str) = items.get("$ref").and_then(Value::as_str)
+            && let Some(options) = Self::discriminator_options(ref_str, components)
+        {
+            let mut annotated_items = items.as_object().cloned().unwrap_or_default();
+            annotated_items.insert("x-bttype-options".to_string(), Value::Array(options));
+            let mut annotated = value.as_object().cloned().unwrap_or_default();
+            annotated.insert("items".to_string(), Value::Object(annotated_items));
+            return Value::Object(annotated);
+        }
+
+        value.clone()
+    }
+
+    /// Annotate a resolved schema's `properties` with discriminator info.
+    ///
+    /// If the schema has a `properties` object, walk it and annotate any `$ref`
+    /// properties that point to discriminator schemas. Returns the schema with
+    /// the annotated properties in place.
+    fn annotate_schema_properties(schema: &Value, components: &HashMap<String, Value>) -> Value {
+        schema.get("properties").map_or_else(
+            || schema.clone(),
+            |props| {
+                let annotated_props = Self::annotate_discriminators(props, components);
+                let mut result = schema.clone();
+                if let Some(obj) = result.as_object_mut() {
+                    obj.insert("properties".to_string(), annotated_props);
+                }
+                result
+            },
+        )
+    }
+
+    /// Given a `$ref` string, check if the referenced schema has a discriminator
+    /// mapping. If so, return the mapping keys as a `Vec<Value>` of strings.
+    fn discriminator_options(
+        ref_str: &str,
+        components: &HashMap<String, Value>,
+    ) -> Option<Vec<Value>> {
+        let name = ref_str.strip_prefix("#/components/schemas/")?;
+        let schema = components.get(name)?;
+        let mapping = schema.get("discriminator")?.get("mapping")?.as_object()?;
+        let options: Vec<Value> = mapping.keys().cloned().map(Value::String).collect();
+        if options.is_empty() {
+            None
+        } else {
+            Some(options)
+        }
+    }
 
     fn extract_components(root: &Value) -> HashMap<String, Value> {
         let mut components = HashMap::new();
@@ -565,7 +800,10 @@ impl OpenApiSpec {
             let entry = Self::prefer_json_content(content_map);
             if let Some((content_type, schema_info)) = entry {
                 let schema = schema_info.get("schema").cloned();
-                let resolved = schema.map(|s| Self::resolve_ref_shallow(&s, components));
+                let resolved = schema.map(|s| {
+                    let resolved = Self::resolve_ref_shallow(&s, components);
+                    Self::annotate_schema_properties(&resolved, components)
+                });
                 return (true, resolved, Some(content_type.to_string()));
             }
         }
@@ -588,7 +826,8 @@ impl OpenApiSpec {
         let (_, schema_info) = Self::prefer_json_content(content)?;
         let schema = schema_info.get("schema")?;
 
-        Some(Self::resolve_ref_shallow(schema, components))
+        let resolved = Self::resolve_ref_shallow(schema, components);
+        Some(Self::annotate_schema_properties(&resolved, components))
     }
 
     /// Pick the `application/json` (or `application/json;…` variant) entry from
@@ -764,6 +1003,21 @@ mod tests {
                         "parameters": [],
                         "responses": { "200": {} }
                     }
+                },
+                "/partstudios/features": {
+                    "post": {
+                        "operationId": "addFeature",
+                        "summary": "Add a feature to a part studio",
+                        "tags": ["PartStudio"],
+                        "requestBody": {
+                            "content": {
+                                "application/json;charset=UTF-8; qs=0.09": {
+                                    "schema": { "$ref": "#/components/schemas/BTFeatureDefinitionCall-1406" }
+                                }
+                            }
+                        },
+                        "responses": { "200": {} }
+                    }
                 }
             },
             "components": {
@@ -787,6 +1041,133 @@ mod tests {
                             "name": { "type": "string" }
                         },
                         "required": ["name"]
+                    },
+                    "BTMFeature-134": {
+                        "type": "object",
+                        "properties": {
+                            "btType": { "type": "string", "description": "Type of JSON object." },
+                            "featureId": { "type": "string" },
+                            "name": { "type": "string" },
+                            "parameters": {
+                                "type": "array",
+                                "items": { "$ref": "#/components/schemas/BTMParameter-1" }
+                            }
+                        },
+                        "discriminator": {
+                            "propertyName": "btType",
+                            "mapping": {
+                                "BTMSketch-151": "#/components/schemas/BTMSketch-151",
+                                "BTMFeatureInvalid-1031": "#/components/schemas/BTMFeatureInvalid-1031"
+                            }
+                        }
+                    },
+                    "BTMSketch-151": {
+                        "type": "object",
+                        "properties": {
+                            "btType": { "type": "string" }
+                        },
+                        "allOf": [
+                            { "$ref": "#/components/schemas/BTMFeature-134" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "btType": { "type": "string" },
+                                    "constraints": { "type": "array" },
+                                    "entities": { "type": "array" }
+                                }
+                            }
+                        ]
+                    },
+                    "BTMParameter-1": {
+                        "type": "object",
+                        "properties": {
+                            "btType": { "type": "string", "description": "Type of JSON object." },
+                            "parameterId": { "type": "string" },
+                            "parameterName": { "type": "string" }
+                        },
+                        "description": "A parameter value.",
+                        "discriminator": {
+                            "propertyName": "btType",
+                            "mapping": {
+                                "BTMParameterEnum-145": "#/components/schemas/BTMParameterEnum-145",
+                                "BTMParameterQuantity-147": "#/components/schemas/BTMParameterQuantity-147",
+                                "BTMParameterString-149": "#/components/schemas/BTMParameterString-149"
+                            }
+                        }
+                    },
+                    "BTMParameterEnum-145": {
+                        "type": "object",
+                        "properties": {
+                            "btType": { "type": "string" }
+                        },
+                        "allOf": [
+                            { "$ref": "#/components/schemas/BTMParameter-1" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "btType": { "type": "string" },
+                                    "enumName": { "type": "string" },
+                                    "value": { "type": "string" }
+                                }
+                            }
+                        ]
+                    },
+                    "BTMParameterQuantity-147": {
+                        "type": "object",
+                        "properties": {
+                            "btType": { "type": "string" }
+                        },
+                        "allOf": [
+                            { "$ref": "#/components/schemas/BTMParameter-1" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "btType": { "type": "string" },
+                                    "expression": { "type": "string" },
+                                    "value": { "type": "number" }
+                                }
+                            }
+                        ]
+                    },
+                    "BTMParameterString-149": {
+                        "type": "object",
+                        "properties": {
+                            "btType": { "type": "string" }
+                        },
+                        "allOf": [
+                            { "$ref": "#/components/schemas/BTMParameter-1" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "btType": { "type": "string" },
+                                    "value": { "type": "string" }
+                                }
+                            }
+                        ]
+                    },
+                    "BTFeatureDefinitionCall-1406": {
+                        "type": "object",
+                        "properties": {
+                            "btType": { "type": "string" },
+                            "feature": { "$ref": "#/components/schemas/BTMFeature-134" },
+                            "libraryVersion": { "type": "integer" }
+                        }
+                    },
+                    "BTMFeatureInvalid-1031": {
+                        "type": "object",
+                        "properties": {
+                            "btType": { "type": "string" }
+                        },
+                        "allOf": [
+                            { "$ref": "#/components/schemas/BTMFeature-134" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "btType": { "type": "string" },
+                                    "reason": { "type": "string" }
+                                }
+                            }
+                        ]
                     }
                 }
             }
@@ -796,7 +1177,7 @@ mod tests {
     #[test]
     fn parse_spec() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
-        assert_eq!(spec.endpoint_count(), 5);
+        assert_eq!(spec.endpoint_count(), 6);
         assert_eq!(spec.server_url(), "https://example.com/api/v1");
     }
 
@@ -812,7 +1193,7 @@ mod tests {
     fn search_empty_query_returns_all() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let results = spec.search("", &SearchFilters::default());
-        assert_eq!(results.len(), 5);
+        assert_eq!(results.len(), 6);
     }
 
     #[test]
@@ -839,8 +1220,9 @@ mod tests {
                 ..SearchFilters::default()
             },
         );
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].operation_id, "listParts");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|r| r.operation_id == "listParts"));
+        assert!(results.iter().any(|r| r.operation_id == "addFeature"));
     }
 
     #[test]
@@ -995,5 +1377,173 @@ mod tests {
         let results_lower = spec.search("document", &SearchFilters::default());
         let results_upper = spec.search("DOCUMENT", &SearchFilters::default());
         assert_eq!(results_lower.len(), results_upper.len());
+    }
+
+    // ====================================================================
+    // Discriminator Annotation Tests
+    // ====================================================================
+
+    #[test]
+    fn explain_annotates_discriminator_refs_in_request_body() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let detail = spec.explain("addFeature").expect("should find");
+
+        let schema = detail
+            .request_body_schema
+            .expect("should have request body schema");
+        let props = schema.get("properties").expect("should have properties");
+
+        // The "feature" property refs BTMFeature-134 which has a discriminator.
+        let feature = props.get("feature").expect("should have feature property");
+        let options = feature
+            .get("x-bttype-options")
+            .expect("should have x-bttype-options annotation");
+        let options_arr = options.as_array().expect("should be an array");
+        assert!(options_arr.len() >= 2);
+        assert!(options_arr.contains(&Value::String("BTMSketch-151".to_string())));
+        assert!(options_arr.contains(&Value::String("BTMFeatureInvalid-1031".to_string())));
+    }
+
+    #[test]
+    fn explain_annotates_discriminator_refs_in_array_items() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+
+        // BTMFeature-134 has "parameters" which is an array of BTMParameter-1 refs.
+        // When addFeature is explained, the resolved BTFeatureDefinitionCall-1406
+        // should show annotations on the feature ref... but BTMFeature-134's own
+        // properties aren't resolved in the explain output (only one level of ref
+        // resolution). So let's use lookup_schema to check array items annotation.
+        let detail = spec
+            .lookup_schema("BTMFeature-134")
+            .expect("should find schema");
+        let props = detail.properties.as_object().expect("should be object");
+        let params = props.get("parameters").expect("should have parameters");
+        let items = params.get("items").expect("should have items");
+        let options = items
+            .get("x-bttype-options")
+            .expect("items should have x-bttype-options");
+        let options_arr = options.as_array().expect("should be an array");
+        assert!(options_arr.contains(&Value::String("BTMParameterEnum-145".to_string())));
+        assert!(options_arr.contains(&Value::String("BTMParameterQuantity-147".to_string())));
+        assert!(options_arr.contains(&Value::String("BTMParameterString-149".to_string())));
+    }
+
+    #[test]
+    fn explain_does_not_annotate_non_discriminator_refs() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let detail = spec.explain("getDocuments").expect("should find");
+
+        // DocumentList has no discriminator references — should have no annotations.
+        if let Some(schema) = detail.response_schema
+            && let Some(props) = schema.get("properties")
+            && let Some(obj) = props.as_object()
+        {
+            for (_key, value) in obj {
+                assert!(
+                    value.get("x-bttype-options").is_none(),
+                    "non-discriminator properties should not be annotated"
+                );
+            }
+        }
+    }
+
+    // ====================================================================
+    // Schema Lookup Tests
+    // ====================================================================
+
+    #[test]
+    fn lookup_schema_parent_type_has_subtypes() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let detail = spec
+            .lookup_schema("BTMParameter-1")
+            .expect("should find schema");
+
+        assert_eq!(detail.name, "BTMParameter-1");
+        assert_eq!(detail.description.as_deref(), Some("A parameter value."));
+        assert!(detail.parent.is_none(), "base type should have no parent");
+        assert_eq!(detail.discriminator_property.as_deref(), Some("btType"));
+
+        let subtypes = detail.subtypes.expect("should have subtypes");
+        assert_eq!(subtypes.len(), 3);
+        assert!(subtypes.contains(&"BTMParameterEnum-145".to_string()));
+        assert!(subtypes.contains(&"BTMParameterQuantity-147".to_string()));
+        assert!(subtypes.contains(&"BTMParameterString-149".to_string()));
+    }
+
+    #[test]
+    fn lookup_schema_subtype_merges_parent_properties() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let detail = spec
+            .lookup_schema("BTMParameterEnum-145")
+            .expect("should find schema");
+
+        assert_eq!(detail.name, "BTMParameterEnum-145");
+        assert_eq!(detail.parent.as_deref(), Some("BTMParameter-1"));
+        assert!(
+            detail.subtypes.is_none(),
+            "leaf type should have no subtypes"
+        );
+
+        let props = detail.properties.as_object().expect("should be object");
+        // Own properties
+        assert!(
+            props.contains_key("enumName"),
+            "should have own property enumName"
+        );
+        assert!(
+            props.contains_key("value"),
+            "should have own property value"
+        );
+        // Inherited properties from BTMParameter-1
+        assert!(
+            props.contains_key("parameterId"),
+            "should have inherited property parameterId"
+        );
+        assert!(
+            props.contains_key("parameterName"),
+            "should have inherited property parameterName"
+        );
+        assert!(props.contains_key("btType"), "should have btType property");
+    }
+
+    #[test]
+    fn lookup_schema_nonexistent_returns_error() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let err = spec.lookup_schema("NonExistent-999").unwrap_err();
+        assert!(matches!(err, OpenApiError::SchemaNotFound { .. }));
+    }
+
+    #[test]
+    fn lookup_schema_non_subtype_has_own_properties() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let detail = spec
+            .lookup_schema("BTFeatureDefinitionCall-1406")
+            .expect("should find schema");
+
+        assert!(detail.parent.is_none());
+        let props = detail.properties.as_object().expect("should be object");
+        assert!(props.contains_key("btType"));
+        assert!(props.contains_key("feature"));
+        assert!(props.contains_key("libraryVersion"));
+
+        // The "feature" property should be annotated with x-bttype-options
+        let feature = props.get("feature").expect("should have feature");
+        assert!(
+            feature.get("x-bttype-options").is_some(),
+            "feature ref should be annotated with discriminator options"
+        );
+    }
+
+    #[test]
+    fn lookup_schema_subtype_with_discriminator_has_subtypes() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let detail = spec
+            .lookup_schema("BTMFeature-134")
+            .expect("should find schema");
+
+        assert_eq!(detail.discriminator_property.as_deref(), Some("btType"));
+        let subtypes = detail.subtypes.expect("should have subtypes");
+        assert!(subtypes.contains(&"BTMSketch-151".to_string()));
+        assert!(subtypes.contains(&"BTMFeatureInvalid-1031".to_string()));
     }
 }

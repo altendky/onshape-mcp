@@ -14,6 +14,17 @@
 - [ ] Git ignore strategy — Discuss root .gitignore vs distributed approach, required patterns (target/, IDE files, OS files, etc.)
 - [x] Markdown validation — ~~Evaluate CI/pre-commit checks for markdown files~~ Implemented: markdownlint-cli2 for style/formatting, lychee for broken links. Remaining: prose linting with vale (deferred)
 
+- [ ] Schema surfacing configuration — The `onshape_api_explain` and `onshape_api_schema` tools make design choices about how much schema information to surface.
+  These are currently hardcoded but could be made configurable:
+  - **Explain discriminator annotation depth**: Currently adds `x-bttype-options` to properties that reference schemas with discriminators but keeps the `$ref` unresolved.
+    Alternative: resolve the `$ref` one more level deep and inline both the schema and the btType options (more self-contained but larger output).
+  - **Schema lookup property merging**: Currently merges parent (`allOf`) properties into child, giving a single flat `properties` object.
+    Alternative: return `own_properties` and `inherited_from` separately (more precise provenance but requires the LLM to mentally combine them).
+  - **Annotation depth limit**: How many levels of nested discriminators to annotate (currently 1).
+    Deeper annotation surfaces more info but risks output explosion for deep hierarchies like `BTMNode-19` (depth 4, 26 subtypes).
+  These could become tool parameters, server config options, or stay as hardcoded defaults based on observed LLM performance.
+  Defer until real usage data is available.
+
 ## Deferred
 
 Items to address later in the project:

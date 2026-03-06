@@ -207,6 +207,7 @@ pub fn list_tools() -> Vec<Tool> {
         tool_api_search_def(),
         tool_api_explain_def(),
         tool_api_call_def(),
+        tool_api_schema_def(),
         tool_list_resources_def(),
         tool_read_resource_def(),
         tool_screenshot_def(),
@@ -255,6 +256,13 @@ pub fn call_tool(
                 Err(e) => return ToolResult::Immediate(Err(e)),
             };
             call_api_call(arguments, spec)
+        }
+        "onshape_api_schema" => {
+            let spec = match require_spec(spec) {
+                Ok(s) => s,
+                Err(e) => return ToolResult::Immediate(Err(e)),
+            };
+            ToolResult::Immediate(call_api_schema(arguments, spec))
         }
         "onshape_list_resources" => ToolResult::Immediate(Ok(call_list_resources())),
         "onshape_read_resource" => ToolResult::Immediate(call_read_resource(arguments)),
@@ -345,6 +353,16 @@ pub struct AuthLoginInput {
     /// OAuth 2.0 client secret. Required for direct mode.
     #[serde(default)]
     pub client_secret: Option<String>,
+}
+
+/// Input schema for `onshape_api_schema`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ApiSchemaInput {
+    /// The schema name to look up (e.g., `"BTMParameterEnum-145"` or
+    /// `"BTFeatureDefinitionCall-1406"`). Use schema names from
+    /// `x-bttype-options` annotations in `onshape_api_explain` results,
+    /// or from the `subtypes` field in previous `onshape_api_schema` results.
+    pub schema: String,
 }
 
 /// Input schema for `onshape_read_resource`.
@@ -557,6 +575,27 @@ fn tool_list_resources_def() -> Tool {
         "List available resource documents with practical Onshape API guidance. \
          Returns URIs, titles, and descriptions. Use onshape_read_resource to \
          read a specific resource by URI.",
+        Arc::new(input_schema),
+    )
+    .annotate(ToolAnnotations::new().read_only(true).destructive(false))
+}
+
+#[allow(clippy::expect_used)]
+fn tool_api_schema_def() -> Tool {
+    let schema = schemars::schema_for!(ApiSchemaInput);
+    let input_schema: Value = serde_json::to_value(schema)
+        .expect("ApiSchemaInput schema serialization should never fail");
+    let input_schema = input_schema
+        .as_object()
+        .cloned()
+        .expect("Schema should be a JSON object");
+
+    Tool::new(
+        "onshape_api_schema",
+        "Look up an Onshape API schema by name. Returns the schema's properties \
+         (merged with inherited parent properties), discriminator subtypes if \
+         polymorphic, and parent type. Use schema names from x-bttype-options \
+         annotations in onshape_api_explain results to drill into specific types.",
         Arc::new(input_schema),
     )
     .annotate(ToolAnnotations::new().read_only(true).destructive(false))
@@ -815,6 +854,29 @@ fn call_list_resources() -> CallToolResult {
     }
 
     CallToolResult::success(vec![Content::text(output)])
+}
+
+fn call_api_schema(
+    arguments: Option<&Map<String, Value>>,
+    spec: &OpenApiSpec,
+) -> Result<CallToolResult, ErrorData> {
+    let input: ApiSchemaInput = parse_arguments(arguments)?;
+    let detail = match spec.lookup_schema(&input.schema) {
+        Ok(d) => d,
+        Err(e) => {
+            return Ok(CallToolResult::error(vec![Content::text(format!("{e}"))]));
+        }
+    };
+
+    let content = Content::json(&detail).map_err(|e| {
+        ErrorData::new(
+            ErrorCode::INTERNAL_ERROR,
+            format!("failed to serialize schema detail: {e}"),
+            None,
+        )
+    })?;
+
+    Ok(CallToolResult::success(vec![content]))
 }
 
 fn call_read_resource(arguments: Option<&Map<String, Value>>) -> Result<CallToolResult, ErrorData> {
@@ -1469,9 +1531,15 @@ mod tests {
     }
 
     #[test]
-    fn list_tools_has_eight_tools() {
+    fn list_tools_includes_api_schema() {
         let tools = list_tools();
-        assert_eq!(tools.len(), 8);
+        assert!(tools.iter().any(|t| t.name == "onshape_api_schema"));
+    }
+
+    #[test]
+    fn list_tools_has_nine_tools() {
+        let tools = list_tools();
+        assert_eq!(tools.len(), 9);
     }
 
     // --- auth_status tests ---
@@ -3123,5 +3191,189 @@ mod tests {
             }
             ViewSpec::Preset { .. } => panic!("expected Angles"),
         }
+    }
+
+    // ====================================================================
+    // Schema Lookup Tool Tests
+    // ====================================================================
+
+    fn schema_spec() -> OpenApiSpec {
+        OpenApiSpec::from_json(
+            r##"{
+                "openapi": "3.0.1",
+                "info": { "title": "Test API", "version": "1.0" },
+                "servers": [{ "url": "https://cad.onshape.com/api/v1" }],
+                "paths": {
+                    "/features": {
+                        "post": {
+                            "operationId": "addFeature",
+                            "summary": "Add feature",
+                            "tags": ["PartStudio"],
+                            "parameters": [],
+                            "requestBody": {
+                                "content": {
+                                    "application/json;charset=UTF-8; qs=0.09": {
+                                        "schema": {
+                                            "$ref": "#/components/schemas/BTFeatureDefCall-1406"
+                                        }
+                                    }
+                                }
+                            },
+                            "responses": { "200": {} }
+                        }
+                    }
+                },
+                "components": {
+                    "schemas": {
+                        "BTFeatureDefCall-1406": {
+                            "type": "object",
+                            "properties": {
+                                "btType": { "type": "string" },
+                                "feature": { "$ref": "#/components/schemas/BTMFeature-134" }
+                            }
+                        },
+                        "BTMFeature-134": {
+                            "type": "object",
+                            "properties": {
+                                "btType": { "type": "string" },
+                                "featureId": { "type": "string" },
+                                "name": { "type": "string" }
+                            },
+                            "discriminator": {
+                                "propertyName": "btType",
+                                "mapping": {
+                                    "BTMSketch-151": "#/components/schemas/BTMSketch-151"
+                                }
+                            }
+                        },
+                        "BTMSketch-151": {
+                            "type": "object",
+                            "properties": { "btType": { "type": "string" } },
+                            "allOf": [
+                                { "$ref": "#/components/schemas/BTMFeature-134" },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "btType": { "type": "string" },
+                                        "entities": { "type": "array" }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }"##,
+        )
+        .expect("schema test spec should parse")
+    }
+
+    #[test]
+    fn api_schema_returns_detail() {
+        let auth = not_configured();
+        let spec = schema_spec();
+        let mut args = Map::new();
+        args.insert(
+            "schema".to_string(),
+            Value::String("BTMFeature-134".to_string()),
+        );
+
+        let result = call_tool(
+            "onshape_api_schema",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let call_result = assert_immediate_ok(result);
+        assert_eq!(call_result.is_error, Some(false));
+
+        let content = &call_result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let detail: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(detail["name"], "BTMFeature-134");
+        assert_eq!(detail["discriminator_property"], "btType");
+
+        let subtypes = detail["subtypes"].as_array().expect("should have subtypes");
+        assert!(subtypes.contains(&Value::String("BTMSketch-151".to_string())));
+    }
+
+    #[test]
+    fn api_schema_subtype_includes_parent_properties() {
+        let auth = not_configured();
+        let spec = schema_spec();
+        let mut args = Map::new();
+        args.insert(
+            "schema".to_string(),
+            Value::String("BTMSketch-151".to_string()),
+        );
+
+        let result = call_tool(
+            "onshape_api_schema",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let call_result = assert_immediate_ok(result);
+        assert_eq!(call_result.is_error, Some(false));
+
+        let content = &call_result.content[0];
+        let text = content.raw.as_text().expect("should be text content");
+        let detail: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(detail["parent"], "BTMFeature-134");
+
+        let props = detail["properties"].as_object().expect("should be object");
+        // Inherited from BTMFeature-134
+        assert!(
+            props.contains_key("featureId"),
+            "should have inherited featureId"
+        );
+        assert!(props.contains_key("name"), "should have inherited name");
+        // Own property
+        assert!(props.contains_key("entities"), "should have own entities");
+    }
+
+    #[test]
+    fn api_schema_nonexistent_returns_tool_error() {
+        let auth = not_configured();
+        let spec = schema_spec();
+        let mut args = Map::new();
+        args.insert(
+            "schema".to_string(),
+            Value::String("NonExistent-999".to_string()),
+        );
+
+        let result = call_tool(
+            "onshape_api_schema",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let call_result = assert_immediate_ok(result);
+        assert_eq!(
+            call_result.is_error,
+            Some(true),
+            "nonexistent schema should return tool error"
+        );
+    }
+
+    #[test]
+    fn api_schema_without_spec_returns_error() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "schema".to_string(),
+            Value::String("BTMFeature-134".to_string()),
+        );
+
+        let err = assert_immediate_err(call_tool(
+            "onshape_api_schema",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
+        assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
     }
 }
