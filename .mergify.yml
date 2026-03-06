@@ -11,3 +11,11 @@ queue_rules:
 
 merge_queue:
   max_parallel_checks: 1
+
+pull_request_rules:
+  - name: Automatically approve Renovate PRs
+    conditions:
+      - author = altendky-renovate[bot]
+    actions:
+      review:
+        type: APPROVE
