@@ -234,7 +234,7 @@ jobs:
 
   all:
     name: all
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [checks, release-npm, cargo-publish, github-release]
     runs-on: ubuntu-latest
     steps:
