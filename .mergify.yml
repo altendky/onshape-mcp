@@ -3,13 +3,19 @@ queue_rules:
     autoqueue: true
     branch_protection_injection_mode: merge
     queue_conditions:
-      - label = queue
+      - label = enqueue
       - base = main
-      - check-success = all
-    merge_conditions:
-      - check-success = all
+      - "#approved-reviews-by >= 1"
     merge_method: merge
     checks_timeout: 90 min
 
 merge_queue:
   max_parallel_checks: 1
+
+pull_request_rules:
+  - name: Automatically approve Renovate PRs
+    conditions:
+      - author = altendky-renovate[bot]
+    actions:
+      review:
+        type: APPROVE
