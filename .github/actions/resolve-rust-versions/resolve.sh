@@ -15,14 +15,6 @@ get_rustup_version() {
 		grep -oP '^\S+'
 }
 
-# Function to get the release date from a Rust release channel TOML
-# Returns: a date string like "2026-03-05"
-get_rustup_release_date() {
-	local channel="$1"
-	curl -sSf "https://static.rust-lang.org/dist/channel-rust-${channel}.toml" |
-		yq -p toml '.date'
-}
-
 # Function to check if Docker Hub has a specific rust image tag
 # Returns: exit code 0 if tag exists, non-zero otherwise
 check_docker_hub_tag() {
