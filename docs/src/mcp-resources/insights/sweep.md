@@ -341,6 +341,8 @@ result with an existing mug body:
    `addPartStudioFeature` response includes a `sourceMicroversion`. Use it in
    subsequent calls to avoid microversion skew.
 
-6. **Path start determines sweep direction** — The sweep proceeds from the
-   start of the path to the end. The profile must be at the start. If the
-   profile is at the end, the sweep may fail or produce unexpected geometry.
+6. **Profile placement determines sweep extent** — The profile can be placed
+   at either end of the path. If the profile is placed in the middle of the
+   path, the sweep extends in both directions. The workflow above uses the
+   path start vertex for the construction plane as a convention, but placing
+   the profile at the other end is equally valid.
