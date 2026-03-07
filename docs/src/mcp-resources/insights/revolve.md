@@ -174,8 +174,11 @@ References a linear edge (typically a sketch line) to revolve around. Use
 }
 ```
 
-The axis can be any linear edge: a sketch line, a construction line, a model
-edge, or a default axis. The axis does **not** need to be a construction entity.
+The axis can be any linear edge: a sketch line, a construction line, or a model
+edge. The axis does **not** need to be a construction entity. A mate connector
+can also serve as the axis — use the mate connector button (Ctrl+M in the UI) to
+infer one from a point, edge, or face. This is how you revolve around a
+coordinate axis without drawing an explicit sketch line.
 
 ### `revolveType` — Revolution extent
 
