@@ -221,8 +221,7 @@ When `onshape_api_explain` returns a request body schema with `x-bttype-options`
     "parameterName": { "type": "string" },
     "enumName": { "type": "string" },
     "value": { "type": "string" }
-  },
-  "required": []
+  }
 }
 ```
 
@@ -242,7 +241,7 @@ For polymorphic schemas, the output also includes `discriminator_property` and `
 }
 ```
 
-Fields `description`, `parent`, `subtypes`, and `discriminator_property` are omitted when null/empty.
+Fields `description`, `parent`, `required`, `subtypes`, and `discriminator_property` are omitted when null/empty.
 Properties that are `$ref`s pointing to discriminator schemas include `x-bttype-options` annotations, enabling further drill-down.
 
 #### Discriminator Annotations in `onshape_api_explain`
