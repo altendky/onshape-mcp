@@ -265,7 +265,7 @@ pub fn call_tool(
             ToolResult::Immediate(call_api_schema(arguments, spec))
         }
         "onshape_list_resources" => ToolResult::Immediate(Ok(call_list_resources())),
-        "onshape_read_resource" => ToolResult::Immediate(call_read_resource(arguments)),
+        "onshape_read_resource" => ToolResult::Immediate(Ok(call_read_resource(arguments))),
         "onshape_screenshot" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
@@ -763,7 +763,10 @@ fn call_api_search(
     arguments: Option<&Map<String, Value>>,
     spec: &OpenApiSpec,
 ) -> Result<CallToolResult, ErrorData> {
-    let input: ApiSearchInput = parse_arguments(arguments)?;
+    let input: ApiSearchInput = match parse_arguments(arguments) {
+        Ok(input) => input,
+        Err(e) => return Ok(CallToolResult::error(vec![Content::text(e.message)])),
+    };
     let filters = SearchFilters {
         method: input.method,
         tag: input.tag,
@@ -785,7 +788,10 @@ fn call_api_explain(
     arguments: Option<&Map<String, Value>>,
     spec: &OpenApiSpec,
 ) -> Result<CallToolResult, ErrorData> {
-    let input: ApiExplainInput = parse_arguments(arguments)?;
+    let input: ApiExplainInput = match parse_arguments(arguments) {
+        Ok(input) => input,
+        Err(e) => return Ok(CallToolResult::error(vec![Content::text(e.message)])),
+    };
     let detail = match spec.explain(&input.endpoint) {
         Ok(d) => d,
         Err(e) => {
@@ -860,7 +866,10 @@ fn call_api_schema(
     arguments: Option<&Map<String, Value>>,
     spec: &OpenApiSpec,
 ) -> Result<CallToolResult, ErrorData> {
-    let input: ApiSchemaInput = parse_arguments(arguments)?;
+    let input: ApiSchemaInput = match parse_arguments(arguments) {
+        Ok(input) => input,
+        Err(e) => return Ok(CallToolResult::error(vec![Content::text(e.message)])),
+    };
     let detail = match spec.lookup_schema(&input.schema) {
         Ok(d) => d,
         Err(e) => {
@@ -879,25 +888,28 @@ fn call_api_schema(
     Ok(CallToolResult::success(vec![content]))
 }
 
-fn call_read_resource(arguments: Option<&Map<String, Value>>) -> Result<CallToolResult, ErrorData> {
-    let input: ReadResourceInput = parse_arguments(arguments)?;
+fn call_read_resource(arguments: Option<&Map<String, Value>>) -> CallToolResult {
+    let input: ReadResourceInput = match parse_arguments(arguments) {
+        Ok(input) => input,
+        Err(e) => return CallToolResult::error(vec![Content::text(e.message)]),
+    };
 
     let entry = onshape_mcp_resources::RESOURCES
         .iter()
         .find(|e| e.uri == input.uri);
 
     if let Some(entry) = entry {
-        Ok(CallToolResult::success(vec![Content::text(entry.content)]))
+        CallToolResult::success(vec![Content::text(entry.content)])
     } else {
         let available: Vec<&str> = onshape_mcp_resources::RESOURCES
             .iter()
             .map(|e| e.uri)
             .collect();
-        Ok(CallToolResult::error(vec![Content::text(format!(
+        CallToolResult::error(vec![Content::text(format!(
             "Resource not found: {}. Available URIs: {}",
             input.uri,
             available.join(", ")
-        ))]))
+        ))])
     }
 }
 
