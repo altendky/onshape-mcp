@@ -147,7 +147,7 @@ the plane, optionally refine to 2–3x the largest sketch entity dimension using
 
 ## Referencing a cPlane as a Sketch Plane
 
-After creating a cPlane, discover its face deterministic ID:
+After creating a cPlane, discover its face ID:
 
 ```javascript
 function(context is Context, queries is map) {
@@ -155,7 +155,8 @@ function(context is Context, queries is map) {
 }
 ```
 
-Use the resulting `transientId` in the sketch's `sketchPlane` parameter:
+The response contains a `transientId` value that serves as the `deterministicIds`
+entry for the sketch's `sketchPlane` parameter:
 
 ```json
 {
