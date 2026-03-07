@@ -722,6 +722,18 @@ Full enum also includes: `NONE`, `NORMAL`, `PROJECTED`, `PIERCE`, `QUADRANT`,
       "parameterId": "alignment",
       "enumName": "DimensionAlignment",
       "value": "ALIGNED"
+    },
+    {
+      "btType": "BTMParameterQuantity-147",
+      "parameterId": "labelRatio",
+      "expression": "0.5",
+      "isInteger": false
+    },
+    {
+      "btType": "BTMParameterQuantity-147",
+      "parameterId": "labelDistance",
+      "expression": "0.01*m",
+      "isInteger": false
     }
   ]
 }
@@ -744,6 +756,18 @@ Full enum also includes: `NONE`, `NORMAL`, `PROJECTED`, `PIERCE`, `QUADRANT`,
       "btType": "BTMParameterQuantity-147",
       "parameterId": "length",
       "expression": "1 in",
+      "isInteger": false
+    },
+    {
+      "btType": "BTMParameterQuantity-147",
+      "parameterId": "labelRatio",
+      "expression": "0.5",
+      "isInteger": false
+    },
+    {
+      "btType": "BTMParameterQuantity-147",
+      "parameterId": "labelDistance",
+      "expression": "0.01*m",
       "isInteger": false
     }
   ]
