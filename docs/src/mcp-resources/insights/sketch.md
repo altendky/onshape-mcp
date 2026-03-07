@@ -608,6 +608,7 @@ Full enum also includes: `NONE`, `NORMAL`, `PROJECTED`, `PIERCE`, `QUADRANT`,
 {
   "btType": "BTMSketchConstraint-2",
   "constraintType": "HORIZONTAL",
+  "entityId": "cHorizontal1",
   "parameters": [
     {
       "btType": "BTMParameterString-149",
@@ -624,6 +625,7 @@ Full enum also includes: `NONE`, `NORMAL`, `PROJECTED`, `PIERCE`, `QUADRANT`,
 {
   "btType": "BTMSketchConstraint-2",
   "constraintType": "COINCIDENT",
+  "entityId": "cCoincident1",
   "parameters": [
     {
       "btType": "BTMParameterString-149",
@@ -645,6 +647,7 @@ Full enum also includes: `NONE`, `NORMAL`, `PROJECTED`, `PIERCE`, `QUADRANT`,
 {
   "btType": "BTMSketchConstraint-2",
   "constraintType": "COINCIDENT",
+  "entityId": "cCoincident2",
   "parameters": [
     {
       "btType": "BTMParameterString-149",
@@ -671,6 +674,7 @@ Full enum also includes: `NONE`, `NORMAL`, `PROJECTED`, `PIERCE`, `QUADRANT`,
 {
   "btType": "BTMSketchConstraint-2",
   "constraintType": "EQUAL",
+  "entityId": "cEqual1",
   "parameters": [
     {
       "btType": "BTMParameterString-149",
@@ -692,6 +696,7 @@ Full enum also includes: `NONE`, `NORMAL`, `PROJECTED`, `PIERCE`, `QUADRANT`,
 {
   "btType": "BTMSketchConstraint-2",
   "constraintType": "LENGTH",
+  "entityId": "cLength1",
   "parameters": [
     {
       "btType": "BTMParameterString-149",
@@ -726,6 +731,7 @@ Full enum also includes: `NONE`, `NORMAL`, `PROJECTED`, `PIERCE`, `QUADRANT`,
 {
   "btType": "BTMSketchConstraint-2",
   "constraintType": "DIAMETER",
+  "entityId": "dCircle1",
   "parameters": [
     {
       "btType": "BTMParameterString-149",
@@ -750,6 +756,7 @@ Note: uses `localEntity1`/`localEntity2`, not `localFirst`/`localSecond`.
 {
   "btType": "BTMSketchConstraint-2",
   "constraintType": "MIDPOINT",
+  "entityId": "cMidpoint1",
   "parameters": [
     {
       "btType": "BTMParameterString-149",
@@ -771,6 +778,7 @@ Note: uses `localEntity1`/`localEntity2`, not `localFirst`/`localSecond`.
 {
   "btType": "BTMSketchConstraint-2",
   "constraintType": "MIRROR",
+  "entityId": "cMirror1",
   "parameters": [
     {
       "btType": "BTMParameterString-149",
@@ -805,6 +813,7 @@ Requires `helpParameters` with the tangent point parameter value:
 {
   "btType": "BTMSketchConstraint-2",
   "constraintType": "TANGENT",
+  "entityId": "cTangent1",
   "helpParameters": [2.228],
   "parameters": [
     {
