@@ -513,8 +513,10 @@ Dimensional values are specified via `BTMParameterQuantity-147` in the same
 ### Dimension Expressions
 
 Dimensional values use `BTMParameterQuantity-147` with an `expression` string.
-**Units are always required** in dimension expressions — a bare number like
-`"3.5"` is not valid.
+**Units are required** for measurement dimensions (length, angle, distance) — a
+bare number like `"3.5"` is not valid for these parameters. Some positioning
+parameters like `labelRatio` are unitless and accept bare numbers (e.g.
+`"-2.0"`).
 
 ```json
 { "btType": "BTMParameterQuantity-147", "parameterId": "length", "expression": "3.5 in", "isInteger": false }
