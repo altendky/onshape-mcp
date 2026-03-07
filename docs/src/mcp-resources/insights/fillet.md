@@ -146,10 +146,11 @@ radius:
    different radii to different edges, create multiple fillet features.
 
 3. **Fillet order matters** — Filleting changes the topology of the body. Edge
-   IDs from before the fillet may no longer be valid after. If you need to
-   fillet multiple edges with different radii, either discover all edge IDs
-   before the first fillet and use them in sequence (deterministic IDs are
-   designed to survive topology changes), or re-discover edges between fillets.
+   IDs discovered before a fillet may no longer be valid after it — edges can
+   be split, merged, or consumed. Deterministic IDs are only valid for one
+   microversion, and each `addPartStudioFeature` call creates a new
+   microversion. If you need to fillet multiple edges with different radii,
+   re-discover edge IDs between each fillet operation.
 
 4. **Radius must not exceed adjacent geometry** — A fillet radius larger than
    the smallest face adjacent to the edge will fail. For thin walls (e.g. 4 mm
