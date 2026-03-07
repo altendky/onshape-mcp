@@ -44,9 +44,10 @@ function(context is Context, queries is map) {
 }
 ```
 
-You need both the edge's `transientId` (for the sweep `path` parameter) and the
-start vertex's `transientId` (for creating the perpendicular profile plane in
-Step 3).
+The response contains `transientId` values for the discovered entities. You need
+both the path edge's ID (as a `deterministicIds` entry for the sweep `path`
+parameter) and the start vertex's ID (as a `deterministicIds` entry for creating
+the perpendicular profile plane in Step 3).
 
 ### Step 3: Create a construction plane perpendicular to the path
 
