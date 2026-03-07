@@ -649,17 +649,33 @@ impl OpenApiSpec {
     /// properties that point to discriminator schemas. Returns the schema with
     /// the annotated properties in place.
     fn annotate_schema_properties(schema: &Value, components: &HashMap<String, Value>) -> Value {
-        schema.get("properties").map_or_else(
-            || schema.clone(),
-            |props| {
-                let annotated_props = Self::annotate_discriminators(props, components);
-                let mut result = schema.clone();
-                if let Some(obj) = result.as_object_mut() {
-                    obj.insert("properties".to_string(), annotated_props);
+        let mut result = schema.clone();
+        let Some(obj) = result.as_object_mut() else {
+            return result;
+        };
+
+        if let Some(props) = obj.get("properties").cloned() {
+            obj.insert(
+                "properties".to_string(),
+                Self::annotate_discriminators(&props, components),
+            );
+        }
+
+        if let Some(all_of) = obj.get_mut("allOf").and_then(Value::as_array_mut) {
+            for item in all_of {
+                let Some(props) = item.get("properties").cloned() else {
+                    continue;
+                };
+                if let Some(item_obj) = item.as_object_mut() {
+                    item_obj.insert(
+                        "properties".to_string(),
+                        Self::annotate_discriminators(&props, components),
+                    );
                 }
-                result
-            },
-        )
+            }
+        }
+
+        result
     }
 
     /// Given a `$ref` string, check if the referenced schema has a discriminator
