@@ -507,44 +507,37 @@ impl OpenApiSpec {
                     // This is the parent reference.
                     if let Some(parent_name) = ref_str.strip_prefix("#/components/schemas/") {
                         parent = Some(parent_name.to_string());
-                        // Merge parent properties (one level only).
+                        // Merge parent properties (one level only — transitive
+                        // ancestry is accessible via the `parent` field).
                         if let Some(parent_schema) = self.components.get(parent_name) {
-                            if let Some(props) =
-                                parent_schema.get("properties").and_then(Value::as_object)
+                            Self::merge_props_and_required(
+                                parent_schema,
+                                &mut merged_props,
+                                &mut required,
+                            );
+                            // Also merge properties/required from the parent's
+                            // own allOf inline blocks (non-$ref items).  Many
+                            // schemas in the Onshape spec carry their properties
+                            // inside allOf rather than at the top level.
+                            if let Some(parent_all_of) =
+                                parent_schema.get("allOf").and_then(Value::as_array)
                             {
-                                for (k, v) in props {
-                                    merged_props.insert(k.clone(), v.clone());
-                                }
-                            }
-                            // Collect parent required.
-                            if let Some(req) =
-                                parent_schema.get("required").and_then(Value::as_array)
-                            {
-                                for r in req {
-                                    if let Some(s) = r.as_str()
-                                        && !required.contains(&s.to_string())
-                                    {
-                                        required.push(s.to_string());
+                                for parent_item in parent_all_of {
+                                    if parent_item.get("$ref").is_some() {
+                                        continue;
                                     }
+                                    Self::merge_props_and_required(
+                                        parent_item,
+                                        &mut merged_props,
+                                        &mut required,
+                                    );
                                 }
                             }
                         }
                     }
-                } else if let Some(props) = item.get("properties").and_then(Value::as_object) {
-                    // Inline properties from allOf item.
-                    for (k, v) in props {
-                        merged_props.insert(k.clone(), v.clone());
-                    }
-                    // Collect required from allOf item.
-                    if let Some(req) = item.get("required").and_then(Value::as_array) {
-                        for r in req {
-                            if let Some(s) = r.as_str()
-                                && !required.contains(&s.to_string())
-                            {
-                                required.push(s.to_string());
-                            }
-                        }
-                    }
+                } else {
+                    // Inline properties/required from allOf item.
+                    Self::merge_props_and_required(item, &mut merged_props, &mut required);
                 }
             }
         }
@@ -575,6 +568,31 @@ impl OpenApiSpec {
     // ========================================================================
     // Private helpers
     // ========================================================================
+
+    /// Merge `properties` and `required` from `source` into the accumulators.
+    ///
+    /// Used during `lookup_schema` to fold parent (and parent-allOf-inline)
+    /// properties into the child's merged view.
+    fn merge_props_and_required(
+        source: &Value,
+        merged_props: &mut serde_json::Map<String, Value>,
+        required: &mut Vec<String>,
+    ) {
+        if let Some(props) = source.get("properties").and_then(Value::as_object) {
+            for (k, v) in props {
+                merged_props.insert(k.clone(), v.clone());
+            }
+        }
+        if let Some(req) = source.get("required").and_then(Value::as_array) {
+            for r in req {
+                if let Some(s) = r.as_str()
+                    && !required.contains(&s.to_string())
+                {
+                    required.push(s.to_string());
+                }
+            }
+        }
+    }
 
     /// Walk a schema's properties and annotate any `$ref` (or `items.$ref`)
     /// that points to a schema with a `discriminator.mapping` by adding an
@@ -1168,6 +1186,48 @@ mod tests {
                                 }
                             }
                         ]
+                    },
+                    "BTGrandparent-50": {
+                        "type": "object",
+                        "properties": {
+                            "grandparentProp": { "type": "string" }
+                        }
+                    },
+                    "BTParentWithAllOfProps-100": {
+                        "type": "object",
+                        "discriminator": {
+                            "propertyName": "btType",
+                            "mapping": {
+                                "BTChildOfAllOfParent-200": "#/components/schemas/BTChildOfAllOfParent-200"
+                            }
+                        },
+                        "allOf": [
+                            { "$ref": "#/components/schemas/BTGrandparent-50" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "btType": { "type": "string" },
+                                    "parentInlineProp": { "type": "integer" }
+                                },
+                                "required": ["parentInlineProp"]
+                            }
+                        ]
+                    },
+                    "BTChildOfAllOfParent-200": {
+                        "type": "object",
+                        "properties": {
+                            "btType": { "type": "string" }
+                        },
+                        "allOf": [
+                            { "$ref": "#/components/schemas/BTParentWithAllOfProps-100" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "btType": { "type": "string" },
+                                    "childOwnProp": { "type": "boolean" }
+                                }
+                            }
+                        ]
                     }
                 }
             }
@@ -1545,5 +1605,38 @@ mod tests {
         let subtypes = detail.subtypes.expect("should have subtypes");
         assert!(subtypes.contains(&"BTMSketch-151".to_string()));
         assert!(subtypes.contains(&"BTMFeatureInvalid-1031".to_string()));
+    }
+
+    #[test]
+    fn lookup_schema_merges_parent_allof_inline_properties() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let detail = spec
+            .lookup_schema("BTChildOfAllOfParent-200")
+            .expect("should find schema");
+
+        assert_eq!(detail.parent.as_deref(), Some("BTParentWithAllOfProps-100"));
+
+        let props = detail.properties.as_object().expect("should be object");
+        // Own property from the child's allOf inline block.
+        assert!(
+            props.contains_key("childOwnProp"),
+            "should have own property childOwnProp"
+        );
+        // Property from the parent's allOf inline block (not at the
+        // parent's top level).
+        assert!(
+            props.contains_key("parentInlineProp"),
+            "should have parent's allOf inline property parentInlineProp"
+        );
+        assert!(
+            props.contains_key("btType"),
+            "should have btType from parent"
+        );
+
+        // Parent required should be merged.
+        assert!(
+            detail.required.contains(&"parentInlineProp".to_string()),
+            "should inherit required from parent's allOf inline block"
+        );
     }
 }
