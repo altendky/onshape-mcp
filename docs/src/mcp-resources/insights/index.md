@@ -11,3 +11,7 @@ Practical reference for correct patterns, API usage, and design guidelines.
 - [Sweep](sweep.md) — Sweep feature parameters, path + profile workflow, perpendicular plane requirement
 - [Construction Plane](cplane.md) — cPlane creation modes, CURVE_POINT for sweep profiles, visual extent sizing
 - [Fillet](fillet.md) — Fillet feature parameters, edge discovery, radius constraints
+
+## General
+
+- [Workflow Patterns](workflow.md) — Session resumption, model state verification, diagnosing user-reported issues
