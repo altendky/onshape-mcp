@@ -99,7 +99,7 @@ Present the results in this order:
 
 4. **Executive summary table** — a compact table at the bottom. Columns: category, finding count, worst severity, avoidable count. Only categories with findings are included.
 
-The executive summary table must be the **last thing printed** so it is always visible above the prompt.
+The executive summary table must be the **last thing printed in this phase** so it is visible above the prompt when the user begins reviewing improvement suggestions.
 
 ## Phase 4: Improvement Suggestions
 
