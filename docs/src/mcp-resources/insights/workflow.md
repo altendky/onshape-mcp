@@ -12,18 +12,18 @@ This doesn't mean being passive — take initiative on things you're confident a
 
 ## Resuming Work Across Sessions
 
-When resuming work from a prior session, **always verify the current model state** before acting on user feedback or trusting session notes:
+When resuming work from a prior session, **always verify the current document state** before acting on user feedback or trusting session notes:
 
-1. Call `getPartStudioFeatures` to retrieve the actual feature tree
-2. Compare against any session notes listing completed features
-3. Check `featureStates` for errors on existing features
+1. Retrieve the current state of the document element (e.g., call `getPartStudioFeatures` for a Part Studio)
+2. Compare against any session notes listing completed work
+3. Check for errors on existing elements (e.g., `featureStates` for Part Studio features)
 
-Session notes describe *intended* state, not *verified* state. Features may have been lost due to API failures, workspace state changes, or incomplete persistence. A single feature tree retrieval is cheap compared to debugging based on stale assumptions.
+Session notes describe *intended* state, not *verified* state. Work may have been lost due to API failures, workspace state changes, or incomplete persistence. A single state retrieval is cheap compared to debugging based on stale assumptions.
 
 ## Diagnosing User-Reported Issues
 
 When the user reports a problem with the Onshape model:
 
-1. **Verify model state first.** Call `getPartStudioFeatures` to see the actual feature tree and check for missing or errored features. Don't trust session notes alone.
+1. **Verify document state first.** Retrieve the current state using the appropriate API for the element type (e.g., `getPartStudioFeatures` for Part Studios). Check for missing or errored elements. Don't trust session notes alone.
 2. **Ask before investigating ambiguous complaints.** If the user's description is short or could refer to multiple issues (e.g., "the angle is wrong" could mean a parameter value, a missing feature, or a visual artifact), ask one targeted clarifying question before taking screenshots or making changes.
 3. **One screenshot + question > many screenshots.** Take one representative view for orientation, then ask. Don't exhaust all views before engaging the user.
