@@ -23,6 +23,8 @@ Walk through the full conversation (or scoped subset) and identify each **unit o
 - Whether it succeeded on the first try or required iteration
 - The outcome (succeeded, abandoned, pivoted, still in progress)
 
+For units of work that required iteration or encountered failures, also record the **tool call sequence** — the ordered list of tool calls made, with brief notes on each call's purpose and result. This detail is essential for Phase 2 subagents to identify root causes, assess severity, and distinguish avoidable from inherent difficulties. A unit that "required 12 tool calls" is less actionable than knowing which calls were redundant, which returned errors, and where the approach pivoted.
+
 ### 1b. Write a session summary
 
 Compose a concise summary (a few paragraphs) covering:
@@ -32,12 +34,13 @@ Compose a concise summary (a few paragraphs) covering:
 - **Outcome:** What was achieved, what remains
 - **Notable events:** Anything unusual — errors, surprises, pivots, breakthroughs
 
-This summary will be distributed to analysis subagents in Phase 2.
+This summary, along with the session timeline and the scoped transcript, will be distributed to analysis subagents in Phase 2.
 
 ## Phase 2: Difficulty Identification
 
 Launch one **subagent** per difficulty category, in parallel. Each subagent receives:
 
+- The scoped transcript (the full conversation, or the scoped subset if scoping was specified)
 - The session summary from Phase 1b
 - The session timeline from Phase 1a
 - The category definition (from the list below)
