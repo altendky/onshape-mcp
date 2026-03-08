@@ -853,6 +853,7 @@ fn tools_list_includes_api_tools() {
         vec![
             "onshape_api_call",
             "onshape_api_explain",
+            "onshape_api_schema",
             "onshape_api_search",
             "onshape_list_resources",
             "onshape_mcp_auth_login",

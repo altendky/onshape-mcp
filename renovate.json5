@@ -1,6 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
 
+  // Only rebase PRs when they have conflicts, not just for being behind
+  "rebaseWhen": "conflicted",
+
   // Extend recommended defaults + SHA pinning for GitHub Actions
   "extends": [
     "config:recommended",

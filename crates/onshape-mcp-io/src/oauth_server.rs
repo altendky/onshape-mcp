@@ -23,7 +23,7 @@ use axum::{Json, Router, middleware, routing};
 use oauth2::{
     AuthorizationCode, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, Scope, TokenResponse,
 };
-use rand::Rng;
+use rand::RngExt;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;

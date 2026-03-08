@@ -68,6 +68,7 @@ These are advisory hints for MCP clients, not security enforcement.
 | `onshape_mcp_auth_login` | false | false |
 | `onshape_api_search` | true | false |
 | `onshape_api_explain` | true | false |
+| `onshape_api_schema` | true | false |
 | `onshape_api_call` | false | true |
 | `onshape_screenshot` | true | false |
 
@@ -120,6 +121,7 @@ MCP clients enumerate all tools in the system prompt. With 30+ individual tools,
 | ------ | --------- |
 | `onshape_api_search` | Find Onshape API endpoints by keyword or filter |
 | `onshape_api_explain` | Get full details for a specific endpoint |
+| `onshape_api_schema` | Look up a component schema by name (BTType exploration) |
 | `onshape_api_call` | Invoke an Onshape API endpoint with structured parameters |
 
 ### Workflow
@@ -128,7 +130,8 @@ An LLM uses these tools in a natural progression:
 
 1. **Search** to find relevant endpoints
 2. **Explain** to learn the parameters for a specific endpoint
-3. **Call** to execute it
+3. **Schema** (if needed) to explore polymorphic request body types
+4. **Call** to execute it
 
 ### `onshape_api_search`
 
@@ -191,6 +194,75 @@ Get full details for a specific endpoint. Returns parameter schemas, types, requ
 
 Fields `default`, `enum_values`, `request_body_schema`, and `request_body_content_type` are omitted from the response when null (via `skip_serializing_if`).
 They appear only when the endpoint has relevant values (e.g., POST/PUT endpoints with a request body, or parameters with defaults or enum constraints).
+
+### `onshape_api_schema`
+
+Look up a component schema by name.
+Returns the schema's merged properties (own + inherited from parent via `allOf`), discriminator subtypes if the schema is polymorphic, and parent type information.
+
+This tool enables on-demand exploration of the Onshape BTType hierarchy.
+When `onshape_api_explain` returns a request body schema with `x-bttype-options` annotations on polymorphic properties, use this tool to drill into specific types and learn their properties.
+
+**Input:**
+
+| Parameter | Type | Required | Description |
+| ----------- | -------- | ---------- | ------------- |
+| `schema` | `string` | Yes | Schema name (e.g., `"BTMParameterEnum-145"` or `"BTFeatureDefinitionCall-1406"`). Use names from `x-bttype-options` annotations or `subtypes` fields. |
+
+**Output:** JSON object with schema detail:
+
+```json
+{
+  "name": "BTMParameterEnum-145",
+  "parent": "BTMParameter-1",
+  "properties": {
+    "btType": { "type": "string" },
+    "parameterId": { "type": "string" },
+    "parameterName": { "type": "string" },
+    "enumName": { "type": "string" },
+    "value": { "type": "string" }
+  }
+}
+```
+
+For polymorphic schemas, the output also includes `discriminator_property` and `subtypes`:
+
+```json
+{
+  "name": "BTMParameter-1",
+  "description": "A parameter value.",
+  "properties": { "...": "..." },
+  "discriminator_property": "btType",
+  "subtypes": [
+    "BTMParameterEnum-145",
+    "BTMParameterQuantity-147",
+    "BTMParameterString-149"
+  ]
+}
+```
+
+Fields `description`, `parent`, `required`, `subtypes`, and `discriminator_property` are omitted when null/empty.
+Properties that are `$ref`s pointing to discriminator schemas include `x-bttype-options` annotations, enabling further drill-down.
+
+#### Discriminator Annotations in `onshape_api_explain`
+
+When `onshape_api_explain` returns a request body or response schema, properties that reference polymorphic types are annotated with `x-bttype-options`.
+For example, a `feature` property referencing `BTMFeature-134` would appear as:
+
+```json
+{
+  "feature": {
+    "$ref": "#/components/schemas/BTMFeature-134",
+    "x-bttype-options": [
+      "BTMSketch-151",
+      "BTMFeatureInvalid-1031"
+    ]
+  }
+}
+```
+
+This tells the LLM which concrete types are valid without expanding the full schema.
+Use `onshape_api_schema` to look up the details of whichever type is needed.
 
 ### `onshape_api_call`
 
