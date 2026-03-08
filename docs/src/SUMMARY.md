@@ -47,6 +47,7 @@
 - [Shaded Views](mcp-resources/insights/shaded-views.md)
 - [Sketch](mcp-resources/insights/sketch.md)
 - [Extrude](mcp-resources/insights/extrude.md)
+- [Revolve](mcp-resources/insights/revolve.md)
 
 # Project Management
 
