@@ -48,6 +48,13 @@
 - [Sketch](mcp-resources/insights/sketch.md)
 - [Extrude](mcp-resources/insights/extrude.md)
 - [Revolve](mcp-resources/insights/revolve.md)
+- [Sweep](mcp-resources/insights/sweep.md)
+- [Construction Plane](mcp-resources/insights/cplane.md)
+- [Fillet](mcp-resources/insights/fillet.md)
+- [Part Studio](mcp-resources/insights/part-studio.md)
+- [FeatureScript](mcp-resources/insights/featurescript.md)
+- [Debug Entities](mcp-resources/insights/debug-entities.md)
+- [Workflow Patterns](mcp-resources/insights/workflow.md)
 
 # Project Management
 

@@ -11,6 +11,9 @@ Practical reference for correct patterns, API usage, and design guidelines.
 - [Sweep](sweep.md) — Sweep feature parameters, path + profile workflow, perpendicular plane requirement
 - [Construction Plane](cplane.md) — cPlane creation modes, CURVE_POINT for sweep profiles, visual extent sizing
 - [Fillet](fillet.md) — Fillet feature parameters, edge discovery, radius constraints
+- [Part Studio](part-studio.md) — Feature error retrieval via evalFeatureScript, runtime debugging
+- [FeatureScript](featurescript.md) — Feature Studio API, stdlib version discovery, import conventions, notices workaround
+- [Debug Entities](debug-entities.md) — Accessing debug entity data via evalFeatureScript, wire body debug geometry for screenshots
 
 ## General
 
