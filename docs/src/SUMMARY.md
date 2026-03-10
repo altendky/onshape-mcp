@@ -48,6 +48,7 @@
 - [Sketch](mcp-resources/insights/sketch.md)
 - [Extrude](mcp-resources/insights/extrude.md)
 - [Revolve](mcp-resources/insights/revolve.md)
+- [FeatureScript](mcp-resources/insights/featurescript.md)
 
 # Project Management
 
