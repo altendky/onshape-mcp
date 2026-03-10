@@ -99,3 +99,12 @@ images. Useful for other purposes but not for quick visual inspection.
 3. **Large base64 strings** — A 500×500 auto-fit render produces a substantial base64
    string. Avoid passing it as a shell argument (argument length limits). Write to a
    file first, then decode. The `onshape_screenshot` tool handles this automatically.
+
+4. **Sketch-only Part Studios render as blank images** — The shaded views API
+   renders solid and surface bodies. Sketch geometry (lines, arcs, points,
+   constraints) is not rendered. A Part Studio containing only sketches and no
+   solid features will produce a blank white image regardless of `showAllParts`,
+   `includeWires`, or `includeSurfaces` settings. To verify sketch geometry
+   before creating solid features, use `evalFeatureScript` to inspect face areas
+   and edge endpoints (see the [Sketch](sketch.md) insight's "Verifying Sketch
+   Geometry" section).
