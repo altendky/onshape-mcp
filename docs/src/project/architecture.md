@@ -67,6 +67,11 @@ onshape-mcp/
 │   ├── onshape-mcp/              # Main binary
 │   │   ├── Cargo.toml
 │   │   └── src/
+│   ├── onshape-mcp-resources/    # Insight documents (MCP resources)
+│   │   ├── Cargo.toml
+│   │   ├── build.rs              # Compiles .md insights into Rust constants
+│   │   ├── resources -> ../../docs/src/mcp-resources  # SYMLINK
+│   │   └── src/
 │   ├── tracing-sansio/           # Sans-IO tracing capture
 │   │   ├── Cargo.toml
 │   │   └── src/
@@ -86,6 +91,8 @@ onshape-mcp/
 │   ├── book.toml
 │   └── src/
 │       ├── SUMMARY.md
+│       ├── mcp-resources/
+│       │   └── insights/         # Insight .md files (single source of truth)
 │       └── project/
 │           └── *.md
 ├── README.md
@@ -98,6 +105,7 @@ onshape-mcp/
 | Crate | Layer | Purpose |
 | ------- | ------- | --------- |
 | `onshape-mcp` | Application | Main binary, wires everything together |
+| `onshape-mcp-resources` | Core | Insight documents compiled into MCP resources at build time; `resources/` is a symlink to `docs/src/mcp-resources/` |
 | `onshape-mcp-io` | Integration | MCP transport glue (tokio, rmcp); embeds OpenAPI spec via `include_str!()` |
 | `onshape-mcp-core` | Core | Pure MCP protocol and business logic, including OpenAPI spec parsing (no I/O) |
 | `onshape-client-io` | Integration | HTTP client for Onshape API (reqwest) |
