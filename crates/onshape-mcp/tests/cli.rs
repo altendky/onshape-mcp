@@ -267,32 +267,44 @@ fn mcp_initialization_returns_server_info() {
     client.shutdown();
 }
 
+// ============================================================================
+// Get Started Tool Tests
+// ============================================================================
+
 #[test]
-fn tools_list_includes_auth_status_tool() {
+fn tools_call_get_started_returns_instructions() {
     let mut client = McpTestClient::spawn();
     client.initialize();
 
-    let response = client.send_request("tools/list", &serde_json::json!({}));
-
-    assert!(response["error"].is_null(), "unexpected error: {response}");
-
-    let tools = response["result"]["tools"]
-        .as_array()
-        .expect("tools should be an array");
-
-    let auth_status_tool = tools
-        .iter()
-        .find(|t| t["name"] == "onshape_mcp_auth_status")
-        .expect("onshape_mcp_auth_status tool should be listed");
-
-    assert!(
-        auth_status_tool["description"]
-            .as_str()
-            .is_some_and(|d| d.contains("authentication status")),
-        "tool should have a description mentioning authentication status"
+    let response = client.send_request(
+        "tools/call",
+        &serde_json::json!({
+            "name": "onshape_mcp_get_started"
+        }),
     );
 
-    client.shutdown();
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+    assert_eq!(response["result"]["isError"], false);
+
+    let content = response["result"]["content"]
+        .as_array()
+        .expect("content should be an array");
+    let text = content[0]["text"]
+        .as_str()
+        .expect("text should be a string");
+
+    assert!(
+        text.contains("Onshape MCP server"),
+        "should contain server description"
+    );
+    assert!(
+        text.contains("insight resources"),
+        "should mention insight resources"
+    );
+    assert!(
+        text.contains(onshape_mcp_core::CATCH_PHRASE),
+        "should contain catch phrase"
+    );
 }
 
 // ============================================================================
@@ -858,6 +870,7 @@ fn tools_list_includes_api_tools() {
             "onshape_list_resources",
             "onshape_mcp_auth_login",
             "onshape_mcp_auth_status",
+            "onshape_mcp_get_started",
             "onshape_read_resource",
             "onshape_screenshot",
         ],
