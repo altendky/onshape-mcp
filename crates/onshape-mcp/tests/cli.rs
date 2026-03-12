@@ -305,6 +305,8 @@ fn tools_call_get_started_returns_instructions() {
         text.contains(onshape_mcp_core::CATCH_PHRASE),
         "should contain catch phrase"
     );
+
+    client.shutdown();
 }
 
 // ============================================================================
