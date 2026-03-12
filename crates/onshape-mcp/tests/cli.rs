@@ -289,6 +289,11 @@ fn tools_call_get_started_returns_instructions() {
     let content = response["result"]["content"]
         .as_array()
         .expect("content should be an array");
+    assert_eq!(
+        content.len(),
+        1,
+        "onshape_mcp_get_started should return exactly one content item"
+    );
     let text = content[0]["text"]
         .as_str()
         .expect("text should be a string");
