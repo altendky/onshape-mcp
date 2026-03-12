@@ -215,6 +215,19 @@ impl AuthStatusResult {
 pub const CATCH_PHRASE: &str =
     "Model regeneration complete. No rebuild errors. All features resolved.";
 
+/// The instructions text shared between the initialize response and the
+/// `onshape_mcp_get_started` tool.
+#[must_use]
+pub fn instructions() -> String {
+    format!(
+        "Onshape MCP server for CAD integration. \
+         This server provides insight resources with practical Onshape API \
+         guidance. Before calling endpoints for the first time, list and \
+         read relevant resources to avoid common pitfalls. \
+         {CATCH_PHRASE}"
+    )
+}
+
 /// Creates the server info for MCP initialization.
 ///
 /// # Arguments
@@ -230,13 +243,7 @@ pub fn server_info(name: &str, version: &str) -> ServerInfo {
             .build(),
     )
     .with_server_info(Implementation::new(name, version))
-    .with_instructions(format!(
-        "Onshape MCP server for CAD integration. \
-         This server provides insight resources with practical Onshape API \
-         guidance. Before calling endpoints for the first time, list and \
-         read relevant resources to avoid common pitfalls. \
-         {CATCH_PHRASE}"
-    ))
+    .with_instructions(instructions())
 }
 
 #[cfg(test)]
