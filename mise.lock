@@ -8,13 +8,13 @@ backend = "aqua:EmbarkStudios/cargo-deny"
 "platforms.windows-x64" = { checksum = "sha256:413f0e2ce780d0d14ba8e9339f9fb033419a8a971ec7714faec518e4a664bdb0", url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.0/cargo-deny-0.19.0-x86_64-pc-windows-msvc.tar.gz"}
 
 [[tools."aqua:superfly/flyctl"]]
-version = "0.4.19"
+version = "0.4.20"
 backend = "aqua:superfly/flyctl"
-"platforms.linux-arm64" = { checksum = "sha256:79976d10111d43896e3369c28ddaa3b05ddd1eeea3676ee7f605c647bc773b09", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_Linux_arm64.tar.gz"}
-"platforms.linux-x64" = { checksum = "sha256:f10af73607f58376afbfc6a9c815cd94aad11577ec85f87e3e44f054df46401c", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_Linux_x86_64.tar.gz"}
-"platforms.macos-arm64" = { checksum = "sha256:dd50ee2e78777ac1af21bb4d34bd77173b6929fb1507a5974a2c7ae4389d7db9", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_macOS_arm64.tar.gz"}
-"platforms.macos-x64" = { checksum = "sha256:be30319e6310475e8b8d2f52df5232899a48eef46027a68f8326eccbb6830ed1", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_macOS_x86_64.tar.gz"}
-"platforms.windows-x64" = { checksum = "sha256:77456405feec5c690d8f1e48d11551c38126e1d7cafb9b88b72d08a8d10c2c19", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_Windows_x86_64.zip"}
+"platforms.linux-arm64" = { checksum = "sha256:40d160877844dabae8b4f90125a6f05a71da2cf8737e4291fbcc25ec48b0f3f0", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_Linux_arm64.tar.gz"}
+"platforms.linux-x64" = { checksum = "sha256:774c3a463420af15a3b00e832c852bfdb3de5d3480742ff2513da5f959a6450f", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_Linux_x86_64.tar.gz"}
+"platforms.macos-arm64" = { checksum = "sha256:b55742685e491061ed006671d06c82d46aa42ad6f384bf27c323e30bceba6f2c", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_macOS_arm64.tar.gz"}
+"platforms.macos-x64" = { checksum = "sha256:7f0cf627c9cfa5e39151d731a5daf6a95e4484f4fe90eea0bd7bb60364caf97b", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_macOS_x86_64.tar.gz"}
+"platforms.windows-x64" = { checksum = "sha256:35fcd315d1cca9377c46c4dd4495cbbc7c2f64ea78cfe4fbba8810c2f2dfd66f", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_Windows_x86_64.zip"}
 
 [[tools."aqua:taiki-e/cargo-llvm-cov"]]
 version = "0.8.4"
@@ -24,6 +24,15 @@ backend = "aqua:taiki-e/cargo-llvm-cov"
 "platforms.macos-arm64" = { checksum = "sha256:559c2475502b3e9c62e29230e32ecb77a8962f54c9ca32854e140fb436ec993e", url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.4/cargo-llvm-cov-aarch64-apple-darwin.tar.gz"}
 "platforms.macos-x64" = { checksum = "sha256:f8abe297605aea79978b92e50862104c1ff934d42e14e7bcb02a50934e14a9c5", url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.4/cargo-llvm-cov-x86_64-apple-darwin.tar.gz"}
 "platforms.windows-x64" = { checksum = "sha256:21fc84103910716b77b67f9d3d586426296135d81cb27e03d9d914b0078742a3", url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.4/cargo-llvm-cov-x86_64-pc-windows-msvc.tar.gz"}
+
+[[tools.cargo-binstall]]
+version = "1.17.5"
+backend = "aqua:cargo-bins/cargo-binstall"
+"platforms.linux-arm64" = { checksum = "sha256:6a82fd5207e0647fcb28fc8db30b0186a2e6223aaa5411a588f0573c77d620e3", url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.5/cargo-binstall-aarch64-unknown-linux-musl.tgz"}
+"platforms.linux-x64" = { checksum = "sha256:c0f247726165afc445076a9d58cf3795512b6e5787ae469297a39b8c9e30a51f", url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.5/cargo-binstall-x86_64-unknown-linux-musl.tgz"}
+"platforms.macos-arm64" = { checksum = "sha256:896e75a79773a11ad651649dce449a223ddd1dc718e687301988b46ee26fe58f", url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.5/cargo-binstall-aarch64-apple-darwin.zip"}
+"platforms.macos-x64" = { checksum = "sha256:2471743078bbf1685e8493121b03c6555042690ea10661e0fddba647bceac13c", url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.5/cargo-binstall-x86_64-apple-darwin.zip"}
+"platforms.windows-x64" = { checksum = "sha256:501697fe946b691d215600d144b53b696cc6fb03f3e1773f582b375672c26be6", url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.5/cargo-binstall-x86_64-pc-windows-msvc.zip"}
 
 [[tools."cargo:lychee"]]
 version = "0.23.0"
