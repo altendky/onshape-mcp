@@ -6,6 +6,9 @@ python = "3"
 "aqua:taiki-e/cargo-llvm-cov" = "0.8.4"
 "aqua:EmbarkStudios/cargo-deny" = "0.19.0"
 "github:nextest-rs/nextest" = { version = "0.9.129", version_prefix = "cargo-nextest-" }
+# Provides cargo-binstall so the cargo backend can download pre-built binaries
+# instead of compiling from source.
+cargo-binstall = "latest"
 # lychee uses the cargo backend with binstall support so that pre-built binaries
 # are downloaded where available (Linux, Windows x64, macOS ARM64), and source
 # compilation is used as a fallback on platforms without pre-built binaries
@@ -13,4 +16,4 @@ python = "3"
 # (April 2024), so the aqua backend cannot cover all CI platforms.
 "cargo:lychee" = "0.23.0"
 "npm:wrangler" = "4.71.0"
-"aqua:superfly/flyctl" = "0.4.19"
+"aqua:superfly/flyctl" = "0.4.20"

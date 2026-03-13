@@ -49,7 +49,7 @@ jobs:
 
   checks:
     name: checks
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [mise, pre-commit, rust, coverage, npm]
     runs-on: ubuntu-latest
     steps:
