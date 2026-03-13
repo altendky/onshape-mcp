@@ -202,6 +202,7 @@ pub fn process_api_response(status: u16, body: &str) -> Result<CallToolResult, E
 #[must_use]
 pub fn list_tools() -> Vec<Tool> {
     vec![
+        tool_get_started_def(),
         tool_auth_status_def(),
         tool_auth_login_def(),
         tool_api_search_def(),
@@ -234,6 +235,7 @@ pub fn call_tool(
     spec: Option<&OpenApiSpec>,
 ) -> ToolResult {
     match name {
+        "onshape_mcp_get_started" => ToolResult::Immediate(Ok(call_get_started())),
         "onshape_mcp_auth_status" => call_auth_status(arguments, resolved_auth, validation, spec),
         "onshape_mcp_auth_login" => call_auth_login(arguments),
         "onshape_api_search" => {
@@ -462,6 +464,26 @@ pub enum ViewPreset {
 // Tool Definitions
 // ============================================================================
 
+#[allow(clippy::expect_used)]
+fn tool_get_started_def() -> Tool {
+    let schema = schemars::schema_for!(EmptyInput);
+    let input_schema: Value =
+        serde_json::to_value(schema).expect("EmptyInput schema serialization should never fail");
+    let input_schema = input_schema
+        .as_object()
+        .cloned()
+        .expect("Schema should be a JSON object");
+
+    Tool::new(
+        "onshape_mcp_get_started",
+        "Get essential guidance for working with this server. Call this \
+         before starting any Onshape task — it explains how the server's \
+         tools and resources fit together and how to avoid common mistakes.",
+        Arc::new(input_schema),
+    )
+    .annotate(ToolAnnotations::new().read_only(true).destructive(false))
+}
+
 #[allow(clippy::expect_used)] // Schema generation should never fail
 fn tool_auth_status_def() -> Tool {
     let schema = schemars::schema_for!(AuthStatusInput);
@@ -573,8 +595,12 @@ fn tool_list_resources_def() -> Tool {
     Tool::new(
         "onshape_list_resources",
         "List available resource documents with practical Onshape API guidance. \
-         Returns URIs, titles, and descriptions. Use onshape_read_resource to \
-         read a specific resource by URI.",
+         These cover tested patterns for common workflows like creating features, \
+         handling errors, working with sketches, and more. A good first step when \
+         starting a new task, encountering errors, or unsure how to approach \
+         something — the answer may already be documented here. Returns URIs, \
+         titles, and descriptions. Use onshape_read_resource to read a specific \
+         resource by URI.",
         Arc::new(input_schema),
     )
     .annotate(ToolAnnotations::new().read_only(true).destructive(false))
@@ -613,9 +639,11 @@ fn tool_read_resource_def() -> Tool {
 
     Tool::new(
         "onshape_read_resource",
-        "Read a specific resource document by URI. Returns the full markdown content \
-         with practical guidance for Onshape API usage. Use onshape_list_resources \
-         to discover available URIs.",
+        "Read a specific resource document by URI. Returns the full markdown \
+         content with tested patterns, working examples, and practical guidance \
+         for Onshape API usage. Worth checking before resorting to trial and \
+         error with the API — these documents can save significant time. Use \
+         onshape_list_resources to discover available URIs.",
         Arc::new(input_schema),
     )
     .annotate(ToolAnnotations::new().read_only(true).destructive(false))
@@ -624,6 +652,10 @@ fn tool_read_resource_def() -> Tool {
 // ============================================================================
 // Tool Implementations
 // ============================================================================
+
+fn call_get_started() -> CallToolResult {
+    CallToolResult::success(vec![Content::text(crate::instructions())])
+}
 
 fn call_auth_status(
     arguments: Option<&Map<String, Value>>,
@@ -1549,9 +1581,9 @@ mod tests {
     }
 
     #[test]
-    fn list_tools_has_nine_tools() {
+    fn list_tools_has_ten_tools() {
         let tools = list_tools();
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 10);
     }
 
     // --- auth_status tests ---
