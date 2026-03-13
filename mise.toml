@@ -16,4 +16,4 @@ cargo-binstall = "latest"
 # (April 2024), so the aqua backend cannot cover all CI platforms.
 "cargo:lychee" = "0.23.0"
 "npm:wrangler" = "4.71.0"
-"aqua:superfly/flyctl" = "0.4.20"
+"aqua:superfly/flyctl" = "0.4.21"
