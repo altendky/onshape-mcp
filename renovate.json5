@@ -46,6 +46,18 @@
     {
       "matchDepNames": ["github:nextest-rs/nextest"],
       "extractVersion": "^cargo-nextest-(?<version>.+)$"
+    },
+
+    // After bumping a mise tool version, re-lock just that tool so mise.lock
+    // stays in sync with mise.toml (requires mise binary mounted into the
+    // Renovate container — see .github/workflows/renovate.yml).
+    {
+      "matchManagers": ["mise"],
+      "postUpgradeTasks": {
+        "commands": ["mise lock {{{depName}}}"],
+        "fileFilters": ["mise.lock"],
+        "executionMode": "update"
+      }
     }
   ]
 }
