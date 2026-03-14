@@ -1,3 +1,11 @@
+[settings]
+# Disable GitHub attestation verification and increase HTTP timeout to eliminate
+# flaky CI failures (especially on Windows runners). mise.lock already pins
+# SHA256 checksums for integrity. This also affects local dev — a trade-off for
+# simplicity over CI-only env vars. See #247.
+github_attestations = false
+http_timeout = "120s"
+
 [tools]
 node = "24"
 python = "3"
