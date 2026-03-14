@@ -319,7 +319,7 @@ const SUPPORTED_RESPONSE_TYPES: &[&str] = &["code"];
 ///   "Redirect URIs MUST be either localhost URLs or HTTPS URLs"
 ///
 /// Accepts `https://` (any host) and `http://` only for loopback hosts
-/// (`localhost`, `127.0.0.1`, `[::1]`).
+/// (`localhost`, any `127.0.0.0/8` address, or `[::1]`).
 fn validate_redirect_uris(
     uris: &[String],
 ) -> Result<(), (http::StatusCode, Json<serde_json::Value>)> {
@@ -351,7 +351,7 @@ fn validate_redirect_uris(
                 Json(serde_json::json!({
                     "error": "invalid_client_metadata",
                     "error_description": format!(
-                        "redirect_uri must use https:// or http:// with a loopback host (localhost / 127.0.0.1 / [::1]): {uri}"
+                        "redirect_uri must use https:// or http:// with a loopback host: {uri}"
                     ),
                 })),
             ));
@@ -1415,6 +1415,24 @@ mod tests {
 
         let result = register_client(State(state), Json(req)).await;
         let _ = result.expect("http://127.0.0.1 should be accepted");
+    }
+
+    #[tokio::test]
+    async fn dcr_accepts_http_alternate_ipv4_loopback_redirect_uri() {
+        // The entire 127.0.0.0/8 range is loopback per RFC 1122.  The MCP spec
+        // says "localhost URLs", and RFC 8252 §7.3 says "loopback IP literal"
+        // without restricting to 127.0.0.1 specifically.
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec!["http://127.0.0.2:8080/cb".to_string()],
+            grant_types: vec![],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        let _ = result.expect("http://127.0.0.2 (loopback) should be accepted");
     }
 
     #[tokio::test]
