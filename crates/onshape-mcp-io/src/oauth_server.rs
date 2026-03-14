@@ -313,6 +313,54 @@ const SUPPORTED_GRANT_TYPES: &[&str] = &["authorization_code", "refresh_token"];
 /// Supported response types for this server.
 const SUPPORTED_RESPONSE_TYPES: &[&str] = &["code"];
 
+/// Validate that each redirect URI is syntactically valid and uses an allowed
+/// scheme per the MCP spec (Security Considerations §5):
+///
+///   "Redirect URIs MUST be either localhost URLs or HTTPS URLs"
+///
+/// Accepts `https://` (any host) and `http://` only for loopback hosts
+/// (`localhost`, `127.0.0.1`, `[::1]`).
+fn validate_redirect_uris(
+    uris: &[String],
+) -> Result<(), (http::StatusCode, Json<serde_json::Value>)> {
+    for uri in uris {
+        let Ok(parsed) = url::Url::parse(uri) else {
+            return Err((
+                http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_client_metadata",
+                    "error_description": format!("invalid redirect_uri: {uri}"),
+                })),
+            ));
+        };
+
+        let scheme_ok = match parsed.scheme() {
+            "https" => true,
+            "http" => match parsed.host() {
+                Some(url::Host::Domain("localhost")) => true,
+                Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+                Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+                _ => false,
+            },
+            _ => false,
+        };
+
+        if !scheme_ok {
+            return Err((
+                http::StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_client_metadata",
+                    "error_description": format!(
+                        "redirect_uri must use https:// or http://localhost: {uri}"
+                    ),
+                })),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 async fn register_client(
     State(state): State<Arc<OAuthServerState>>,
     Json(req): Json<RegisterRequest>,
@@ -333,20 +381,8 @@ async fn register_client(
         ));
     }
 
-    // Validate redirect_uri syntax so malformed URIs fail fast at registration
-    // rather than causing a 500 during the OAuth callback after the Onshape
-    // authorization code has already been consumed.
-    for uri in &req.redirect_uris {
-        if url::Url::parse(uri).is_err() {
-            return Err((
-                http::StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_client_metadata",
-                    "error_description": format!("invalid redirect_uri: {uri}"),
-                })),
-            ));
-        }
-    }
+    // Validate redirect_uri syntax and scheme (MCP spec compliance).
+    validate_redirect_uris(&req.redirect_uris)?;
 
     // Validate grant_types (default if empty, reject unsupported).
     let grant_types = if req.grant_types.is_empty() {
@@ -1315,6 +1351,85 @@ mod tests {
         let (status, body) = result.expect_err("should reject mixed valid/invalid redirect URIs");
         assert_eq!(status, http::StatusCode::BAD_REQUEST);
         assert_eq!(body.0["error"], "invalid_client_metadata");
+    }
+
+    #[tokio::test]
+    async fn dcr_rejects_http_non_localhost_redirect_uri() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec!["http://example.com/cb".to_string()],
+            grant_types: vec![],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        let (status, body) = result.expect_err("should reject http:// to non-localhost");
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert_eq!(body.0["error"], "invalid_client_metadata");
+    }
+
+    #[tokio::test]
+    async fn dcr_rejects_ftp_redirect_uri() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec!["ftp://example.com/cb".to_string()],
+            grant_types: vec![],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        let (status, body) = result.expect_err("should reject ftp:// redirect URI");
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert_eq!(body.0["error"], "invalid_client_metadata");
+    }
+
+    #[tokio::test]
+    async fn dcr_accepts_http_localhost_redirect_uri() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec!["http://localhost:8080/cb".to_string()],
+            grant_types: vec![],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        let _ = result.expect("http://localhost should be accepted");
+    }
+
+    #[tokio::test]
+    async fn dcr_accepts_http_127_0_0_1_redirect_uri() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec!["http://127.0.0.1:8080/cb".to_string()],
+            grant_types: vec![],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        let _ = result.expect("http://127.0.0.1 should be accepted");
+    }
+
+    #[tokio::test]
+    async fn dcr_accepts_http_ipv6_loopback_redirect_uri() {
+        let state = Arc::new(test_state());
+        let req = RegisterRequest {
+            client_name: None,
+            redirect_uris: vec!["http://[::1]:8080/cb".to_string()],
+            grant_types: vec![],
+            response_types: vec![],
+            token_endpoint_auth_method: None,
+        };
+
+        let result = register_client(State(state), Json(req)).await;
+        let _ = result.expect("http://[::1] should be accepted");
     }
 
     #[tokio::test]
