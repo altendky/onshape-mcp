@@ -351,7 +351,7 @@ fn validate_redirect_uris(
                 Json(serde_json::json!({
                     "error": "invalid_client_metadata",
                     "error_description": format!(
-                        "redirect_uri must use https:// or http://localhost: {uri}"
+                        "redirect_uri must use https:// or http:// with a loopback host (localhost / 127.0.0.1 / [::1]): {uri}"
                     ),
                 })),
             ));
