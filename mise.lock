@@ -8,13 +8,13 @@ backend = "aqua:EmbarkStudios/cargo-deny"
 "platforms.windows-x64" = { checksum = "sha256:413f0e2ce780d0d14ba8e9339f9fb033419a8a971ec7714faec518e4a664bdb0", url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.0/cargo-deny-0.19.0-x86_64-pc-windows-msvc.tar.gz"}
 
 [[tools."aqua:superfly/flyctl"]]
-version = "0.4.19"
+version = "0.4.20"
 backend = "aqua:superfly/flyctl"
-"platforms.linux-arm64" = { checksum = "sha256:79976d10111d43896e3369c28ddaa3b05ddd1eeea3676ee7f605c647bc773b09", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_Linux_arm64.tar.gz"}
-"platforms.linux-x64" = { checksum = "sha256:f10af73607f58376afbfc6a9c815cd94aad11577ec85f87e3e44f054df46401c", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_Linux_x86_64.tar.gz"}
-"platforms.macos-arm64" = { checksum = "sha256:dd50ee2e78777ac1af21bb4d34bd77173b6929fb1507a5974a2c7ae4389d7db9", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_macOS_arm64.tar.gz"}
-"platforms.macos-x64" = { checksum = "sha256:be30319e6310475e8b8d2f52df5232899a48eef46027a68f8326eccbb6830ed1", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_macOS_x86_64.tar.gz"}
-"platforms.windows-x64" = { checksum = "sha256:77456405feec5c690d8f1e48d11551c38126e1d7cafb9b88b72d08a8d10c2c19", url = "https://github.com/superfly/flyctl/releases/download/v0.4.19/flyctl_0.4.19_Windows_x86_64.zip"}
+"platforms.linux-arm64" = { checksum = "sha256:40d160877844dabae8b4f90125a6f05a71da2cf8737e4291fbcc25ec48b0f3f0", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_Linux_arm64.tar.gz"}
+"platforms.linux-x64" = { checksum = "sha256:774c3a463420af15a3b00e832c852bfdb3de5d3480742ff2513da5f959a6450f", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_Linux_x86_64.tar.gz"}
+"platforms.macos-arm64" = { checksum = "sha256:b55742685e491061ed006671d06c82d46aa42ad6f384bf27c323e30bceba6f2c", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_macOS_arm64.tar.gz"}
+"platforms.macos-x64" = { checksum = "sha256:7f0cf627c9cfa5e39151d731a5daf6a95e4484f4fe90eea0bd7bb60364caf97b", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_macOS_x86_64.tar.gz"}
+"platforms.windows-x64" = { checksum = "sha256:35fcd315d1cca9377c46c4dd4495cbbc7c2f64ea78cfe4fbba8810c2f2dfd66f", url = "https://github.com/superfly/flyctl/releases/download/v0.4.20/flyctl_0.4.20_Windows_x86_64.zip"}
 
 [[tools."aqua:taiki-e/cargo-llvm-cov"]]
 version = "0.8.4"
@@ -39,13 +39,13 @@ version = "0.23.0"
 backend = "cargo:lychee"
 
 [[tools."github:nextest-rs/nextest"]]
-version = "0.9.129"
+version = "0.9.130"
 backend = "github:nextest-rs/nextest"
-"platforms.linux-arm64" = { checksum = "sha256:27f6a395baa53a98c0d817104dcef4795d493dd41f33348f49f45ac616a1bfa7", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-aarch64-unknown-linux-gnu.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360384455"}
-"platforms.linux-x64" = { checksum = "sha256:92365076068c60c2e571445a34521c32f18dc0f0230cf35301415fab52ce39bb", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-x86_64-unknown-linux-gnu.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360382483"}
-"platforms.macos-arm64" = { checksum = "sha256:13219deec49e5ded0d334f42b2b968f83b99ecb4fa84397b04a74213dcae1427", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-universal-apple-darwin.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360381603"}
-"platforms.macos-x64" = { checksum = "sha256:13219deec49e5ded0d334f42b2b968f83b99ecb4fa84397b04a74213dcae1427", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-universal-apple-darwin.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360381603"}
-"platforms.windows-x64" = { checksum = "sha256:2e417a5cb993feb0bea6b5beee7450948c02aecf13800936ae196dc7dfb49c38", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.129/cargo-nextest-0.9.129-x86_64-pc-windows-msvc.zip", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/360383606"}
+"platforms.linux-arm64" = { checksum = "sha256:cca77f0b71dca2c82458294fc2b5992d8754c816e8b19ee64c76b3402e242e89", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.130/cargo-nextest-0.9.130-aarch64-unknown-linux-gnu.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/370478980"}
+"platforms.linux-x64" = { checksum = "sha256:f7035798220352c839d7a1f861f4c730c2fbbc335f186807dde148dc9caf7e9c", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.130/cargo-nextest-0.9.130-x86_64-unknown-linux-gnu.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/370483119"}
+"platforms.macos-arm64" = { checksum = "sha256:4c6621c7342f0939b51f926430e242d821cc9bedaed40e9a08bfa144a719b891", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.130/cargo-nextest-0.9.130-universal-apple-darwin.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/370481233"}
+"platforms.macos-x64" = { checksum = "sha256:4c6621c7342f0939b51f926430e242d821cc9bedaed40e9a08bfa144a719b891", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.130/cargo-nextest-0.9.130-universal-apple-darwin.tar.gz", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/370481233"}
+"platforms.windows-x64" = { checksum = "sha256:456991384d7ea44b9c29fd494f48399917102e8dab1bd9a45d824bc201b2f7c6", url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.130/cargo-nextest-0.9.130-x86_64-pc-windows-msvc.zip", url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/370489175"}
 
 [tools."github:nextest-rs/nextest".options]
 version_prefix = "cargo-nextest-"
