@@ -35,13 +35,41 @@ use onshape_client_core::oauth::onshape_oauth_client;
 // ============================================================================
 
 /// Onshape tokens stored for an authenticated user.
+///
+/// Secret fields are private to enforce controlled access via
+/// [`expose_secret()`](secrecy::ExposeSecret::expose_secret) at call sites.
 #[derive(Clone, Debug)]
 pub(crate) struct UserOnshapeTokens {
-    pub access_token: String,
+    access_token: SecretString,
     /// Kept for future per-user token refresh.
     #[allow(dead_code)]
-    pub refresh_token: String,
-    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    refresh_token: SecretString,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl UserOnshapeTokens {
+    /// Create a new set of user Onshape tokens.
+    pub(crate) const fn new(
+        access_token: SecretString,
+        refresh_token: SecretString,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Self {
+        Self {
+            access_token,
+            refresh_token,
+            expires_at,
+        }
+    }
+
+    /// Borrow the access token.
+    pub(crate) const fn access_token(&self) -> &SecretString {
+        &self.access_token
+    }
+
+    /// When this token expires, if known.
+    pub(crate) const fn expires_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.expires_at
+    }
 }
 
 /// Context inserted into HTTP request extensions by the auth middleware.
@@ -767,11 +795,11 @@ async fn onshape_callback(
         .unwrap_or_default();
     state.user_tokens.write().await.insert(
         session_info.id.clone(),
-        UserOnshapeTokens {
-            access_token,
-            refresh_token,
+        UserOnshapeTokens::new(
+            SecretString::from(access_token),
+            SecretString::from(refresh_token),
             expires_at,
-        },
+        ),
     );
 
     // Issue an MCP authorization code.
@@ -1217,11 +1245,11 @@ mod tests {
         // Also insert user tokens so validate_token can find them.
         state.user_tokens.write().await.insert(
             user_id.to_string(),
-            UserOnshapeTokens {
-                access_token: "onshape-access-token".to_string(),
-                refresh_token: "onshape-refresh-token".to_string(),
-                expires_at: Some(now + chrono::Duration::hours(1)),
-            },
+            UserOnshapeTokens::new(
+                SecretString::from("onshape-access-token"),
+                SecretString::from("onshape-refresh-token"),
+                Some(now + chrono::Duration::hours(1)),
+            ),
         );
         token
     }
@@ -1597,11 +1625,11 @@ mod tests {
         // Insert user tokens so the token issuance can succeed.
         state.user_tokens.write().await.insert(
             "allowed-user-1".to_string(),
-            UserOnshapeTokens {
-                access_token: "onshape-at".to_string(),
-                refresh_token: "onshape-rt".to_string(),
-                expires_at: None,
-            },
+            UserOnshapeTokens::new(
+                SecretString::from("onshape-at"),
+                SecretString::from("onshape-rt"),
+                None,
+            ),
         );
 
         // Correct verifier should succeed.
@@ -1735,11 +1763,7 @@ mod tests {
         // Need user tokens for the lookup.
         state.user_tokens.write().await.insert(
             "allowed-user-1".to_string(),
-            UserOnshapeTokens {
-                access_token: "at".to_string(),
-                refresh_token: "rt".to_string(),
-                expires_at: None,
-            },
+            UserOnshapeTokens::new(SecretString::from("at"), SecretString::from("rt"), None),
         );
 
         // Client B should NOT be able to use client A's refresh token.
@@ -1778,11 +1802,7 @@ mod tests {
         );
         state.user_tokens.write().await.insert(
             "allowed-user-1".to_string(),
-            UserOnshapeTokens {
-                access_token: "at".to_string(),
-                refresh_token: "rt".to_string(),
-                expires_at: None,
-            },
+            UserOnshapeTokens::new(SecretString::from("at"), SecretString::from("rt"), None),
         );
 
         let req = TokenRequest {
