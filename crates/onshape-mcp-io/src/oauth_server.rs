@@ -41,8 +41,6 @@ use onshape_client_core::oauth::onshape_oauth_client;
 #[derive(Clone, Debug)]
 pub(crate) struct UserOnshapeTokens {
     access_token: SecretString,
-    /// Kept for future per-user token refresh.
-    #[allow(dead_code)]
     refresh_token: SecretString,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -66,6 +64,11 @@ impl UserOnshapeTokens {
         &self.access_token
     }
 
+    /// Borrow the refresh token.
+    pub(crate) const fn refresh_token(&self) -> &SecretString {
+        &self.refresh_token
+    }
+
     /// When this token expires, if known.
     pub(crate) const fn expires_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         self.expires_at
@@ -77,8 +80,7 @@ impl UserOnshapeTokens {
 /// Accessible in `call_tool()` via `request::Parts::extensions`.
 #[derive(Clone, Debug)]
 pub(crate) struct UserContext {
-    /// Onshape user ID (used for logging and future per-user management).
-    #[allow(dead_code)]
+    /// Onshape user ID (used for per-user token management and logging).
     pub user_id: String,
     /// The user's Onshape tokens for API calls.
     pub onshape_tokens: UserOnshapeTokens,
@@ -153,6 +155,12 @@ pub(crate) struct OAuthServerState {
     refresh_tokens: RwLock<HashMap<String, IssuedToken>>,
     /// User Onshape tokens (keyed by Onshape user ID).
     pub(crate) user_tokens: RwLock<HashMap<String, UserOnshapeTokens>>,
+    /// Per-user locks for serializing Onshape token refresh operations.
+    ///
+    /// Prevents concurrent refreshes for the same user from consuming the
+    /// same refresh token twice (Onshape may invalidate the old refresh token
+    /// when a new one is issued).
+    refresh_locks: RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Allowlist of Onshape user IDs.
     allowed_users: HashSet<String>,
     /// Onshape OAuth app client ID (operator's app).
@@ -161,6 +169,23 @@ pub(crate) struct OAuthServerState {
     onshape_client_secret: SecretString,
     /// Public URL of this MCP server (validated at construction time).
     public_url: url::Url,
+}
+
+/// Errors that can occur during per-user Onshape token refresh.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum UserTokenRefreshError {
+    /// User not found in the token store.
+    #[error("user not found in token store")]
+    UserNotFound,
+    /// Transient exchange failure (network, server error).
+    #[error("token refresh request failed: {0}")]
+    Exchange(String),
+    /// Permanent exchange failure (refresh token revoked/expired).
+    #[error("token refresh permanently failed: {0}")]
+    PermanentExchange(String),
+    /// Failed to build HTTP client for the refresh request.
+    #[error("failed to build HTTP client: {0}")]
+    HttpClient(String),
 }
 
 /// MCP access token lifetime (1 hour, matching Onshape).
@@ -206,6 +231,7 @@ impl OAuthServerState {
             tokens: RwLock::new(HashMap::new()),
             refresh_tokens: RwLock::new(HashMap::new()),
             user_tokens: RwLock::new(HashMap::new()),
+            refresh_locks: RwLock::new(HashMap::new()),
             allowed_users: allowed_user_ids.into_iter().collect(),
             onshape_client_id,
             onshape_client_secret,
@@ -246,6 +272,122 @@ impl OAuthServerState {
             user_id,
             onshape_tokens,
         })
+    }
+
+    /// Refresh a user's Onshape tokens using the server's client credentials.
+    ///
+    /// Acquires a per-user lock to prevent concurrent refreshes from consuming
+    /// the same refresh token twice (Onshape may invalidate old refresh tokens
+    /// when new ones are issued).
+    ///
+    /// If `stale_before` is provided and the stored token already expires after
+    /// that timestamp, the refresh is skipped — another request already refreshed
+    /// while we waited for the lock.
+    pub(crate) async fn refresh_user_onshape_tokens(
+        &self,
+        user_id: &str,
+        stale_before: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<UserOnshapeTokens, UserTokenRefreshError> {
+        // Acquire the per-user refresh lock.
+        let lock = self.get_user_refresh_lock(user_id).await;
+        let _guard = lock.lock().await;
+
+        // Re-read tokens — they may have been refreshed while we waited.
+        let current_tokens = self
+            .user_tokens
+            .read()
+            .await
+            .get(user_id)
+            .cloned()
+            .ok_or(UserTokenRefreshError::UserNotFound)?;
+
+        // Double-check: skip if another request already refreshed.
+        if let Some(stale) = stale_before
+            && let Some(current_expires) = current_tokens.expires_at()
+            && current_expires > stale
+        {
+            return Ok(current_tokens);
+        }
+
+        eprintln!("[oauth] refreshing Onshape tokens for user {user_id}");
+
+        // Build OAuth client using server's Onshape app credentials.
+        // Use RequestBody auth (client_secret_post) — Onshape requires
+        // credentials in the POST body, not HTTP Basic auth.
+        let onshape_client = onshape_oauth_client(
+            &self.onshape_client_id,
+            self.onshape_client_secret.expose_secret(),
+        )
+        .set_auth_type(oauth2::AuthType::RequestBody);
+
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| UserTokenRefreshError::HttpClient(e.to_string()))?;
+
+        let refresh_token =
+            oauth2::RefreshToken::new(current_tokens.refresh_token().expose_secret().to_string());
+
+        let response = onshape_client
+            .exchange_refresh_token(&refresh_token)
+            .request_async(&oauth2_reqwest::ReqwestClient::from(http_client))
+            .await
+            .map_err(|e| {
+                let msg = e.to_string();
+                if crate::is_permanent_refresh_failure(&msg) {
+                    UserTokenRefreshError::PermanentExchange(msg)
+                } else {
+                    UserTokenRefreshError::Exchange(msg)
+                }
+            })?;
+
+        // Build new tokens from the response.
+        let now = chrono::Utc::now();
+        let access_token = response.access_token().secret().clone();
+
+        // Per RFC 6749 §6: if the server omits refresh_token in the
+        // response, keep the existing one.
+        let new_refresh_token = response.refresh_token().map_or_else(
+            || current_tokens.refresh_token().expose_secret().to_string(),
+            |t| t.secret().clone(),
+        );
+
+        let expires_at = response
+            .expires_in()
+            .and_then(|d| chrono::Duration::from_std(d).ok())
+            .map(|d| now + d);
+
+        let new_tokens = UserOnshapeTokens::new(
+            SecretString::from(access_token),
+            SecretString::from(new_refresh_token),
+            expires_at,
+        );
+
+        // Update stored tokens.
+        self.user_tokens
+            .write()
+            .await
+            .insert(user_id.to_string(), new_tokens.clone());
+
+        eprintln!("[oauth] Onshape token refresh succeeded for user {user_id}");
+
+        Ok(new_tokens)
+    }
+
+    /// Get or create the per-user refresh lock.
+    async fn get_user_refresh_lock(&self, user_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        // Fast path: lock already exists.
+        if let Some(lock) = self.refresh_locks.read().await.get(user_id) {
+            return Arc::clone(lock);
+        }
+
+        // Slow path: create a new lock.
+        let mut locks = self.refresh_locks.write().await;
+        // Re-check after acquiring write lock (another task may have created it).
+        locks
+            .entry(user_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 }
 
