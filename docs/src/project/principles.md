@@ -43,7 +43,11 @@ pub fn call_tool(name: &str, args: Value, /* ... */) -> ToolEffect {
 }
 
 // Pure dispatch: continuation + I/O result -> next effect
-pub fn resume(continuation: Continuation, result: IoResult) -> (ToolEffect, Vec<SideEffect>)
+pub fn resume(continuation: Continuation, result: IoResult) -> (ToolEffect, Vec<SideEffect>) {
+    // Each Continuation variant matches with the appropriate IoResult variant
+    // and produces the next ToolEffect. No closures, fully inspectable.
+    // ...
+}
 
 // I/O crate - interprets effects in a loop
 loop {
@@ -52,6 +56,11 @@ loop {
         ToolEffect::ApiRequest { request, continuation } => {
             let response = http_client.execute(request).await;
             let (next, side_effects) = resume(continuation, IoResult::ApiResponse { .. });
+            current = next;
+        }
+        ToolEffect::WriteFiles { files, continuation } => {
+            let results = write_files(&files).await;
+            let (next, side_effects) = resume(continuation, IoResult::FileWriteResults(&results));
             current = next;
         }
     }
