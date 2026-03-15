@@ -380,7 +380,7 @@ impl OnshapeMcpServer {
 
         // In HTTP mode, we present OAuthReady with the user's token expiry.
         let resolved_auth = ResolvedAuth::OAuthReady {
-            expires_at: user_ctx.onshape_tokens.expires_at,
+            expires_at: user_ctx.onshape_tokens.expires_at(),
         };
 
         let result = tools::call_tool(
@@ -400,7 +400,7 @@ impl OnshapeMcpServer {
                 access_token: AccessToken::new(
                     user_ctx
                         .onshape_tokens
-                        .access_token
+                        .access_token()
                         .expose_secret()
                         .to_string(),
                 ),
