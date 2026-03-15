@@ -552,8 +552,17 @@ async fn authorize(
     }
     drop(clients);
 
+    // PKCE is required for all clients (MCP spec).
+    if params.code_challenge.is_none() {
+        eprintln!("[oauth] authorize: rejected missing code_challenge (PKCE required)");
+        return Err((
+            http::StatusCode::BAD_REQUEST,
+            "code_challenge is required (PKCE S256)".to_string(),
+        ));
+    }
+
     // Validate PKCE code_challenge_method (we only support S256, per metadata).
-    if params.code_challenge.is_some() && params.code_challenge_method.as_deref() != Some("S256") {
+    if params.code_challenge_method.as_deref() != Some("S256") {
         eprintln!(
             "[oauth] authorize: rejected unsupported code_challenge_method={:?}",
             params.code_challenge_method
@@ -564,7 +573,7 @@ async fn authorize(
         ));
     }
 
-    // Store the MCP client's PKCE code challenge (if provided) for later validation.
+    // Store the MCP client's PKCE code challenge for later validation.
     let pkce_code_challenge = params.code_challenge.clone();
 
     // Generate Onshape OAuth parameters.
@@ -1571,8 +1580,14 @@ mod tests {
 
     #[tokio::test]
     async fn auth_code_grant_rejects_missing_client_secret() {
+        use base64::Engine;
+
         let state = test_state();
         let (client_id, _client_secret) = register_test_client(&state).await;
+
+        let verifier = "test-verifier-for-missing-secret";
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(sha2::Sha256::digest(verifier.as_bytes()));
 
         // Insert an auth code.
         let code = random_hex(32);
@@ -1581,7 +1596,7 @@ mod tests {
             IssuedAuthCode {
                 client_id: client_id.clone(),
                 redirect_uri: "https://example.com/callback".to_string(),
-                pkce_code_challenge: None,
+                pkce_code_challenge: Some(challenge),
                 user_id: "allowed-user-1".to_string(),
                 created_at: chrono::Utc::now(),
             },
@@ -1593,7 +1608,7 @@ mod tests {
             redirect_uri: Some("https://example.com/callback".to_string()),
             client_id: Some(client_id),
             client_secret: None, // missing!
-            code_verifier: None,
+            code_verifier: Some(verifier.to_string()),
             refresh_token: None,
         };
 
@@ -1606,8 +1621,14 @@ mod tests {
 
     #[tokio::test]
     async fn auth_code_grant_rejects_wrong_client_secret() {
+        use base64::Engine;
+
         let state = test_state();
         let (client_id, _client_secret) = register_test_client(&state).await;
+
+        let verifier = "test-verifier-for-wrong-secret";
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(sha2::Sha256::digest(verifier.as_bytes()));
 
         let code = random_hex(32);
         state.auth_codes.write().await.insert(
@@ -1615,7 +1636,7 @@ mod tests {
             IssuedAuthCode {
                 client_id: client_id.clone(),
                 redirect_uri: "https://example.com/callback".to_string(),
-                pkce_code_challenge: None,
+                pkce_code_challenge: Some(challenge),
                 user_id: "allowed-user-1".to_string(),
                 created_at: chrono::Utc::now(),
             },
@@ -1627,7 +1648,7 @@ mod tests {
             redirect_uri: Some("https://example.com/callback".to_string()),
             client_id: Some(client_id),
             client_secret: Some("wrong-secret".to_string()),
-            code_verifier: None,
+            code_verifier: Some(verifier.to_string()),
             refresh_token: None,
         };
 
@@ -1726,8 +1747,14 @@ mod tests {
 
     #[tokio::test]
     async fn auth_code_grant_rejects_expired_code() {
+        use base64::Engine;
+
         let state = test_state();
         let (client_id, client_secret) = register_test_client(&state).await;
+
+        let verifier = "test-verifier-for-expired-code";
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(sha2::Sha256::digest(verifier.as_bytes()));
 
         let code = random_hex(32);
         state.auth_codes.write().await.insert(
@@ -1735,7 +1762,7 @@ mod tests {
             IssuedAuthCode {
                 client_id: client_id.clone(),
                 redirect_uri: "https://example.com/callback".to_string(),
-                pkce_code_challenge: None,
+                pkce_code_challenge: Some(challenge),
                 user_id: "allowed-user-1".to_string(),
                 created_at: chrono::Utc::now() - chrono::Duration::seconds(AUTH_CODE_TTL_SECS + 1),
             },
@@ -1747,7 +1774,7 @@ mod tests {
             redirect_uri: Some("https://example.com/callback".to_string()),
             client_id: Some(client_id),
             client_secret: Some(client_secret),
-            code_verifier: None,
+            code_verifier: Some(verifier.to_string()),
             refresh_token: None,
         };
 
@@ -1756,6 +1783,35 @@ mod tests {
         let (status, json) = result.expect_err("should be Err");
         assert_eq!(status, http::StatusCode::BAD_REQUEST);
         assert_eq!(json.0["error"], "invalid_grant");
+    }
+
+    // ================================================================
+    // Authorize endpoint PKCE enforcement tests
+    // ================================================================
+
+    #[tokio::test]
+    async fn authorize_rejects_missing_code_challenge() {
+        let state = Arc::new(test_state());
+        let (client_id, _) = register_test_client(&state).await;
+
+        let params = AuthorizeParams {
+            response_type: "code".to_string(),
+            client_id,
+            redirect_uri: "https://example.com/callback".to_string(),
+            state: Some("test-state".to_string()),
+            code_challenge: None, // missing — must be rejected
+            code_challenge_method: None,
+            scope: None,
+        };
+
+        let result = authorize(State(state), Query(params)).await;
+        assert!(result.is_err());
+        let (status, body) = result.expect_err("should reject missing code_challenge");
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert!(
+            body.contains("code_challenge is required"),
+            "unexpected error message: {body}"
+        );
     }
 
     // ================================================================
