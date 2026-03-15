@@ -2045,7 +2045,12 @@ mod tests {
         let request = assert_api_request(result);
         assert_eq!(request.path, "/documents/search");
 
-        let body = request.body.expect("request should have a body");
+        let body = request
+            .body
+            .expect("request should have a body")
+            .as_json()
+            .expect("should be JSON body")
+            .clone();
         assert_eq!(body["rawQuery"], "cabinets");
         assert_eq!(body["limit"], 5);
         assert_eq!(

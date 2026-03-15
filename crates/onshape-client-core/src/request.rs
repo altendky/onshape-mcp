@@ -79,9 +79,59 @@ pub struct ApiRequest {
     /// Query parameters.
     pub query_params: Vec<(String, String)>,
     /// Request body, if any.
-    pub body: Option<Value>,
+    pub body: Option<RequestBody>,
     /// Content type for the request body.
     pub content_type: Option<String>,
+}
+
+// ============================================================================
+// Request Body
+// ============================================================================
+
+/// The body of an API request.
+///
+/// Different content types require different body representations. The I/O
+/// layer uses this to decide how to serialize and send the body.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum RequestBody {
+    /// A JSON body — serialized via `serde_json`.
+    Json(Value),
+    /// A multipart form body — text fields plus binary file parts.
+    /// The I/O layer builds a `multipart/form-data` request from this.
+    Multipart(MultipartBody),
+}
+
+/// A multipart form body with text and binary parts.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MultipartBody {
+    /// Text form fields: `(field_name, value)`.
+    pub text_fields: Vec<(String, String)>,
+    /// Binary form fields (e.g., file uploads).
+    pub binary_fields: Vec<BinaryField>,
+}
+
+/// A single binary field in a multipart form.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BinaryField {
+    /// The form field name (must match the schema property name).
+    pub field_name: String,
+    /// The raw binary content.
+    pub data: Vec<u8>,
+    /// Optional MIME type for this part (e.g., `application/octet-stream`).
+    pub content_type: Option<String>,
+}
+
+impl RequestBody {
+    /// Convenience: extract the inner [`Value`] if this is a `Json` variant.
+    ///
+    /// Returns `None` for non-JSON variants.
+    #[must_use]
+    pub const fn as_json(&self) -> Option<&Value> {
+        match self {
+            Self::Json(v) => Some(v),
+            Self::Multipart(_) => None,
+        }
+    }
 }
 
 // ============================================================================
@@ -169,5 +219,31 @@ mod tests {
         let json = serde_json::to_value(&req).expect("should serialize");
         assert_eq!(json["method"], "GET");
         assert_eq!(json["path"], "/documents/abc123");
+    }
+
+    #[test]
+    fn api_request_with_json_body_serializes() {
+        let req = ApiRequest {
+            method: HttpMethod::Post,
+            path: "/documents".to_string(),
+            query_params: vec![],
+            body: Some(RequestBody::Json(serde_json::json!({"name": "test"}))),
+            content_type: Some("application/json".to_string()),
+        };
+        let json = serde_json::to_value(&req).expect("should serialize");
+        assert_eq!(json["method"], "POST");
+        assert!(json["body"].is_object());
+    }
+
+    #[test]
+    fn request_body_as_json() {
+        let json_body = RequestBody::Json(serde_json::json!({"key": "value"}));
+        assert!(json_body.as_json().is_some());
+
+        let multipart_body = RequestBody::Multipart(MultipartBody {
+            text_fields: vec![],
+            binary_fields: vec![],
+        });
+        assert!(multipart_body.as_json().is_none());
     }
 }
