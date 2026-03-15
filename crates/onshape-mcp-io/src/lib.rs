@@ -365,6 +365,7 @@ impl OnshapeMcpServer {
             &mut state,
             &self.validation,
             Some(&self.login_state),
+            true, // stdio: file writes allowed
         )
         .await
     }
@@ -416,7 +417,7 @@ impl OnshapeMcpServer {
 
         let mut api_state = ApiState::Basic(client);
 
-        dispatch_tool_result(result, &mut api_state, &self.validation, None).await
+        dispatch_tool_result(result, &mut api_state, &self.validation, None, false).await
     }
 }
 
@@ -424,12 +425,17 @@ impl OnshapeMcpServer {
 ///
 /// Handles `Immediate`, `OnshapeApiRequest`, `OnshapeApiRequestThen`,
 /// and `OAuthLoginFlow` variants. Used by both stdio and HTTP modes.
+///
+/// `allow_file_writes` controls whether `WriteFiles` effects are executed.
+/// The stdio transport passes `true` (local, single-user process); the HTTP
+/// transport passes `false` to prevent network-facing file-system access.
 #[allow(clippy::significant_drop_tightening)]
 async fn dispatch_tool_result(
     initial_result: ToolResult,
     state: &mut ApiState,
     validation: &tokio::sync::Mutex<ValidationState>,
     login_state: Option<&tokio::sync::Mutex<login::LoginState>>,
+    allow_file_writes: bool,
 ) -> Result<CallToolResult, McpError> {
     let mut current = initial_result;
     loop {
@@ -497,6 +503,13 @@ async fn dispatch_tool_result(
                 }
             }
             ToolResult::WriteFiles { files, format } => {
+                if !allow_file_writes {
+                    return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
+                        "File write operations are not supported over the HTTP transport. \
+                         The onshape_screenshot tool's output_path parameter requires the \
+                         stdio transport (local process).",
+                    )]));
+                }
                 let results = write_files(&files).await;
                 return Ok(format(&results));
             }
@@ -1540,6 +1553,7 @@ pub async fn run_http(
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -1615,5 +1629,93 @@ mod tests {
     fn ipv4_retry_returns_client_for_ipv6_loopback() {
         let body = r#"{"error":"forbidden","source_ip":"::1"}"#;
         assert!(build_ipv4_retry_client(body).is_some());
+    }
+
+    // --- dispatch_tool_result file-write gating tests ---
+
+    /// Helper: build a `ToolResult::WriteFiles` targeting `path` with dummy data.
+    fn dummy_write_files(path: std::path::PathBuf) -> tools::ToolResult {
+        tools::ToolResult::WriteFiles {
+            files: vec![tools::FileWrite {
+                path,
+                data: b"png-bytes".to_vec(),
+            }],
+            format: Box::new(|results| {
+                let all_ok = results
+                    .iter()
+                    .all(|r| matches!(r, tools::FileWriteResult::Success { .. }));
+                if all_ok {
+                    CallToolResult::success(vec![rmcp::model::Content::text("wrote file")])
+                } else {
+                    CallToolResult::error(vec![rmcp::model::Content::text("write failed")])
+                }
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn file_writes_blocked_when_disallowed() {
+        let dir = tempfile::tempdir().expect("should create temp dir");
+        let file_path = dir.path().join("should_not_exist.png");
+
+        let validation = tokio::sync::Mutex::new(ValidationState::default());
+        let mut state = ApiState::NotConfigured {
+            configured_method: AuthMethod::OAuth,
+            detail: "test".to_string(),
+        };
+
+        let result = dispatch_tool_result(
+            dummy_write_files(file_path.clone()),
+            &mut state,
+            &validation,
+            None,
+            false, // disallow file writes
+        )
+        .await
+        .expect("should not return protocol error");
+
+        assert_eq!(result.is_error, Some(true));
+        let text = result.content[0]
+            .raw
+            .as_text()
+            .expect("should be text content");
+        assert!(
+            text.text.contains("not supported over the HTTP transport"),
+            "unexpected error message: {}",
+            text.text
+        );
+        assert!(
+            !file_path.exists(),
+            "file should not have been written to disk"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_writes_allowed_when_permitted() {
+        let dir = tempfile::tempdir().expect("should create temp dir");
+        let file_path = dir.path().join("output.png");
+
+        let validation = tokio::sync::Mutex::new(ValidationState::default());
+        let mut state = ApiState::NotConfigured {
+            configured_method: AuthMethod::OAuth,
+            detail: "test".to_string(),
+        };
+
+        let result = dispatch_tool_result(
+            dummy_write_files(file_path.clone()),
+            &mut state,
+            &validation,
+            None,
+            true, // allow file writes
+        )
+        .await
+        .expect("should not return protocol error");
+
+        assert_eq!(result.is_error, Some(false));
+        assert!(file_path.exists(), "file should have been written to disk");
+        assert_eq!(
+            std::fs::read(&file_path).expect("should read file"),
+            b"png-bytes"
+        );
     }
 }
