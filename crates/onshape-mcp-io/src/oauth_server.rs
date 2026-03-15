@@ -169,6 +169,21 @@ const TOKEN_LIFETIME_SECS: i64 = 3600;
 /// Maximum lifetime of an authorization code (RFC 6749 §4.1.2 recommends ≤10 min).
 const AUTH_CODE_TTL_SECS: i64 = 600;
 
+/// Remove any existing tokens for the given user+client pair, then insert the new one.
+///
+/// This ensures at most one access token (or refresh token) exists per
+/// `(user_id, client_id)` pair, revoking stale tokens from prior grants.
+fn replace_token(
+    tokens: &mut HashMap<String, IssuedToken>,
+    new_key: String,
+    new_value: IssuedToken,
+) {
+    let user_id = &new_value.user_id;
+    let client_id = &new_value.client_id;
+    tokens.retain(|_, t| !(t.user_id == *user_id && t.client_id == *client_id));
+    tokens.insert(new_key, new_value);
+}
+
 // ============================================================================
 // State Construction
 // ============================================================================
@@ -955,26 +970,36 @@ async fn handle_auth_code_grant(
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(TOKEN_LIFETIME_SECS);
 
-    state.tokens.write().await.insert(
-        access_token.clone(),
-        IssuedToken {
-            user_id: issued_code.user_id.clone(),
-            client_id: issued_code.client_id.clone(),
-            issued_at: now,
-            expires_at,
-        },
-    );
+    // Acquire both write guards in a fixed order (tokens → refresh_tokens)
+    // so the two replacements are atomic with respect to concurrent readers.
+    {
+        let mut tokens = state.tokens.write().await;
+        let mut refresh_tokens = state.refresh_tokens.write().await;
 
-    // Store refresh token in a separate map (not the access token map).
-    state.refresh_tokens.write().await.insert(
-        mcp_refresh_token.clone(),
-        IssuedToken {
-            user_id: issued_code.user_id,
-            client_id: issued_code.client_id,
-            issued_at: now,
-            expires_at: now + chrono::Duration::days(30), // refresh tokens live longer
-        },
-    );
+        // Revoke any prior access tokens for this user+client before issuing a new one.
+        replace_token(
+            &mut tokens,
+            access_token.clone(),
+            IssuedToken {
+                user_id: issued_code.user_id.clone(),
+                client_id: issued_code.client_id.clone(),
+                issued_at: now,
+                expires_at,
+            },
+        );
+
+        // Revoke any prior refresh tokens for this user+client, then store the new one.
+        replace_token(
+            &mut refresh_tokens,
+            mcp_refresh_token.clone(),
+            IssuedToken {
+                user_id: issued_code.user_id,
+                client_id: issued_code.client_id,
+                issued_at: now,
+                expires_at: now + chrono::Duration::days(30), // refresh tokens live longer
+            },
+        );
+    }
 
     Ok(Json(TokenResponseBody {
         access_token,
@@ -1039,24 +1064,36 @@ async fn handle_refresh_token_grant(
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(TOKEN_LIFETIME_SECS);
 
-    state.tokens.write().await.insert(
-        new_access.clone(),
-        IssuedToken {
-            user_id: old_token.user_id.clone(),
-            client_id: client_id.clone(),
-            issued_at: now,
-            expires_at,
-        },
-    );
-    state.refresh_tokens.write().await.insert(
-        new_refresh.clone(),
-        IssuedToken {
-            user_id: old_token.user_id,
-            client_id: client_id.clone(),
-            issued_at: now,
-            expires_at: now + chrono::Duration::days(30),
-        },
-    );
+    // Acquire both write guards in a fixed order (tokens → refresh_tokens)
+    // so the two replacements are atomic with respect to concurrent readers.
+    {
+        let mut tokens = state.tokens.write().await;
+        let mut refresh_tokens = state.refresh_tokens.write().await;
+
+        // Revoke any prior access tokens for this user+client before issuing a new one.
+        replace_token(
+            &mut tokens,
+            new_access.clone(),
+            IssuedToken {
+                user_id: old_token.user_id.clone(),
+                client_id: client_id.clone(),
+                issued_at: now,
+                expires_at,
+            },
+        );
+        // The old refresh token was already consumed via .remove() above;
+        // retain() here catches any orphaned entries from prior flows.
+        replace_token(
+            &mut refresh_tokens,
+            new_refresh.clone(),
+            IssuedToken {
+                user_id: old_token.user_id,
+                client_id: client_id.clone(),
+                issued_at: now,
+                expires_at: now + chrono::Duration::days(30),
+            },
+        );
+    }
 
     Ok(Json(TokenResponseBody {
         access_token: new_access,
@@ -1882,5 +1919,181 @@ mod tests {
                 .await
                 .contains_key(&refresh_token)
         );
+    }
+
+    // ================================================================
+    // Token revocation on grant tests
+    // ================================================================
+
+    #[tokio::test]
+    async fn refresh_grant_revokes_old_access_token() {
+        let state = test_state();
+        let (client_id, client_secret) = register_test_client(&state).await;
+
+        // Insert an existing access token for this user+client.
+        let old_access = insert_access_token(&state, "allowed-user-1", &client_id).await;
+
+        // Insert a refresh token for the same user+client.
+        let refresh_token = random_hex(32);
+        let now = chrono::Utc::now();
+        state.refresh_tokens.write().await.insert(
+            refresh_token.clone(),
+            IssuedToken {
+                user_id: "allowed-user-1".to_string(),
+                client_id: client_id.clone(),
+                issued_at: now,
+                expires_at: now + chrono::Duration::days(30),
+            },
+        );
+
+        // Perform the refresh grant.
+        let expected_client_id = client_id.clone();
+        let req = TokenRequest {
+            grant_type: "refresh_token".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some(client_id),
+            client_secret: Some(client_secret),
+            code_verifier: None,
+            refresh_token: Some(refresh_token),
+        };
+
+        let result = handle_refresh_token_grant(&state, &req).await;
+        assert!(result.is_ok());
+
+        // The old access token should have been revoked.
+        assert!(
+            !state.tokens.read().await.contains_key(&old_access),
+            "old access token should be revoked after refresh"
+        );
+
+        // A new access token should exist (exactly one for this user+client).
+        assert_eq!(
+            state
+                .tokens
+                .read()
+                .await
+                .values()
+                .filter(|t| t.user_id == "allowed-user-1" && t.client_id == expected_client_id)
+                .count(),
+            1,
+            "exactly one access token should exist after refresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_code_grant_revokes_old_tokens_for_same_client() {
+        let state = test_state();
+        let (client_id, client_secret) = register_test_client(&state).await;
+
+        // Set up user tokens so the grant can succeed.
+        state.user_tokens.write().await.insert(
+            "allowed-user-1".to_string(),
+            UserOnshapeTokens::new(
+                SecretString::from("onshape-at"),
+                SecretString::from("onshape-rt"),
+                None,
+            ),
+        );
+
+        // First auth code grant — issues initial tokens.
+        let code1 = random_hex(32);
+        state.auth_codes.write().await.insert(
+            code1.clone(),
+            IssuedAuthCode {
+                client_id: client_id.clone(),
+                redirect_uri: "https://example.com/callback".to_string(),
+                pkce_code_challenge: None,
+                user_id: "allowed-user-1".to_string(),
+                created_at: chrono::Utc::now(),
+            },
+        );
+
+        let req1 = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some(code1),
+            redirect_uri: Some("https://example.com/callback".to_string()),
+            client_id: Some(client_id.clone()),
+            client_secret: Some(client_secret.clone()),
+            code_verifier: None,
+            refresh_token: None,
+        };
+
+        let result1 = handle_auth_code_grant(&state, &req1).await;
+        assert!(result1.is_ok());
+        let body1 = result1.expect("first grant should succeed");
+        let first_access = body1.access_token.clone();
+        let first_refresh = body1
+            .refresh_token
+            .clone()
+            .expect("should have refresh token");
+
+        // Verify the first tokens exist.
+        assert!(state.tokens.read().await.contains_key(&first_access));
+        assert!(
+            state
+                .refresh_tokens
+                .read()
+                .await
+                .contains_key(&first_refresh)
+        );
+
+        // Second auth code grant for the same user+client — should revoke the first tokens.
+        let code2 = random_hex(32);
+        state.auth_codes.write().await.insert(
+            code2.clone(),
+            IssuedAuthCode {
+                client_id: client_id.clone(),
+                redirect_uri: "https://example.com/callback".to_string(),
+                pkce_code_challenge: None,
+                user_id: "allowed-user-1".to_string(),
+                created_at: chrono::Utc::now(),
+            },
+        );
+
+        let req2 = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some(code2),
+            redirect_uri: Some("https://example.com/callback".to_string()),
+            client_id: Some(client_id.clone()),
+            client_secret: Some(client_secret),
+            code_verifier: None,
+            refresh_token: None,
+        };
+
+        let result2 = handle_auth_code_grant(&state, &req2).await;
+        assert!(result2.is_ok());
+
+        // The first access and refresh tokens should be revoked.
+        assert!(
+            !state.tokens.read().await.contains_key(&first_access),
+            "first access token should be revoked after re-auth"
+        );
+        assert!(
+            !state
+                .refresh_tokens
+                .read()
+                .await
+                .contains_key(&first_refresh),
+            "first refresh token should be revoked after re-auth"
+        );
+
+        // Exactly one access token and one refresh token should remain.
+        let access_count = state
+            .tokens
+            .read()
+            .await
+            .values()
+            .filter(|t| t.user_id == "allowed-user-1" && t.client_id == client_id)
+            .count();
+        let refresh_count = state
+            .refresh_tokens
+            .read()
+            .await
+            .values()
+            .filter(|t| t.user_id == "allowed-user-1" && t.client_id == client_id)
+            .count();
+        assert_eq!(access_count, 1, "exactly one access token after re-auth");
+        assert_eq!(refresh_count, 1, "exactly one refresh token after re-auth");
     }
 }
