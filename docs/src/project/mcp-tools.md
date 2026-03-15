@@ -17,7 +17,7 @@ All MCP tools use the `onshape_` prefix to avoid collisions with other MCP serve
 | Prefix | Purpose | Example |
 | -------- | --------- | --------- |
 | `onshape_api_` | Onshape REST API operations | `onshape_api_search` |
-| `onshape_mcp_` | MCP server administration | `onshape_mcp_auth_status` |
+| `onshape_mcp_` | MCP server administration | `onshape_mcp_get_started` |
 | `onshape_` | Higher-level convenience tools | `onshape_screenshot` |
 
 ## Transport Support
@@ -64,8 +64,8 @@ These are advisory hints for MCP clients, not security enforcement.
 
 | Tool | `readOnlyHint` | `destructiveHint` |
 | ---- | -------------- | ----------------- |
-| `onshape_mcp_auth_status` | true | false |
-| `onshape_mcp_auth_login` | false | false |
+| `onshape_auth_status` | true | false |
+| `onshape_auth_login` | false | false |
 | `onshape_api_search` | true | false |
 | `onshape_api_explain` | true | false |
 | `onshape_api_schema` | true | false |
@@ -80,10 +80,10 @@ Always visible (read-only operations on the server itself).
 | ------ | ------------- | ------ |
 | `onshape_mcp_get_mode` | Returns current mode, max mode, escalation allowed | Not yet implemented |
 | `onshape_mcp_request_mode` | Request mode change (escalate or de-escalate, within max) | Not yet implemented |
-| `onshape_mcp_auth_status` | Returns auth status (valid/invalid/expired), last check time, connectivity | Implemented |
-| `onshape_mcp_auth_login` | Start an OAuth authorization flow (proxy or direct mode) | Implemented |
+| `onshape_auth_status` | Returns auth status (valid/invalid/expired), last check time, connectivity | Implemented |
+| `onshape_auth_login` | Start an OAuth authorization flow (proxy or direct mode) | Implemented |
 
-### `onshape_mcp_auth_login`
+### `onshape_auth_login`
 
 Start an OAuth authorization flow. Returns a URL to open in your browser. After authorizing, the server automatically detects the new tokens.
 
