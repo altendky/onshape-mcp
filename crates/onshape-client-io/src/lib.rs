@@ -17,7 +17,7 @@ use oauth2::AccessToken;
 use onshape_client_core::auth::{
     Credentials, basic_authorization_header_value, bearer_authorization_header_value,
 };
-use onshape_client_core::request::{ApiRequest, ApiResponse, HttpMethod};
+use onshape_client_core::request::{ApiRequest, ApiResponse, HttpMethod, RequestBody};
 use reqwest::Client;
 use secrecy::ExposeSecret;
 
@@ -206,21 +206,49 @@ impl OnshapeClient {
             builder = builder.query(&request.query_params);
         }
 
-        // Add request body.  Serialize manually instead of using
-        // `reqwest::RequestBuilder::json()` so that the Content-Type header
-        // from the OpenAPI spec (e.g. "application/json;charset=UTF-8; qs=0.09")
-        // is preserved rather than being overwritten by `.json()`.
-        if let Some(body) = &request.body {
-            let content_type = request
-                .content_type
-                .as_deref()
-                .unwrap_or("application/json");
-            let serialized = serde_json::to_vec(body).map_err(|e| ClientError::ResponseBody {
-                message: format!("failed to serialize request body: {e}"),
-            })?;
-            builder = builder
-                .header("Content-Type", content_type)
-                .body(serialized);
+        // Add request body.
+        match &request.body {
+            Some(RequestBody::Json(value)) => {
+                // Serialize manually instead of using
+                // `reqwest::RequestBuilder::json()` so that the Content-Type
+                // header from the OpenAPI spec (e.g.
+                // "application/json;charset=UTF-8; qs=0.09") is preserved
+                // rather than being overwritten by `.json()`.
+                let content_type = request
+                    .content_type
+                    .as_deref()
+                    .unwrap_or("application/json");
+                let serialized =
+                    serde_json::to_vec(value).map_err(|e| ClientError::ResponseBody {
+                        message: format!("failed to serialize request body: {e}"),
+                    })?;
+                builder = builder
+                    .header("Content-Type", content_type)
+                    .body(serialized);
+            }
+            Some(RequestBody::Multipart(multipart)) => {
+                // Build a multipart/form-data request.  `reqwest` sets the
+                // Content-Type header (with boundary) automatically when
+                // `.multipart()` is used — we must NOT set it manually.
+                let mut form = reqwest::multipart::Form::new();
+                for (name, value) in &multipart.text_fields {
+                    form = form.text(name.clone(), value.clone());
+                }
+                for field in &multipart.binary_fields {
+                    let mut part = reqwest::multipart::Part::bytes(field.data.clone());
+                    if let Some(ct) = &field.content_type {
+                        part = part.mime_str(ct).map_err(|e| ClientError::ResponseBody {
+                            message: format!(
+                                "invalid MIME type for field `{}`: {e}",
+                                field.field_name
+                            ),
+                        })?;
+                    }
+                    form = form.part(field.field_name.clone(), part);
+                }
+                builder = builder.multipart(form);
+            }
+            None => {}
         }
 
         let response = builder

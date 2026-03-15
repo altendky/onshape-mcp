@@ -3,14 +3,16 @@
 //! This module provides pure (sans-IO) operations over an Onshape `OpenAPI` specification.
 //! The spec JSON content is provided externally; this module never performs I/O.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use base64::Engine;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // Re-export types that moved to onshape-client-core.
 pub use onshape_client_core::request::{ApiRequest, ApiResponse, HttpMethod};
+use onshape_client_core::request::{BinaryField, MultipartBody, RequestBody};
 
 // ============================================================================
 // Error Types
@@ -444,13 +446,113 @@ impl OpenApiSpec {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
+        let request_body = match body {
+            Some(value) => {
+                let is_multipart = ep
+                    .request_body_content_type
+                    .as_deref()
+                    .is_some_and(|ct| ct.starts_with("multipart/form-data"));
+
+                if is_multipart {
+                    Some(Self::build_multipart_body(
+                        value,
+                        ep.request_body_schema.as_ref(),
+                    )?)
+                } else {
+                    Some(RequestBody::Json(value))
+                }
+            }
+            None => None,
+        };
+
         Ok(ApiRequest {
             method: ep.method,
             path: resolved_path,
             query_params: query_params_vec,
-            body,
+            body: request_body,
             content_type: ep.request_body_content_type.clone(),
         })
+    }
+
+    /// Build a [`RequestBody::Multipart`] from a JSON [`Value`] body and the
+    /// endpoint's request body schema.
+    ///
+    /// Fields whose schema declares `"format": "binary"` are treated as binary
+    /// parts: their JSON string values are base64-decoded into raw bytes. All
+    /// other fields become text parts with their JSON values converted to
+    /// strings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The body is not a JSON object
+    /// - A binary field's value is not a string or is not valid base64
+    fn build_multipart_body(
+        body: Value,
+        schema: Option<&Value>,
+    ) -> Result<RequestBody, OpenApiError> {
+        let Value::Object(fields) = body else {
+            return Err(OpenApiError::InvalidParams {
+                reason: "multipart/form-data body must be a JSON object".to_string(),
+            });
+        };
+
+        let binary_field_names = Self::find_binary_fields(schema);
+        let engine = base64::engine::general_purpose::STANDARD;
+
+        let mut text_fields = Vec::new();
+        let mut binary_fields = Vec::new();
+
+        for (name, value) in fields {
+            if binary_field_names.contains(&name) {
+                let encoded = value.as_str().ok_or_else(|| OpenApiError::InvalidParams {
+                    reason: format!(
+                        "binary field `{name}` must be a base64-encoded string, got {}",
+                        json_type_name(&value)
+                    ),
+                })?;
+                let data = engine
+                    .decode(encoded)
+                    .map_err(|e| OpenApiError::InvalidParams {
+                        reason: format!("binary field `{name}` has invalid base64: {e}"),
+                    })?;
+                binary_fields.push(BinaryField {
+                    field_name: name,
+                    data,
+                    content_type: None,
+                });
+            } else if let Some(text) = json_value_to_text(&value) {
+                // Non-binary field: convert JSON value to text for the form part.
+                text_fields.push((name, text));
+            }
+            // Null values are skipped — omitting a field from the multipart form
+            // is the correct representation of "not provided".
+        }
+
+        Ok(RequestBody::Multipart(MultipartBody {
+            text_fields,
+            binary_fields,
+        }))
+    }
+
+    /// Inspect a request body schema's `properties` for fields with
+    /// `"format": "binary"`, returning the set of property names.
+    fn find_binary_fields(schema: Option<&Value>) -> HashSet<String> {
+        let mut result = HashSet::new();
+        let Some(schema) = schema else {
+            return result;
+        };
+        let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+            return result;
+        };
+
+        for (name, prop) in properties {
+            if prop.get("format").and_then(Value::as_str) == Some("binary") {
+                result.insert(name.clone());
+            }
+        }
+
+        result
     }
 
     /// Look up a component schema by name and return its detail.
@@ -918,6 +1020,32 @@ fn encode_path_param(value: &str) -> String {
         .collect()
 }
 
+/// Convert a JSON value to its text representation for a multipart text part.
+///
+/// Returns `None` for `Value::Null` (null fields are omitted from the form).
+fn json_value_to_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => Some(s.clone()),
+        // Arrays and objects: serialize as JSON strings for the text part.
+        Value::Array(_) | Value::Object(_) => serde_json::to_string(value).ok(),
+    }
+}
+
+/// Return a human-readable name for a JSON value type (for error messages).
+const fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1047,6 +1175,49 @@ mod tests {
                             "content": {
                                 "application/json;charset=UTF-8; qs=0.09": {
                                     "schema": { "$ref": "#/components/schemas/BTFeatureDefinitionCall-1406" }
+                                }
+                            }
+                        },
+                        "responses": { "200": {} }
+                    }
+                },
+                "/blobelements/d/{did}/w/{wid}": {
+                    "post": {
+                        "operationId": "uploadFileCreateElement",
+                        "summary": "Upload a file to create a new element",
+                        "tags": ["BlobElement"],
+                        "parameters": [
+                            {
+                                "name": "did",
+                                "in": "path",
+                                "required": true,
+                                "schema": { "type": "string" },
+                                "description": "Document ID"
+                            },
+                            {
+                                "name": "wid",
+                                "in": "path",
+                                "required": true,
+                                "schema": { "type": "string" },
+                                "description": "Workspace ID"
+                            }
+                        ],
+                        "requestBody": {
+                            "content": {
+                                "multipart/form-data": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "file": {
+                                                "type": "string",
+                                                "format": "binary",
+                                                "description": "The file to upload."
+                                            },
+                                            "formatName": { "type": "string" },
+                                            "translate": { "type": "boolean" },
+                                            "encodedFilename": { "type": "string" }
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -1253,7 +1424,7 @@ mod tests {
     #[test]
     fn parse_spec() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
-        assert_eq!(spec.endpoint_count(), 6);
+        assert_eq!(spec.endpoint_count(), 7);
         assert_eq!(spec.server_url(), "https://example.com/api/v1");
     }
 
@@ -1269,7 +1440,7 @@ mod tests {
     fn search_empty_query_returns_all() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let results = spec.search("", &SearchFilters::default());
-        assert_eq!(results.len(), 6);
+        assert_eq!(results.len(), 7);
     }
 
     #[test]
@@ -1405,7 +1576,10 @@ mod tests {
             .expect("should build");
 
         assert_eq!(request.method, HttpMethod::Post);
-        assert!(request.body.is_some());
+        assert!(
+            matches!(request.body, Some(RequestBody::Json(_))),
+            "JSON endpoint should produce RequestBody::Json"
+        );
         assert_eq!(
             request.content_type.as_deref(),
             Some("application/json;charset=UTF-8; qs=0.09")
@@ -1653,6 +1827,277 @@ mod tests {
         assert!(
             detail.required.contains(&"parentInlineProp".to_string()),
             "should inherit required from parent's allOf inline block"
+        );
+    }
+
+    // ====================================================================
+    // Multipart Body Tests
+    // ====================================================================
+
+    #[test]
+    fn build_request_multipart_produces_multipart_body() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let engine = base64::engine::general_purpose::STANDARD;
+        let file_content = b"hello world";
+        let encoded = base64::Engine::encode(&engine, file_content);
+
+        let body = serde_json::json!({
+            "file": encoded,
+            "formatName": "FEATURESCRIPT",
+            "translate": true,
+            "encodedFilename": "test.fs"
+        });
+
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+        path_params.insert("wid".to_string(), "ws1".to_string());
+
+        let request = spec
+            .build_request(
+                "uploadFileCreateElement",
+                &path_params,
+                &HashMap::new(),
+                Some(body),
+            )
+            .expect("should build");
+
+        assert_eq!(request.content_type.as_deref(), Some("multipart/form-data"));
+
+        let multipart = match request.body {
+            Some(RequestBody::Multipart(m)) => m,
+            other => panic!("expected Multipart body, got {other:?}"),
+        };
+
+        // Check binary field.
+        assert_eq!(multipart.binary_fields.len(), 1);
+        assert_eq!(multipart.binary_fields[0].field_name, "file");
+        assert_eq!(multipart.binary_fields[0].data, file_content);
+
+        // Check text fields.
+        assert_eq!(multipart.text_fields.len(), 3);
+        let text_map: HashMap<&str, &str> = multipart
+            .text_fields
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        assert_eq!(text_map["formatName"], "FEATURESCRIPT");
+        assert_eq!(text_map["translate"], "true");
+        assert_eq!(text_map["encodedFilename"], "test.fs");
+    }
+
+    #[test]
+    fn build_request_multipart_invalid_base64_returns_error() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let body = serde_json::json!({
+            "file": "not-valid-base64!!!",
+            "formatName": "STEP"
+        });
+
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+        path_params.insert("wid".to_string(), "ws1".to_string());
+
+        let err = spec
+            .build_request(
+                "uploadFileCreateElement",
+                &path_params,
+                &HashMap::new(),
+                Some(body),
+            )
+            .unwrap_err();
+
+        match err {
+            OpenApiError::InvalidParams { reason } => {
+                assert!(
+                    reason.contains("invalid base64"),
+                    "error should mention invalid base64, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_request_multipart_non_string_binary_field_returns_error() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let body = serde_json::json!({
+            "file": 42,
+            "formatName": "STEP"
+        });
+
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+        path_params.insert("wid".to_string(), "ws1".to_string());
+
+        let err = spec
+            .build_request(
+                "uploadFileCreateElement",
+                &path_params,
+                &HashMap::new(),
+                Some(body),
+            )
+            .unwrap_err();
+
+        match err {
+            OpenApiError::InvalidParams { reason } => {
+                assert!(
+                    reason.contains("base64-encoded string"),
+                    "error should mention expected string, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_request_multipart_non_object_body_returns_error() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let body = serde_json::json!("just a string");
+
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+        path_params.insert("wid".to_string(), "ws1".to_string());
+
+        let err = spec
+            .build_request(
+                "uploadFileCreateElement",
+                &path_params,
+                &HashMap::new(),
+                Some(body),
+            )
+            .unwrap_err();
+
+        match err {
+            OpenApiError::InvalidParams { reason } => {
+                assert!(
+                    reason.contains("JSON object"),
+                    "error should mention JSON object, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_request_multipart_null_fields_are_skipped() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let engine = base64::engine::general_purpose::STANDARD;
+        let body = serde_json::json!({
+            "file": base64::Engine::encode(&engine, b"data"),
+            "formatName": null
+        });
+
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+        path_params.insert("wid".to_string(), "ws1".to_string());
+
+        let request = spec
+            .build_request(
+                "uploadFileCreateElement",
+                &path_params,
+                &HashMap::new(),
+                Some(body),
+            )
+            .expect("should build");
+
+        let multipart = match request.body {
+            Some(RequestBody::Multipart(m)) => m,
+            other => panic!("expected Multipart body, got {other:?}"),
+        };
+
+        // formatName is null, should be omitted from text fields.
+        assert!(
+            !multipart.text_fields.iter().any(|(k, _)| k == "formatName"),
+            "null field should be omitted"
+        );
+    }
+
+    #[test]
+    fn build_request_multipart_no_body_passes_through_as_none() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+        path_params.insert("wid".to_string(), "ws1".to_string());
+
+        let request = spec
+            .build_request(
+                "uploadFileCreateElement",
+                &path_params,
+                &HashMap::new(),
+                None,
+            )
+            .expect("should build");
+
+        assert!(request.body.is_none());
+    }
+
+    #[test]
+    fn build_request_json_endpoint_still_produces_json_body() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let body = serde_json::json!({"name": "My Document"});
+
+        let request = spec
+            .build_request(
+                "createDocument",
+                &HashMap::new(),
+                &HashMap::new(),
+                Some(body.clone()),
+            )
+            .expect("should build");
+
+        match request.body {
+            Some(RequestBody::Json(v)) => {
+                assert_eq!(v, body);
+            }
+            other => panic!("expected Json body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn find_binary_fields_from_schema() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "file": { "type": "string", "format": "binary" },
+                "name": { "type": "string" },
+                "count": { "type": "integer" }
+            }
+        });
+
+        let result = OpenApiSpec::find_binary_fields(Some(&schema));
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("file"));
+    }
+
+    #[test]
+    fn find_binary_fields_none_schema_returns_empty() {
+        let result = OpenApiSpec::find_binary_fields(None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn json_value_to_text_conversions() {
+        assert_eq!(super::json_value_to_text(&Value::Null), None);
+        assert_eq!(
+            super::json_value_to_text(&Value::Bool(true)),
+            Some("true".to_string())
+        );
+        assert_eq!(
+            super::json_value_to_text(&Value::Bool(false)),
+            Some("false".to_string())
+        );
+        assert_eq!(
+            super::json_value_to_text(&Value::from(42)),
+            Some("42".to_string())
+        );
+        assert_eq!(
+            super::json_value_to_text(&Value::from(2.75)),
+            Some("2.75".to_string())
+        );
+        assert_eq!(
+            super::json_value_to_text(&Value::from("hello")),
+            Some("hello".to_string())
         );
     }
 }
