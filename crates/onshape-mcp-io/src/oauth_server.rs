@@ -1891,6 +1891,7 @@ mod tests {
         );
 
         // Perform the refresh grant.
+        let expected_client_id = client_id.clone();
         let req = TokenRequest {
             grant_type: "refresh_token".to_string(),
             code: None,
@@ -1917,7 +1918,7 @@ mod tests {
                 .read()
                 .await
                 .values()
-                .filter(|t| t.user_id == "allowed-user-1")
+                .filter(|t| t.user_id == "allowed-user-1" && t.client_id == expected_client_id)
                 .count(),
             1,
             "exactly one access token should exist after refresh"
