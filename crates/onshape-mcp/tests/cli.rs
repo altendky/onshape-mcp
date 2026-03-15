@@ -876,6 +876,7 @@ fn tools_list_includes_api_tools() {
             "onshape_api_search",
             "onshape_auth_login",
             "onshape_auth_status",
+            "onshape_error_lookup",
             "onshape_list_resources",
             "onshape_mcp_get_started",
             "onshape_read_resource",
