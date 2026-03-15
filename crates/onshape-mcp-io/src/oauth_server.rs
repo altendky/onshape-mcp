@@ -1932,11 +1932,11 @@ mod tests {
         // Set up user tokens so the grant can succeed.
         state.user_tokens.write().await.insert(
             "allowed-user-1".to_string(),
-            UserOnshapeTokens {
-                access_token: "onshape-at".to_string(),
-                refresh_token: "onshape-rt".to_string(),
-                expires_at: None,
-            },
+            UserOnshapeTokens::new(
+                SecretString::from("onshape-at"),
+                SecretString::from("onshape-rt"),
+                None,
+            ),
         );
 
         // First auth code grant — issues initial tokens.
