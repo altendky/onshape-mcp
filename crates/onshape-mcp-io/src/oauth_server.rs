@@ -38,7 +38,7 @@ use onshape_client_core::oauth::onshape_oauth_client;
 ///
 /// Secret fields are private to enforce controlled access via
 /// [`expose_secret()`](secrecy::ExposeSecret::expose_secret) at call sites.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct UserOnshapeTokens {
     access_token: SecretString,
     /// Kept for future per-user token refresh.
@@ -75,7 +75,7 @@ impl UserOnshapeTokens {
 /// Context inserted into HTTP request extensions by the auth middleware.
 ///
 /// Accessible in `call_tool()` via `request::Parts::extensions`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct UserContext {
     /// Onshape user ID (used for logging and future per-user management).
     #[allow(dead_code)]
