@@ -933,29 +933,36 @@ async fn handle_auth_code_grant(
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(TOKEN_LIFETIME_SECS);
 
-    // Revoke any prior access tokens for this user+client before issuing a new one.
-    replace_token(
-        &mut *state.tokens.write().await,
-        access_token.clone(),
-        IssuedToken {
-            user_id: issued_code.user_id.clone(),
-            client_id: issued_code.client_id.clone(),
-            issued_at: now,
-            expires_at,
-        },
-    );
+    // Acquire both write guards in a fixed order (tokens → refresh_tokens)
+    // so the two replacements are atomic with respect to concurrent readers.
+    {
+        let mut tokens = state.tokens.write().await;
+        let mut refresh_tokens = state.refresh_tokens.write().await;
 
-    // Revoke any prior refresh tokens for this user+client, then store the new one.
-    replace_token(
-        &mut *state.refresh_tokens.write().await,
-        mcp_refresh_token.clone(),
-        IssuedToken {
-            user_id: issued_code.user_id,
-            client_id: issued_code.client_id,
-            issued_at: now,
-            expires_at: now + chrono::Duration::days(30), // refresh tokens live longer
-        },
-    );
+        // Revoke any prior access tokens for this user+client before issuing a new one.
+        replace_token(
+            &mut tokens,
+            access_token.clone(),
+            IssuedToken {
+                user_id: issued_code.user_id.clone(),
+                client_id: issued_code.client_id.clone(),
+                issued_at: now,
+                expires_at,
+            },
+        );
+
+        // Revoke any prior refresh tokens for this user+client, then store the new one.
+        replace_token(
+            &mut refresh_tokens,
+            mcp_refresh_token.clone(),
+            IssuedToken {
+                user_id: issued_code.user_id,
+                client_id: issued_code.client_id,
+                issued_at: now,
+                expires_at: now + chrono::Duration::days(30), // refresh tokens live longer
+            },
+        );
+    }
 
     Ok(Json(TokenResponseBody {
         access_token,
@@ -1020,29 +1027,36 @@ async fn handle_refresh_token_grant(
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(TOKEN_LIFETIME_SECS);
 
-    // Revoke any prior access tokens for this user+client before issuing a new one.
-    replace_token(
-        &mut *state.tokens.write().await,
-        new_access.clone(),
-        IssuedToken {
-            user_id: old_token.user_id.clone(),
-            client_id: client_id.clone(),
-            issued_at: now,
-            expires_at,
-        },
-    );
-    // The old refresh token was already consumed via .remove() above;
-    // retain() here catches any orphaned entries from prior flows.
-    replace_token(
-        &mut *state.refresh_tokens.write().await,
-        new_refresh.clone(),
-        IssuedToken {
-            user_id: old_token.user_id,
-            client_id: client_id.clone(),
-            issued_at: now,
-            expires_at: now + chrono::Duration::days(30),
-        },
-    );
+    // Acquire both write guards in a fixed order (tokens → refresh_tokens)
+    // so the two replacements are atomic with respect to concurrent readers.
+    {
+        let mut tokens = state.tokens.write().await;
+        let mut refresh_tokens = state.refresh_tokens.write().await;
+
+        // Revoke any prior access tokens for this user+client before issuing a new one.
+        replace_token(
+            &mut tokens,
+            new_access.clone(),
+            IssuedToken {
+                user_id: old_token.user_id.clone(),
+                client_id: client_id.clone(),
+                issued_at: now,
+                expires_at,
+            },
+        );
+        // The old refresh token was already consumed via .remove() above;
+        // retain() here catches any orphaned entries from prior flows.
+        replace_token(
+            &mut refresh_tokens,
+            new_refresh.clone(),
+            IssuedToken {
+                user_id: old_token.user_id,
+                client_id: client_id.clone(),
+                issued_at: now,
+                expires_at: now + chrono::Duration::days(30),
+            },
+        );
+    }
 
     Ok(Json(TokenResponseBody {
         access_token: new_access,
