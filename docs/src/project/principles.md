@@ -19,26 +19,41 @@ As implemented in the generic API tools:
 
 ```rust
 // Core crate - pure logic, no I/O
-pub enum ToolResult {
-    /// Tool completed immediately with no I/O needed.
-    Immediate(Result<CallToolResult, ErrorData>),
+pub enum ToolEffect {
+    /// Tool completed — no further I/O needed.
+    Done(Result<CallToolResult, ErrorData>),
     /// Tool needs an HTTP request to the Onshape API.
-    OnshapeApiRequest { request: ApiRequest },
+    ApiRequest { request: ApiRequest, continuation: Continuation },
+    /// Tool needs files written to disk.
+    WriteFiles { files: Vec<FileWrite>, continuation: Continuation },
 }
 
-// Pure function: tool call arguments -> ToolResult
-pub fn call_tool(name: &str, args: Value, /* ... */) -> ToolResult {
+// Plain-data continuation — no closures, Debug-printable
+pub enum Continuation {
+    FormatApiResponse,
+    ProcessAuthValidation { resolved_auth: ResolvedAuth },
+    ProcessScreenshotResponse { output_path: PathBuf, label: String, view_matrix: String },
+    FormatScreenshotWrite { label: String, view_matrix: String },
+}
+
+// Pure function: tool call arguments -> ToolEffect
+pub fn call_tool(name: &str, args: Value, /* ... */) -> ToolEffect {
     // Pure logic here, returns either an immediate result
     // or an API request effect for the I/O layer to execute
 }
 
-// I/O crate - interprets effects
-match tool_result {
-    ToolResult::Immediate(result) => send_response(result),
-    ToolResult::OnshapeApiRequest { request } => {
-        let response = http_client.execute(request).await;
-        let result = process_api_response(response);
-        send_response(result);
+// Pure dispatch: continuation + I/O result -> next effect
+pub fn resume(continuation: Continuation, result: IoResult) -> (ToolEffect, Vec<SideEffect>)
+
+// I/O crate - interprets effects in a loop
+loop {
+    match current {
+        ToolEffect::Done(result) => return result,
+        ToolEffect::ApiRequest { request, continuation } => {
+            let response = http_client.execute(request).await;
+            let (next, side_effects) = resume(continuation, IoResult::ApiResponse { .. });
+            current = next;
+        }
     }
 }
 ```
