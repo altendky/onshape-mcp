@@ -1,5 +1,8 @@
 # Authentication
 
+See [Data Flow](data-flow.md) for sequence diagrams of the OAuth login flow,
+token refresh lifecycle, and the authentication state machine.
+
 ## Supported Methods
 
 | Method | Status | Notes |

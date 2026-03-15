@@ -26,6 +26,9 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+See [Data Flow](data-flow.md) for sequence diagrams showing how requests,
+authentication, and token refresh flow through each operating mode.
+
 ## External Services
 
 ```text
