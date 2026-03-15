@@ -325,8 +325,14 @@ impl OAuthServerState {
             .build()
             .map_err(|e| UserTokenRefreshError::HttpClient(e.to_string()))?;
 
-        let refresh_token =
-            oauth2::RefreshToken::new(current_tokens.refresh_token().expose_secret().to_string());
+        let raw_refresh = current_tokens.refresh_token().expose_secret();
+        if raw_refresh.is_empty() {
+            return Err(UserTokenRefreshError::PermanentExchange(
+                "no refresh token is stored for this user; re-authentication is required"
+                    .to_string(),
+            ));
+        }
+        let refresh_token = oauth2::RefreshToken::new(raw_refresh.to_string());
 
         let response = onshape_client
             .exchange_refresh_token(&refresh_token)
