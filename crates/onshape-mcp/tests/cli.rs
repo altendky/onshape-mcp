@@ -323,7 +323,7 @@ fn call_auth_status(client: &mut McpTestClient) -> serde_json::Value {
     let response = client.send_request(
         "tools/call",
         &serde_json::json!({
-            "name": "onshape_mcp_auth_status",
+            "name": "onshape_auth_status",
             "arguments": {}
         }),
     );
@@ -874,9 +874,9 @@ fn tools_list_includes_api_tools() {
             "onshape_api_explain",
             "onshape_api_schema",
             "onshape_api_search",
+            "onshape_auth_login",
+            "onshape_auth_status",
             "onshape_list_resources",
-            "onshape_mcp_auth_login",
-            "onshape_mcp_auth_status",
             "onshape_mcp_get_started",
             "onshape_read_resource",
             "onshape_screenshot",

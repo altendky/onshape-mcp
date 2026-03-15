@@ -123,7 +123,7 @@ In this state:
 The MCP server includes a built-in OAuth authorization flow, accessible via:
 
 1. **CLI subcommand:** `onshape-mcp auth login`
-2. **MCP tool:** `onshape_mcp_auth_login`
+2. **MCP tool:** `onshape_auth_login`
 
 Both methods support two modes:
 
@@ -149,7 +149,7 @@ The CLI opens your browser to the Onshape authorization page, starts a local cal
 
 #### MCP Tool Usage
 
-The `onshape_mcp_auth_login` tool can be invoked by an LLM to start the OAuth flow. It returns a URL for the user to open in their browser. See [MCP Tools](mcp-tools.md#onshape_mcp_auth_login) for details.
+The `onshape_auth_login` tool can be invoked by an LLM to start the OAuth flow. It returns a URL for the user to open in their browser. See [MCP Tools](mcp-tools.md#onshape_auth_login) for details.
 
 ### OpenCode Plugin
 
@@ -209,7 +209,7 @@ If permissions are too open, the server **blocks access** and informs the user o
 | ------- | ---------- |
 | Startup | Deferred — status starts as `NotValidated` |
 | API call | Updates validation state (`2xx` → `Valid`, `401` → `Invalid`) |
-| Explicit | Use `onshape_mcp_auth_status` with `validate: true` to check credentials on demand |
+| Explicit | Use `onshape_auth_status` with `validate: true` to check credentials on demand |
 | Periodic | Deferred — `check_interval` config is parsed but not yet used |
 | Invalid credentials | API calls return errors; validation state updated to `Invalid` |
 

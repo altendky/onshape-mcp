@@ -15,7 +15,7 @@
 //! addresses. On dual-stack systems both must succeed; on single-stack
 //! systems the available address family is sufficient.
 //!
-//! The flow is initiated by the `onshape_mcp_auth_login` MCP tool or the
+//! The flow is initiated by the `onshape_auth_login` MCP tool or the
 //! `auth login` CLI subcommand. The authorization URL is returned to the
 //! caller, who is responsible for opening it in the user's browser.
 
