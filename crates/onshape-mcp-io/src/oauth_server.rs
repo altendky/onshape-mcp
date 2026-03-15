@@ -35,25 +35,27 @@ use onshape_client_core::oauth::onshape_oauth_client;
 // ============================================================================
 
 /// Onshape tokens stored for an authenticated user.
-#[derive(Clone, Debug)]
+///
+/// Wrapped in `Arc` at storage sites to avoid cloning secrets — `SecretString`
+/// intentionally does not implement `Clone` to prevent secret proliferation.
 pub(crate) struct UserOnshapeTokens {
-    pub access_token: String,
+    pub access_token: SecretString,
     /// Kept for future per-user token refresh.
     #[allow(dead_code)]
-    pub refresh_token: String,
+    pub refresh_token: SecretString,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Context inserted into HTTP request extensions by the auth middleware.
 ///
 /// Accessible in `call_tool()` via `request::Parts::extensions`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct UserContext {
     /// Onshape user ID (used for logging and future per-user management).
     #[allow(dead_code)]
     pub user_id: String,
     /// The user's Onshape tokens for API calls.
-    pub onshape_tokens: UserOnshapeTokens,
+    pub onshape_tokens: Arc<UserOnshapeTokens>,
 }
 
 /// Pending authorization state — stored between `/oauth/authorize` and
@@ -124,7 +126,7 @@ pub(crate) struct OAuthServerState {
     /// Issued refresh tokens → user mapping (separate from access tokens).
     refresh_tokens: RwLock<HashMap<String, IssuedToken>>,
     /// User Onshape tokens (keyed by Onshape user ID).
-    pub(crate) user_tokens: RwLock<HashMap<String, UserOnshapeTokens>>,
+    pub(crate) user_tokens: RwLock<HashMap<String, Arc<UserOnshapeTokens>>>,
     /// Allowlist of Onshape user IDs.
     allowed_users: HashSet<String>,
     /// Onshape OAuth app client ID (operator's app).
@@ -198,7 +200,7 @@ impl OAuthServerState {
         if chrono::Utc::now() > expires_at {
             return None;
         }
-        let onshape_tokens = self.user_tokens.read().await.get(&user_id)?.clone();
+        let onshape_tokens = Arc::clone(self.user_tokens.read().await.get(&user_id)?);
         Some(UserContext {
             user_id,
             onshape_tokens,
@@ -767,11 +769,11 @@ async fn onshape_callback(
         .unwrap_or_default();
     state.user_tokens.write().await.insert(
         session_info.id.clone(),
-        UserOnshapeTokens {
-            access_token,
-            refresh_token,
+        Arc::new(UserOnshapeTokens {
+            access_token: SecretString::from(access_token),
+            refresh_token: SecretString::from(refresh_token),
             expires_at,
-        },
+        }),
     );
 
     // Issue an MCP authorization code.
@@ -1217,11 +1219,11 @@ mod tests {
         // Also insert user tokens so validate_token can find them.
         state.user_tokens.write().await.insert(
             user_id.to_string(),
-            UserOnshapeTokens {
-                access_token: "onshape-access-token".to_string(),
-                refresh_token: "onshape-refresh-token".to_string(),
+            Arc::new(UserOnshapeTokens {
+                access_token: SecretString::from("onshape-access-token"),
+                refresh_token: SecretString::from("onshape-refresh-token"),
                 expires_at: Some(now + chrono::Duration::hours(1)),
-            },
+            }),
         );
         token
     }
@@ -1597,11 +1599,11 @@ mod tests {
         // Insert user tokens so the token issuance can succeed.
         state.user_tokens.write().await.insert(
             "allowed-user-1".to_string(),
-            UserOnshapeTokens {
-                access_token: "onshape-at".to_string(),
-                refresh_token: "onshape-rt".to_string(),
+            Arc::new(UserOnshapeTokens {
+                access_token: SecretString::from("onshape-at"),
+                refresh_token: SecretString::from("onshape-rt"),
                 expires_at: None,
-            },
+            }),
         );
 
         // Correct verifier should succeed.
@@ -1735,11 +1737,11 @@ mod tests {
         // Need user tokens for the lookup.
         state.user_tokens.write().await.insert(
             "allowed-user-1".to_string(),
-            UserOnshapeTokens {
-                access_token: "at".to_string(),
-                refresh_token: "rt".to_string(),
+            Arc::new(UserOnshapeTokens {
+                access_token: SecretString::from("at"),
+                refresh_token: SecretString::from("rt"),
                 expires_at: None,
-            },
+            }),
         );
 
         // Client B should NOT be able to use client A's refresh token.
@@ -1778,11 +1780,11 @@ mod tests {
         );
         state.user_tokens.write().await.insert(
             "allowed-user-1".to_string(),
-            UserOnshapeTokens {
-                access_token: "at".to_string(),
-                refresh_token: "rt".to_string(),
+            Arc::new(UserOnshapeTokens {
+                access_token: SecretString::from("at"),
+                refresh_token: SecretString::from("rt"),
                 expires_at: None,
-            },
+            }),
         );
 
         let req = TokenRequest {

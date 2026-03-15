@@ -396,7 +396,13 @@ impl OnshapeMcpServer {
         let client = OnshapeClient::new(ClientConfig {
             base_url: self.spec.server_url().to_string(),
             auth: ClientAuthConfig::Bearer {
-                access_token: AccessToken::new(user_ctx.onshape_tokens.access_token.clone()),
+                access_token: AccessToken::new(
+                    user_ctx
+                        .onshape_tokens
+                        .access_token
+                        .expose_secret()
+                        .to_string(),
+                ),
             },
             timeout: Some(self.config.api.timeout),
         })
