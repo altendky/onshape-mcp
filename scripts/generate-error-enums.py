@@ -39,7 +39,7 @@ _ENTRY_RE = re.compile(
 
 
 def fetch_source() -> str:
-    with urlopen(MIRROR_URL) as resp:  # noqa: S310 — trusted URL
+    with urlopen(MIRROR_URL, timeout=30) as resp:  # noqa: S310 — trusted URL
         return resp.read().decode("utf-8")
 
 
