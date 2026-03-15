@@ -236,8 +236,8 @@ pub fn call_tool(
 ) -> ToolResult {
     match name {
         "onshape_mcp_get_started" => ToolResult::Immediate(Ok(call_get_started())),
-        "onshape_mcp_auth_status" => call_auth_status(arguments, resolved_auth, validation, spec),
-        "onshape_mcp_auth_login" => call_auth_login(arguments),
+        "onshape_auth_status" => call_auth_status(arguments, resolved_auth, validation, spec),
+        "onshape_auth_login" => call_auth_login(arguments),
         "onshape_api_search" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
@@ -291,7 +291,7 @@ pub fn call_tool(
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EmptyInput {}
 
-/// Input schema for `onshape_mcp_auth_status`.
+/// Input schema for `onshape_auth_status`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AuthStatusInput {
     /// When true, actively validates credentials against the Onshape API
@@ -339,7 +339,7 @@ pub struct ApiCallInput {
     pub body: Option<String>,
 }
 
-/// Input schema for `onshape_mcp_auth_login`.
+/// Input schema for `onshape_auth_login`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AuthLoginInput {
     /// Login mode: `"proxy"` (default) uses the OAuth proxy for token exchange;
@@ -495,7 +495,7 @@ fn tool_auth_status_def() -> Tool {
         .expect("Schema should be a JSON object");
 
     Tool::new(
-        "onshape_mcp_auth_status",
+        "onshape_auth_status",
         "Returns authentication status (valid/invalid/expired/not_configured), \
          last check time, and a human-readable message",
         Arc::new(input_schema),
@@ -514,7 +514,7 @@ fn tool_auth_login_def() -> Tool {
         .expect("Schema should be a JSON object");
 
     Tool::new(
-        "onshape_mcp_auth_login",
+        "onshape_auth_login",
         "Start an OAuth authorization flow. Returns a URL to open in your browser. \
          After authorizing, the server automatically detects the new tokens.",
         Arc::new(input_schema),
@@ -1535,7 +1535,7 @@ mod tests {
     #[test]
     fn list_tools_includes_auth_status() {
         let tools = list_tools();
-        assert!(tools.iter().any(|t| t.name == "onshape_mcp_auth_status"));
+        assert!(tools.iter().any(|t| t.name == "onshape_auth_status"));
     }
 
     #[test]
@@ -1571,7 +1571,7 @@ mod tests {
     #[test]
     fn list_tools_includes_auth_login() {
         let tools = list_tools();
-        assert!(tools.iter().any(|t| t.name == "onshape_mcp_auth_login"));
+        assert!(tools.iter().any(|t| t.name == "onshape_auth_login"));
     }
 
     #[test]
@@ -1592,7 +1592,7 @@ mod tests {
     fn call_tool_auth_status_returns_not_configured() {
         let auth = not_configured();
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -1612,7 +1612,7 @@ mod tests {
     fn call_tool_auth_status_returns_not_validated_with_creds() {
         let auth = basic_ready();
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -1631,7 +1631,7 @@ mod tests {
     fn call_tool_auth_status_returns_partial_with_missing_key() {
         let auth = not_configured_partial_secret();
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -1655,7 +1655,7 @@ mod tests {
     fn call_tool_auth_status_returns_partial_with_missing_access_key() {
         let auth = not_configured_partial_access();
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -1697,7 +1697,7 @@ mod tests {
         // Extra arguments are silently ignored, consistent with the API
         // tools which use serde's default lenient deserialization.
         let call_result = assert_immediate_ok(call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             Some(&args),
             &auth,
             &default_validation(),
@@ -1729,7 +1729,7 @@ mod tests {
             detail: "No credentials configured".into(),
         };
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -1749,7 +1749,7 @@ mod tests {
     fn call_tool_auth_status_oauth_pending() {
         let auth = ResolvedAuth::OAuthPending;
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -1774,7 +1774,7 @@ mod tests {
     fn call_tool_auth_status_oauth_ready() {
         let auth = ResolvedAuth::OAuthReady { expires_at: None };
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -1797,7 +1797,7 @@ mod tests {
             detail: "Incomplete credentials: client_secret is not configured".into(),
         };
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -1824,7 +1824,7 @@ mod tests {
             detail: "Incomplete credentials: client_id is not configured".into(),
         };
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -2241,7 +2241,7 @@ mod tests {
         args.insert("validate".to_string(), Value::Bool(false));
 
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2255,7 +2255,7 @@ mod tests {
     fn auth_status_validate_absent_returns_immediate() {
         let auth = basic_ready();
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             None,
             &auth,
             &default_validation(),
@@ -2272,7 +2272,7 @@ mod tests {
         args.insert("validate".to_string(), Value::Bool(true));
 
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2290,7 +2290,7 @@ mod tests {
         args.insert("validate".to_string(), Value::Bool(true));
 
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2308,7 +2308,7 @@ mod tests {
         args.insert("validate".to_string(), Value::Bool(true));
 
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2344,7 +2344,7 @@ mod tests {
         args.insert("validate".to_string(), Value::Bool(true));
 
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2377,7 +2377,7 @@ mod tests {
         args.insert("validate".to_string(), Value::Bool(true));
 
         let result = call_tool(
-            "onshape_mcp_auth_status",
+            "onshape_auth_status",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2400,7 +2400,7 @@ mod tests {
             last_check: Some(chrono::Utc::now()),
             message: Some("previously validated".into()),
         };
-        let result = call_tool("onshape_mcp_auth_status", None, &auth, &validation, None);
+        let result = call_tool("onshape_auth_status", None, &auth, &validation, None);
         let call_result = assert_immediate_ok(result);
         let content = &call_result.content[0];
         let text = content.raw.as_text().expect("should be text content");
@@ -2510,7 +2510,7 @@ mod tests {
     fn auth_login_default_mode_returns_proxy() {
         let auth = not_configured();
         let result = call_tool(
-            "onshape_mcp_auth_login",
+            "onshape_auth_login",
             None,
             &auth,
             &default_validation(),
@@ -2534,7 +2534,7 @@ mod tests {
         );
 
         let result = call_tool(
-            "onshape_mcp_auth_login",
+            "onshape_auth_login",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2564,7 +2564,7 @@ mod tests {
         );
 
         let result = call_tool(
-            "onshape_mcp_auth_login",
+            "onshape_auth_login",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2594,7 +2594,7 @@ mod tests {
         );
 
         let msg = assert_tool_error(call_tool(
-            "onshape_mcp_auth_login",
+            "onshape_auth_login",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2611,7 +2611,7 @@ mod tests {
         args.insert("client_id".to_string(), Value::String("cid".to_string()));
 
         let msg = assert_tool_error(call_tool(
-            "onshape_mcp_auth_login",
+            "onshape_auth_login",
             Some(&args),
             &auth,
             &default_validation(),
@@ -2627,7 +2627,7 @@ mod tests {
         args.insert("mode".to_string(), Value::String("invalid".to_string()));
 
         let msg = assert_tool_error(call_tool(
-            "onshape_mcp_auth_login",
+            "onshape_auth_login",
             Some(&args),
             &auth,
             &default_validation(),

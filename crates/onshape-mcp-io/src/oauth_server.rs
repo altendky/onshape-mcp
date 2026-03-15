@@ -1364,8 +1364,9 @@ pub(crate) fn oauth_router(state: Arc<OAuthServerState>) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
-        .route("/health", routing::get(health))
+    // Endpoints that browser-based MCP clients fetch cross-origin
+    // (metadata discovery, dynamic client registration, token exchange).
+    let cors_routes = Router::new()
         // RFC 9728: path-suffixed variant (matches resource path `/mcp`).
         .route(
             "/.well-known/oauth-protected-resource/mcp",
@@ -1381,11 +1382,17 @@ pub(crate) fn oauth_router(state: Arc<OAuthServerState>) -> Router {
             routing::get(authorization_server_metadata),
         )
         .route("/oauth/register", routing::post(register_client))
-        .route("/oauth/authorize", routing::get(authorize))
-        .route("/oauth/callback", routing::get(onshape_callback))
         .route("/oauth/token", routing::post(token_endpoint))
-        .layer(cors)
-        .with_state(state)
+        .layer(cors);
+
+    // Endpoints that are browser navigations (redirects) or internal
+    // health checks — these do not need CORS headers.
+    let non_cors_routes = Router::new()
+        .route("/health", routing::get(health))
+        .route("/oauth/authorize", routing::get(authorize))
+        .route("/oauth/callback", routing::get(onshape_callback));
+
+    cors_routes.merge(non_cors_routes).with_state(state)
 }
 
 #[cfg(test)]
@@ -2243,5 +2250,172 @@ mod tests {
             .count();
         assert_eq!(access_count, 1, "exactly one access token after re-auth");
         assert_eq!(refresh_count, 1, "exactly one refresh token after re-auth");
+    }
+
+    // ================================================================
+    // CORS scoping tests
+    // ================================================================
+
+    /// Helper: send a request through the oauth router and return the response.
+    async fn send_request(
+        req: http::Request<axum::body::Body>,
+    ) -> http::Response<axum::body::Body> {
+        use tower::ServiceExt as _;
+
+        let state = Arc::new(test_state());
+        let app = oauth_router(state);
+        app.oneshot(req).await.expect("request should not fail")
+    }
+
+    /// Helper: build an OPTIONS preflight request for `path` with an
+    /// `Origin` and `Access-Control-Request-Method` header.
+    fn preflight_request(path: &str, method: &str) -> http::Request<axum::body::Body> {
+        http::Request::builder()
+            .method(http::Method::OPTIONS)
+            .uri(path)
+            .header("Origin", "https://browser-client.example.com")
+            .header("Access-Control-Request-Method", method)
+            .body(axum::body::Body::empty())
+            .expect("valid request")
+    }
+
+    /// Helper: build a simple request for `path` with an `Origin` header.
+    fn origin_request(method: http::Method, path: &str) -> http::Request<axum::body::Body> {
+        http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Origin", "https://browser-client.example.com")
+            .body(axum::body::Body::empty())
+            .expect("valid request")
+    }
+
+    // -- CORS routes: actual requests should include Access-Control-Allow-Origin --
+
+    #[tokio::test]
+    async fn cors_present_on_well_known_protected_resource() {
+        let resp = send_request(origin_request(
+            http::Method::GET,
+            "/.well-known/oauth-protected-resource",
+        ))
+        .await;
+        assert!(
+            resp.headers().contains_key("access-control-allow-origin"),
+            "CORS header should be present on /.well-known/oauth-protected-resource"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_present_on_well_known_protected_resource_mcp() {
+        let resp = send_request(origin_request(
+            http::Method::GET,
+            "/.well-known/oauth-protected-resource/mcp",
+        ))
+        .await;
+        assert!(
+            resp.headers().contains_key("access-control-allow-origin"),
+            "CORS header should be present on /.well-known/oauth-protected-resource/mcp"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_present_on_well_known_authorization_server() {
+        let resp = send_request(origin_request(
+            http::Method::GET,
+            "/.well-known/oauth-authorization-server",
+        ))
+        .await;
+        assert!(
+            resp.headers().contains_key("access-control-allow-origin"),
+            "CORS header should be present on /.well-known/oauth-authorization-server"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_present_on_oauth_token() {
+        // POST /oauth/token — the body is invalid but CORS headers are
+        // added by middleware before the handler checks the body.
+        let resp = send_request(origin_request(http::Method::POST, "/oauth/token")).await;
+        assert!(
+            resp.headers().contains_key("access-control-allow-origin"),
+            "CORS header should be present on POST /oauth/token"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_present_on_oauth_register() {
+        let resp = send_request(origin_request(http::Method::POST, "/oauth/register")).await;
+        assert!(
+            resp.headers().contains_key("access-control-allow-origin"),
+            "CORS header should be present on POST /oauth/register"
+        );
+    }
+
+    // -- CORS routes: OPTIONS preflight should succeed --
+
+    #[tokio::test]
+    async fn cors_preflight_succeeds_on_oauth_token() {
+        let resp = send_request(preflight_request("/oauth/token", "POST")).await;
+        assert_eq!(
+            resp.status(),
+            http::StatusCode::OK,
+            "OPTIONS preflight on /oauth/token should return 200"
+        );
+        assert!(
+            resp.headers().contains_key("access-control-allow-origin"),
+            "preflight response should include Access-Control-Allow-Origin"
+        );
+        assert!(
+            resp.headers().contains_key("access-control-allow-methods"),
+            "preflight response should include Access-Control-Allow-Methods"
+        );
+    }
+
+    // -- Non-CORS routes: should NOT include Access-Control-Allow-Origin --
+
+    #[tokio::test]
+    async fn cors_absent_on_health() {
+        let resp = send_request(origin_request(http::Method::GET, "/health")).await;
+        assert!(
+            !resp.headers().contains_key("access-control-allow-origin"),
+            "CORS header should NOT be present on /health"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_absent_on_oauth_authorize() {
+        let resp = send_request(origin_request(http::Method::GET, "/oauth/authorize")).await;
+        assert!(
+            !resp.headers().contains_key("access-control-allow-origin"),
+            "CORS header should NOT be present on /oauth/authorize"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_absent_on_oauth_callback() {
+        let resp = send_request(origin_request(http::Method::GET, "/oauth/callback")).await;
+        assert!(
+            !resp.headers().contains_key("access-control-allow-origin"),
+            "CORS header should NOT be present on /oauth/callback"
+        );
+    }
+
+    // -- Non-CORS routes: OPTIONS preflight should NOT return CORS headers --
+
+    #[tokio::test]
+    async fn cors_preflight_absent_on_health() {
+        let resp = send_request(preflight_request("/health", "GET")).await;
+        assert!(
+            !resp.headers().contains_key("access-control-allow-origin"),
+            "OPTIONS preflight on /health should NOT include CORS headers"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_absent_on_oauth_authorize() {
+        let resp = send_request(preflight_request("/oauth/authorize", "GET")).await;
+        assert!(
+            !resp.headers().contains_key("access-control-allow-origin"),
+            "OPTIONS preflight on /oauth/authorize should NOT include CORS headers"
+        );
     }
 }
