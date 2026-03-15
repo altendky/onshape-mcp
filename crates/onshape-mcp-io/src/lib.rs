@@ -60,22 +60,22 @@ pub(crate) const REFRESH_MARGIN_SECS: i64 = 60;
 /// `OAuth` — Bearer token auth with refresh capability.
 /// `OAuthPending` — client creds present but awaiting tokens from auth flow.
 pub(crate) enum ApiState {
-    /// No credentials configured. API calls will return an informative error.
+    /// Credentials are not configured or are incomplete.
     NotConfigured {
-        /// The configured auth method (for status reporting).
+        /// What auth method was attempted.
         configured_method: AuthMethod,
-        /// Human-readable explanation of why credentials are not configured.
+        /// Human-readable detail about what's missing.
         detail: String,
     },
-    /// Basic (API key) authentication — static credentials, no refresh.
+    /// Basic (API key) auth — a static client that never refreshes.
     Basic(OnshapeClient),
-    /// OAuth 2.0 bearer authentication with token refresh support.
+    /// OAuth with tokens — can proactively and reactively refresh.
     OAuth(Box<OAuthApiState>),
-    /// OAuth client credentials present but no tokens yet.
-    ///
-    /// Holds enough information to transition to `OAuth` when tokens appear
-    /// (via the file watcher detecting a new token file).
+    /// OAuth client credentials present, but no tokens yet.
     OAuthPending(Box<OAuthPendingState>),
+    /// Per-user OAuth for the HTTP transport — refreshes via the shared
+    /// [`OAuthServerState`](oauth_server::OAuthServerState).
+    HttpOAuth(Box<HttpOAuthApiState>),
 }
 
 /// How the server refreshes OAuth tokens.
@@ -148,6 +148,9 @@ impl ApiState {
                 expires_at: oauth.session.tokens.expires_at,
             },
             Self::OAuthPending(_) => ResolvedAuth::OAuthPending,
+            Self::HttpOAuth(http_oauth) => ResolvedAuth::OAuthReady {
+                expires_at: http_oauth.expires_at,
+            },
         }
     }
 }
@@ -190,6 +193,27 @@ impl OAuthApiState {
     }
 }
 
+/// Per-user OAuth state for the HTTP transport.
+///
+/// Unlike [`OAuthApiState`] (which is single-user, file-based, long-lived),
+/// this is created per-request and delegates refresh to the shared
+/// [`OAuthServerState`] which holds the server's Onshape client credentials
+/// and per-user token storage.
+pub(crate) struct HttpOAuthApiState {
+    /// HTTP client for Onshape API calls (carries the bearer token).
+    client: OnshapeClient,
+    /// Onshape user ID (key into the shared token store).
+    user_id: String,
+    /// When the current access token expires, if known.
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Shared OAuth server state (holds client credentials and token store).
+    oauth_state: Arc<oauth_server::OAuthServerState>,
+    /// Base URL for rebuilding the API client after refresh.
+    base_url: String,
+    /// HTTP request timeout for rebuilding the API client after refresh.
+    timeout: Duration,
+}
+
 // ============================================================================
 // Server
 // ============================================================================
@@ -210,6 +234,8 @@ pub struct OnshapeMcpServer {
     api_state: Arc<tokio::sync::Mutex<ApiState>>,
     validation: Arc<tokio::sync::Mutex<ValidationState>>,
     login_state: Arc<tokio::sync::Mutex<login::LoginState>>,
+    /// Shared OAuth server state for per-user token refresh (HTTP transport only).
+    oauth_state: Option<Arc<oauth_server::OAuthServerState>>,
 }
 
 impl OnshapeMcpServer {
@@ -239,6 +265,7 @@ impl OnshapeMcpServer {
             api_state: Arc::new(tokio::sync::Mutex::new(api_state)),
             validation: Arc::new(tokio::sync::Mutex::new(ValidationState::default())),
             login_state: Arc::new(tokio::sync::Mutex::new(login::LoginState::new())),
+            oauth_state: None,
         })
     }
 
@@ -251,6 +278,7 @@ impl OnshapeMcpServer {
         spec: Arc<OpenApiSpec>,
         api_state: Arc<tokio::sync::Mutex<ApiState>>,
         validation: Arc<tokio::sync::Mutex<ValidationState>>,
+        oauth_state: Option<Arc<oauth_server::OAuthServerState>>,
     ) -> Self {
         Self {
             info,
@@ -259,6 +287,7 @@ impl OnshapeMcpServer {
             api_state,
             validation,
             login_state: Arc::new(tokio::sync::Mutex::new(login::LoginState::new())),
+            oauth_state,
         }
     }
 }
@@ -393,7 +422,7 @@ impl OnshapeMcpServer {
 
         drop(validation);
 
-        // Build a per-user API client.
+        // Build a per-user API client with refresh capability.
         let client = OnshapeClient::new(ClientConfig {
             base_url: self.spec.server_url().to_string(),
             auth: ClientAuthConfig::Bearer {
@@ -415,7 +444,18 @@ impl OnshapeMcpServer {
             )
         })?;
 
-        let mut api_state = ApiState::Basic(client);
+        let mut api_state = if let Some(oauth_state) = &self.oauth_state {
+            ApiState::HttpOAuth(Box::new(HttpOAuthApiState {
+                client,
+                user_id: user_ctx.user_id.clone(),
+                expires_at: user_ctx.onshape_tokens.expires_at(),
+                oauth_state: Arc::clone(oauth_state),
+                base_url: self.spec.server_url().to_string(),
+                timeout: self.config.api.timeout,
+            }))
+        } else {
+            ApiState::Basic(client)
+        };
 
         dispatch_tool_result(result, &mut api_state, &self.validation, None, false).await
     }
@@ -449,7 +489,7 @@ async fn dispatch_tool_result(
             match state {
                 ApiState::NotConfigured { .. } => return Ok(not_configured_error()),
                 ApiState::OAuthPending(_) => return Ok(oauth_pending_error()),
-                ApiState::Basic(_) | ApiState::OAuth(_) => {}
+                ApiState::Basic(_) | ApiState::OAuth(_) | ApiState::HttpOAuth(_) => {}
             }
         }
 
@@ -608,6 +648,8 @@ async fn execute_raw_api_request(
         // OAuth needs &mut ApiState for the potential state transition,
         // so we handle it at the ApiState level.
         ApiState::OAuth(_) => execute_oauth_raw(state, api_req).await,
+        // HTTP OAuth: per-user refresh via the shared OAuthServerState.
+        ApiState::HttpOAuth(_) => execute_http_oauth_raw(state, api_req).await,
     }
 }
 
@@ -767,6 +809,139 @@ async fn execute_oauth_raw(
     }
 }
 
+/// Execute a raw request with per-user HTTP OAuth, including proactive and
+/// reactive refresh.
+///
+/// Follows the same proactive/reactive pattern as [`execute_oauth_inner`] but
+/// delegates token refresh to the shared [`OAuthServerState`] which holds the
+/// server's Onshape client credentials and per-user token storage.
+///
+/// On permanent refresh failure, returns a synthetic 401 with a re-auth message
+/// (there is no state transition since HTTP OAuth state is per-request).
+async fn execute_http_oauth_raw(
+    state: &mut ApiState,
+    api_req: &onshape_client_core::request::ApiRequest,
+) -> Result<RawResponse, McpError> {
+    let ApiState::HttpOAuth(http_oauth) = state else {
+        return Err(McpError::new(
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            "expected HttpOAuth state",
+            None,
+        ));
+    };
+
+    // Proactive refresh: check if the token is expiring soon.
+    let refresh_margin = chrono::Duration::seconds(REFRESH_MARGIN_SECS);
+    let now = chrono::Utc::now();
+    let needs_proactive_refresh = http_oauth
+        .expires_at
+        .is_some_and(|exp| exp - refresh_margin <= now);
+
+    let mut refreshed = false;
+    if needs_proactive_refresh {
+        match http_oauth
+            .oauth_state
+            .refresh_user_onshape_tokens(&http_oauth.user_id, http_oauth.expires_at)
+            .await
+        {
+            Ok(new_tokens) => {
+                rebuild_http_oauth_client(http_oauth, &new_tokens)?;
+                refreshed = true;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[oauth] proactive refresh failed for user {}: {e}",
+                    http_oauth.user_id
+                );
+                // Continue with the current token — it might still work.
+            }
+        }
+    }
+
+    // Execute the API call.
+    let result = http_oauth.client.execute(api_req).await;
+
+    // Reactive: retry on 401 if we haven't already refreshed.
+    if let Ok(ref response) = result
+        && response.status == 401
+        && !refreshed
+    {
+        match http_oauth
+            .oauth_state
+            .refresh_user_onshape_tokens(&http_oauth.user_id, http_oauth.expires_at)
+            .await
+        {
+            Ok(new_tokens) => {
+                rebuild_http_oauth_client(http_oauth, &new_tokens)?;
+                // Retry the request with the refreshed token.
+                let retry = http_oauth.client.execute(api_req).await;
+                return match retry {
+                    Ok(response) => Ok(RawResponse {
+                        status: response.status,
+                        body: response.body,
+                    }),
+                    Err(e) => Err(McpError::new(
+                        rmcp::model::ErrorCode::INTERNAL_ERROR,
+                        format!("HTTP request failed on retry: {e}"),
+                        None,
+                    )),
+                };
+            }
+            Err(oauth_server::UserTokenRefreshError::PermanentExchange(msg)) => {
+                return Ok(RawResponse {
+                    status: 401,
+                    body: format!(
+                        "Onshape token refresh permanently failed ({msg}). \
+                         Please re-authenticate by completing the OAuth flow again."
+                    ),
+                });
+            }
+            Err(e) => {
+                return Err(McpError::new(
+                    rmcp::model::ErrorCode::INTERNAL_ERROR,
+                    format!("API returned 401 and token refresh failed: {e}"),
+                    None,
+                ));
+            }
+        }
+    }
+
+    match result {
+        Ok(response) => Ok(RawResponse {
+            status: response.status,
+            body: response.body,
+        }),
+        Err(e) => Err(McpError::new(
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            format!("HTTP request failed: {e}"),
+            None,
+        )),
+    }
+}
+
+/// Rebuild the HTTP OAuth client with refreshed tokens.
+fn rebuild_http_oauth_client(
+    http_oauth: &mut HttpOAuthApiState,
+    new_tokens: &oauth_server::UserOnshapeTokens,
+) -> Result<(), McpError> {
+    http_oauth.client = OnshapeClient::new(ClientConfig {
+        base_url: http_oauth.base_url.clone(),
+        auth: ClientAuthConfig::Bearer {
+            access_token: AccessToken::new(new_tokens.access_token().expose_secret().to_string()),
+        },
+        timeout: Some(http_oauth.timeout),
+    })
+    .map_err(|e| {
+        McpError::new(
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            format!("failed to rebuild per-user API client after refresh: {e}"),
+            None,
+        )
+    })?;
+    http_oauth.expires_at = new_tokens.expires_at();
+    Ok(())
+}
+
 // ============================================================================
 // Validation State Helpers
 // ============================================================================
@@ -876,7 +1051,7 @@ enum RefreshError {
 ///
 /// OAuth error codes `unauthorized_client` and `invalid_grant` mean the
 /// refresh token is revoked or expired — the user must re-authenticate.
-fn is_permanent_refresh_failure(error_message: &str) -> bool {
+pub(crate) fn is_permanent_refresh_failure(error_message: &str) -> bool {
     let lower = error_message.to_lowercase();
     lower.contains("unauthorized_client") || lower.contains("invalid_grant")
 }
@@ -1322,7 +1497,7 @@ pub async fn run(
             ApiState::OAuthPending(pending) => Some(pending.token_path.clone()),
             ApiState::OAuth(oauth) => Some(oauth.token_path.clone()),
             ApiState::NotConfigured { .. } => default_token_file_path(),
-            ApiState::Basic(_) => None,
+            ApiState::Basic(_) | ApiState::HttpOAuth(_) => None,
         }
     };
     let watcher_ctx = token_path.map(|token_path| {
@@ -1484,6 +1659,7 @@ pub async fn run_http(
     let factory_config = Arc::clone(&config);
     let factory_spec = Arc::clone(&spec);
     let factory_api_state = Arc::clone(&api_state);
+    let factory_oauth_state = Arc::clone(&oauth_state);
 
     let mcp_service = StreamableHttpService::new(
         move || {
@@ -1497,6 +1673,7 @@ pub async fn run_http(
                 Arc::clone(&factory_spec),
                 Arc::clone(&factory_api_state),
                 per_session_validation,
+                Some(Arc::clone(&factory_oauth_state)),
             ))
         },
         Arc::new(LocalSessionManager::default()),
