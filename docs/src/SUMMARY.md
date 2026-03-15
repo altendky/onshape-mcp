@@ -8,6 +8,7 @@
 
 - [Principles](project/principles.md)
 - [Architecture](project/architecture.md)
+- [Data Flow](project/data-flow.md)
 - [Requirements](project/requirements.md)
 
 # Features
