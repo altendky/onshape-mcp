@@ -61,11 +61,13 @@ loop {
         ToolEffect::ApiRequest { request, continuation } => {
             let response = http_client.execute(request).await;
             let (next, side_effects) = resume(continuation, IoResult::ApiResponse { .. });
+            apply_side_effects(side_effects).await;
             current = next;
         }
         ToolEffect::WriteFiles { files, continuation } => {
             let results = write_files(&files).await;
             let (next, side_effects) = resume(continuation, IoResult::FileWriteResults(&results));
+            apply_side_effects(side_effects).await;
             current = next;
         }
     }
