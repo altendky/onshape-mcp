@@ -45,7 +45,7 @@ pub fn call_tool(name: &str, args: Value, /* ... */) -> ToolEffect {
 }
 
 // Pure dispatch: continuation + I/O result -> next effect
-pub fn resume(continuation: Continuation, result: IoResult) -> (ToolEffect, Vec<SideEffect>) {
+pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, Vec<SideEffect>) {
     // Each Continuation variant matches with the appropriate IoResult variant
     // and produces the next ToolEffect. No closures, fully inspectable.
     // ...
@@ -60,7 +60,10 @@ loop {
         }
         ToolEffect::ApiRequest { request, continuation } => {
             let response = http_client.execute(request).await;
-            let (next, side_effects) = resume(continuation, IoResult::ApiResponse { .. });
+            let (next, side_effects) = resume(
+                continuation,
+                IoResult::ApiResponse { status: response.status, body: &response.body },
+            );
             apply_side_effects(side_effects).await;
             current = next;
         }
