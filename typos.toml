@@ -13,4 +13,6 @@ extend-ignore-re = [
 extend-exclude = [
     # Vendored Onshape OpenAPI spec — contains upstream typos we don't control
     "crates/onshape-mcp-io/onshape-openapi.json",
+    # Generated from FeatureScript standard library — contains upstream typos
+    "crates/onshape-mcp-core/error-enums.json",
 ]

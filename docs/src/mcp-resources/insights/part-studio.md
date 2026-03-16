@@ -37,8 +37,10 @@ The result is a `FeatureStatus` map with four fields:
 
 For custom FeatureScript features, `statusEnum` is typically `CUSTOM_ERROR` and
 `statusMsg` contains the message from `regenError()` or `throw`. For built-in
-features, `statusEnum` is a specific error constant and `statusMsg` is the
-localized error text.
+features, `statusEnum` is a specific error constant (e.g., `FILLET_FAILED`,
+`SWEEP_PATH_FAILED`) but `statusMsg` is **not returned** — only `statusEnum`,
+`statusType`, and `faultyParameters` are present. Use the `onshape_error_lookup`
+tool to resolve built-in `statusEnum` values to human-readable messages.
 
 ### Checking multiple features
 
