@@ -24,6 +24,8 @@ pub enum ToolEffect {
     Done(Result<CallToolResult, ErrorData>),
     /// Tool needs an HTTP request to the Onshape API.
     ApiRequest { request: ApiRequest, continuation: Continuation },
+    /// Tool requests an OAuth login flow to be started.
+    OAuthLoginFlow { mode: LoginMode },
     /// Tool needs files written to disk.
     WriteFiles { files: Vec<FileWrite>, continuation: Continuation },
 }
@@ -53,6 +55,9 @@ pub fn resume(continuation: Continuation, result: IoResult) -> (ToolEffect, Vec<
 loop {
     match current {
         ToolEffect::Done(result) => return result,
+        ToolEffect::OAuthLoginFlow { mode } => {
+            return handle_oauth_login(mode).await;
+        }
         ToolEffect::ApiRequest { request, continuation } => {
             let response = http_client.execute(request).await;
             let (next, side_effects) = resume(continuation, IoResult::ApiResponse { .. });
