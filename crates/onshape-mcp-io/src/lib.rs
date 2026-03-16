@@ -36,7 +36,7 @@ use onshape_client_io::{ClientAuthConfig, ClientConfig, OnshapeClient};
 use onshape_mcp_core::ValidationState;
 use onshape_mcp_core::config::{AppConfig, AuthInventory, ResolvedAuth, TokenStatus, resolve_auth};
 use onshape_mcp_core::openapi::OpenApiSpec;
-use onshape_mcp_core::tools::{self, SideEffect, ToolResult};
+use onshape_mcp_core::tools::{self, IoResult, SideEffect, ToolEffect};
 
 /// The embedded Onshape `OpenAPI` specification JSON.
 ///
@@ -387,9 +387,9 @@ impl OnshapeMcpServer {
         // if we need to update it via side effects.
         drop(validation);
 
-        // Dispatch loop: handles Immediate, OnshapeApiRequest, and
-        // OnshapeApiRequestThen (which can chain multiple requests).
-        dispatch_tool_result(
+        // Dispatch loop: handles Done, ApiRequest (which can chain
+        // multiple requests via resume()), and other effects.
+        dispatch_tool_effect(
             result,
             &mut state,
             &self.validation,
@@ -457,35 +457,36 @@ impl OnshapeMcpServer {
             ApiState::Basic(client)
         };
 
-        dispatch_tool_result(result, &mut api_state, &self.validation, None, false).await
+        dispatch_tool_effect(result, &mut api_state, &self.validation, None, false).await
     }
 }
 
-/// Shared dispatch loop for tool results.
+/// Shared dispatch loop for tool effects.
 ///
-/// Handles `Immediate`, `OnshapeApiRequest`, `OnshapeApiRequestThen`,
-/// and `OAuthLoginFlow` variants. Used by both stdio and HTTP modes.
+/// Handles `Done`, `ApiRequest`, `OAuthLoginFlow`, and `WriteFiles` variants.
+/// Used by both stdio and HTTP modes.
+///
+/// After executing an `ApiRequest` or `WriteFiles` effect, calls
+/// [`tools::resume()`] with the continuation and the I/O result to get the
+/// next effect, then loops.
 ///
 /// `allow_file_writes` controls whether `WriteFiles` effects are executed.
 /// The stdio transport passes `true` (local, single-user process); the HTTP
 /// transport passes `false` to prevent network-facing file-system access.
 #[allow(clippy::significant_drop_tightening)]
-async fn dispatch_tool_result(
-    initial_result: ToolResult,
+async fn dispatch_tool_effect(
+    initial_effect: ToolEffect,
     state: &mut ApiState,
     validation: &tokio::sync::Mutex<ValidationState>,
     login_state: Option<&tokio::sync::Mutex<login::LoginState>>,
     allow_file_writes: bool,
 ) -> Result<CallToolResult, McpError> {
-    let mut current = initial_result;
+    let mut current = initial_effect;
     loop {
         // For variants that need API execution, check if credentials
         // are available. NotConfigured and OAuthPending cannot execute
         // API requests, so return informative tool-level errors.
-        if matches!(
-            current,
-            ToolResult::OnshapeApiRequest { .. } | ToolResult::OnshapeApiRequestThen { .. }
-        ) {
+        if matches!(current, ToolEffect::ApiRequest { .. }) {
             match state {
                 ApiState::NotConfigured { .. } => return Ok(not_configured_error()),
                 ApiState::OAuthPending(_) => return Ok(oauth_pending_error()),
@@ -494,8 +495,8 @@ async fn dispatch_tool_result(
         }
 
         match current {
-            ToolResult::Immediate(r) => return r,
-            ToolResult::OAuthLoginFlow { mode } => {
+            ToolEffect::Done(r) => return r,
+            ToolEffect::OAuthLoginFlow { mode } => {
                 // In HTTP mode, login_state is None — return informative message.
                 let Some(login_state) = login_state else {
                     return Ok(CallToolResult::success(vec![rmcp::model::Content::text(
@@ -506,43 +507,36 @@ async fn dispatch_tool_result(
                 };
                 return handle_oauth_login_flow(mode, login_state).await;
             }
-            ToolResult::OnshapeApiRequest { request: api_req } => {
-                // Simple case: execute and update implicit validation.
-                let raw = execute_raw_api_request(state, &api_req).await;
-                match raw {
-                    Ok(raw) => {
-                        update_implicit_validation(validation, raw.status).await;
-                        return tools::process_api_response(raw.status, &raw.body);
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            ToolResult::OnshapeApiRequestThen {
+            ToolEffect::ApiRequest {
                 request: api_req,
-                then,
+                continuation,
             } => {
-                // Execute the request, get raw response.
                 let raw = execute_raw_api_request(state, &api_req).await;
                 match raw {
                     Ok(raw) => {
-                        // Update implicit validation.
                         update_implicit_validation(validation, raw.status).await;
 
-                        // Invoke the callback.
-                        let (next_result, side_effects) = then(raw.status, &raw.body);
+                        let (next_effect, side_effects) = tools::resume(
+                            continuation,
+                            IoResult::ApiResponse {
+                                status: raw.status,
+                                body: &raw.body,
+                            },
+                        );
 
-                        // Apply side effects.
                         for effect in side_effects {
                             apply_side_effect(validation, effect).await;
                         }
 
-                        // Loop with the next result.
-                        current = next_result;
+                        current = next_effect;
                     }
                     Err(e) => return Err(e),
                 }
             }
-            ToolResult::WriteFiles { files, format } => {
+            ToolEffect::WriteFiles {
+                files,
+                continuation,
+            } => {
                 if !allow_file_writes {
                     return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
                         "File write operations are not supported over the HTTP transport. \
@@ -551,7 +545,15 @@ async fn dispatch_tool_result(
                     )]));
                 }
                 let results = write_files(&files).await;
-                return Ok(format(&results));
+
+                let (next_effect, side_effects) =
+                    tools::resume(continuation, IoResult::FileWriteResults(&results));
+
+                for effect in side_effects {
+                    apply_side_effect(validation, effect).await;
+                }
+
+                current = next_effect;
             }
         }
     }
@@ -561,7 +563,7 @@ async fn dispatch_tool_result(
 // File Write Execution
 // ============================================================================
 
-/// Write files to disk as requested by [`ToolResult::WriteFiles`].
+/// Write files to disk as requested by [`ToolEffect::WriteFiles`].
 ///
 /// Creates the parent directory for each file if it does not exist.
 /// Returns one [`tools::FileWriteResult`] per input file.
@@ -1808,25 +1810,19 @@ mod tests {
         assert!(build_ipv4_retry_client(body).is_some());
     }
 
-    // --- dispatch_tool_result file-write gating tests ---
+    // --- dispatch_tool_effect file-write gating tests ---
 
-    /// Helper: build a `ToolResult::WriteFiles` targeting `path` with dummy data.
-    fn dummy_write_files(path: std::path::PathBuf) -> tools::ToolResult {
-        tools::ToolResult::WriteFiles {
+    /// Helper: build a `ToolEffect::WriteFiles` targeting `path` with dummy data.
+    fn dummy_write_files(path: std::path::PathBuf) -> tools::ToolEffect {
+        tools::ToolEffect::WriteFiles {
             files: vec![tools::FileWrite {
                 path,
                 data: b"png-bytes".to_vec(),
             }],
-            format: Box::new(|results| {
-                let all_ok = results
-                    .iter()
-                    .all(|r| matches!(r, tools::FileWriteResult::Success { .. }));
-                if all_ok {
-                    CallToolResult::success(vec![rmcp::model::Content::text("wrote file")])
-                } else {
-                    CallToolResult::error(vec![rmcp::model::Content::text("write failed")])
-                }
-            }),
+            continuation: tools::Continuation::FormatScreenshotWrite {
+                label: "test".to_string(),
+                view_matrix: "front".to_string(),
+            },
         }
     }
 
@@ -1841,7 +1837,7 @@ mod tests {
             detail: "test".to_string(),
         };
 
-        let result = dispatch_tool_result(
+        let result = dispatch_tool_effect(
             dummy_write_files(file_path.clone()),
             &mut state,
             &validation,
@@ -1878,7 +1874,7 @@ mod tests {
             detail: "test".to_string(),
         };
 
-        let result = dispatch_tool_result(
+        let result = dispatch_tool_effect(
             dummy_write_files(file_path.clone()),
             &mut state,
             &validation,

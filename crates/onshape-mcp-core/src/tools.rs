@@ -5,9 +5,13 @@
 //!
 //! ## Effect Pattern
 //!
-//! Tool dispatch returns a [`ToolResult`] which is either:
-//! - `Immediate` — the tool completed with no I/O needed
-//! - `OnshapeApiRequest` — the tool needs an HTTP request executed by the I/O layer
+//! Tool dispatch returns a [`ToolEffect`] which is either:
+//! - `Done` — the tool completed with no I/O needed
+//! - `ApiRequest` — the tool needs an HTTP request executed by the I/O layer
+//!
+//! Multi-step operations use a [`Continuation`] enum (plain data) instead of
+//! closures. After the I/O layer executes an effect, it calls [`resume()`] with
+//! the continuation and an [`IoResult`] to get the next effect.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -31,11 +35,10 @@ use crate::{AuthStatusResult, ValidationState};
 // Effect Type
 // ============================================================================
 
-/// Side effects that a tool callback can request the I/O layer to apply.
+/// Side effects that [`resume()`] can request the I/O layer to apply.
 ///
-/// Returned alongside a [`ToolResult`] from callbacks in
-/// [`ToolResult::OnshapeApiRequestThen`]. The I/O layer is responsible
-/// for applying these effects after processing the callback's result.
+/// Returned alongside a [`ToolEffect`] from [`resume()`]. The I/O layer is
+/// responsible for applying these effects after processing the result.
 pub enum SideEffect {
     /// Update the runtime credential validation state.
     UpdateValidation(ValidationState),
@@ -48,6 +51,7 @@ pub enum SideEffect {
 /// A file to be written to disk by the I/O layer.
 ///
 /// This is a pure data description of the write — no I/O is performed here.
+#[derive(Debug)]
 pub struct FileWrite {
     /// The target file path.
     pub path: PathBuf,
@@ -71,15 +75,9 @@ pub enum FileWriteResult {
     },
 }
 
-/// Callback type for formatting the result of file writes.
-///
-/// Receives the outcomes of each file write and produces the final
-/// [`CallToolResult`] to return to the caller.
-pub type WriteFilesFormatter = Box<dyn FnOnce(&[FileWriteResult]) -> CallToolResult + Send>;
-
 /// How the OAuth login flow should operate.
 ///
-/// Returned as part of [`ToolResult::OAuthLoginFlow`] for the I/O layer
+/// Returned as part of [`ToolEffect::OAuthLoginFlow`] for the I/O layer
 /// to execute.
 #[derive(Clone, Debug)]
 pub enum LoginMode {
@@ -102,29 +100,27 @@ pub enum LoginMode {
 
 /// Result of dispatching a tool call.
 ///
-/// Tools that need no I/O return `Immediate`. Tools that need an HTTP request
-/// to the Onshape API return `OnshapeApiRequest`, which the I/O layer must
-/// execute and then pass back through [`process_api_response`].
-/// `OnshapeApiRequestThen` extends this with a callback that processes the
-/// response and can return further results plus side effects.
-/// `OAuthLoginFlow` signals the I/O layer to start an OAuth login flow.
-pub enum ToolResult {
-    /// Tool completed immediately with no I/O needed.
-    Immediate(Result<CallToolResult, ErrorData>),
+/// Tools that need no I/O return `Done`. Tools that need an HTTP request
+/// to the Onshape API return `ApiRequest` with a [`Continuation`] that
+/// describes how to process the response. The I/O layer executes the
+/// effect and calls [`resume()`] with the continuation and response to
+/// get the next effect.
+///
+/// All variants are plain data — no closures — so `ToolEffect` is
+/// inspectable, `Debug`-printable, and testable.
+#[derive(Debug)]
+pub enum ToolEffect {
+    /// Tool completed — no further I/O needed.
+    Done(Result<CallToolResult, ErrorData>),
     /// Tool needs an HTTP request to the Onshape API.
-    OnshapeApiRequest {
+    ///
+    /// After executing the request, the I/O layer calls [`resume()`] with
+    /// the continuation and an [`IoResult::ApiResponse`].
+    ApiRequest {
         /// The HTTP request to execute.
         request: ApiRequest,
-    },
-    /// Tool needs an HTTP request; the response is processed by a callback
-    /// which can return further results and request side effects.
-    OnshapeApiRequestThen {
-        /// The HTTP request to execute.
-        request: ApiRequest,
-        /// Callback receives (`http_status`, `response_body`) and returns
-        /// the next [`ToolResult`] plus any side effects for the I/O layer.
-        #[allow(clippy::type_complexity)]
-        then: Box<dyn FnOnce(u16, &str) -> (Self, Vec<SideEffect>) + Send>,
+        /// What to do with the response.
+        continuation: Continuation,
     },
     /// Tool requests an OAuth login flow to be started.
     ///
@@ -138,24 +134,78 @@ pub enum ToolResult {
     /// Tool needs files written to disk.
     ///
     /// The I/O layer writes each [`FileWrite`] and reports outcomes via
-    /// [`FileWriteResult`]. The `format` callback then produces the final
-    /// [`CallToolResult`] based on what succeeded or failed.
+    /// [`FileWriteResult`]. Then it calls [`resume()`] with the continuation
+    /// and an [`IoResult::FileWriteResults`] to get the next effect.
     WriteFiles {
         /// Files to write.
         files: Vec<FileWrite>,
-        /// Callback that formats the final tool result from write outcomes.
-        format: WriteFilesFormatter,
+        /// What to do with the write results.
+        continuation: Continuation,
     },
 }
 
-/// Create a [`ToolResult`] for an expected user-input error.
+/// Plain-data continuation describing how to process an I/O result.
+///
+/// Each variant corresponds to a specific tool's post-I/O processing logic.
+/// The [`resume()`] function dispatches on these variants to produce the
+/// next [`ToolEffect`].
+#[derive(Debug)]
+pub enum Continuation {
+    /// After API call: format the response as the final tool result.
+    ///
+    /// Used by `onshape_api_call`.
+    FormatApiResponse,
+    /// After API call: process auth validation response.
+    ///
+    /// Used by `onshape_auth_status` with `validate=true`.
+    ProcessAuthValidation {
+        /// The resolved auth state at the time the validation was requested.
+        resolved_auth: ResolvedAuth,
+    },
+    /// After API call: decode screenshot image, produce `WriteFiles` effect.
+    ///
+    /// Used by `onshape_screenshot`.
+    ProcessScreenshotResponse {
+        /// Where to write the screenshot file.
+        output_path: PathBuf,
+        /// Human-readable view label (e.g. "front", "isometric").
+        label: String,
+        /// The view matrix string used in the API request.
+        view_matrix: String,
+    },
+    /// After file writes: format the screenshot write result.
+    ///
+    /// Used as the continuation in the `WriteFiles` effect produced by
+    /// [`Continuation::ProcessScreenshotResponse`].
+    FormatScreenshotWrite {
+        /// Human-readable view label.
+        label: String,
+        /// The view matrix string used in the API request.
+        view_matrix: String,
+    },
+}
+
+/// What the I/O layer feeds back to [`resume()`] after executing an effect.
+pub enum IoResult<'a> {
+    /// Response from an HTTP API request.
+    ApiResponse {
+        /// HTTP status code.
+        status: u16,
+        /// Response body as a string.
+        body: &'a str,
+    },
+    /// Results of file write operations.
+    FileWriteResults(&'a [FileWriteResult]),
+}
+
+/// Create a [`ToolEffect`] for an expected user-input error.
 ///
 /// Returns a successful `CallToolResult` with `is_error: Some(true)`, keeping
 /// the MCP transport clean. Use this for validation failures that the caller
 /// (typically an LLM) can act on — as opposed to protocol-level
 /// `Err(ErrorData)` which signals handler/infrastructure breakage.
-fn tool_input_error(message: impl Into<String>) -> ToolResult {
-    ToolResult::Immediate(Ok(CallToolResult::error(vec![Content::text(
+fn tool_input_error(message: impl Into<String>) -> ToolEffect {
+    ToolEffect::Done(Ok(CallToolResult::error(vec![Content::text(
         message.into(),
     )])))
 }
@@ -194,6 +244,206 @@ pub fn process_api_response(status: u16, body: &str) -> Result<CallToolResult, E
     }
 }
 
+/// Resume a multi-step tool operation after the I/O layer has executed an effect.
+///
+/// This is a pure function: given a [`Continuation`] and the [`IoResult`] from
+/// the I/O layer, it produces the next [`ToolEffect`] plus any [`SideEffect`]s
+/// for the I/O layer to apply.
+///
+/// # Panics
+///
+/// Panics if `continuation` and `result` are mismatched (e.g., an API
+/// continuation paired with file-write results). This indicates a programming
+/// error in the I/O layer.
+#[must_use]
+pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, Vec<SideEffect>) {
+    match (continuation, result) {
+        // --- FormatApiResponse ---
+        (Continuation::FormatApiResponse, IoResult::ApiResponse { status, body }) => {
+            (ToolEffect::Done(process_api_response(status, body)), vec![])
+        }
+
+        // --- ProcessAuthValidation ---
+        (
+            Continuation::ProcessAuthValidation { resolved_auth },
+            IoResult::ApiResponse { status, body: _ },
+        ) => resume_auth_validation(status, &resolved_auth),
+
+        // --- ProcessScreenshotResponse ---
+        (
+            Continuation::ProcessScreenshotResponse {
+                output_path,
+                label,
+                view_matrix,
+            },
+            IoResult::ApiResponse { status, body },
+        ) => resume_screenshot_response(status, body, output_path, label, view_matrix),
+
+        // --- FormatScreenshotWrite ---
+        (
+            Continuation::FormatScreenshotWrite { label, view_matrix },
+            IoResult::FileWriteResults(results),
+        ) => {
+            let Some(result) = results.first() else {
+                return (
+                    ToolEffect::Done(Ok(CallToolResult::error(vec![Content::text(
+                        "internal error: no file write results",
+                    )]))),
+                    vec![],
+                );
+            };
+            (
+                ToolEffect::Done(Ok(format_screenshot_result(result, &label, &view_matrix))),
+                vec![],
+            )
+        }
+
+        // --- Mismatched continuation/result ---
+        (continuation, result) => {
+            unreachable!(
+                "mismatched Continuation and IoResult: continuation={continuation:?}, \
+                 result kind={}",
+                match result {
+                    IoResult::ApiResponse { .. } => "ApiResponse",
+                    IoResult::FileWriteResults(_) => "FileWriteResults",
+                }
+            )
+        }
+    }
+}
+
+/// Process auth validation API response.
+///
+/// Extracted from [`resume()`] for readability.
+fn resume_auth_validation(
+    status: u16,
+    resolved_auth: &ResolvedAuth,
+) -> (ToolEffect, Vec<SideEffect>) {
+    let now = chrono::Utc::now();
+
+    if (200..300).contains(&status) {
+        let valid_state = ValidationState {
+            status: crate::ValidationStatus::Valid,
+            last_check: Some(now),
+            message: Some("Credentials validated successfully".into()),
+        };
+        let result = AuthStatusResult::new(resolved_auth, Some(&valid_state), now);
+        let tool_effect = match Content::json(&result) {
+            Ok(c) => ToolEffect::Done(Ok(CallToolResult::success(vec![c]))),
+            Err(e) => ToolEffect::Done(Err(e)),
+        };
+        (tool_effect, vec![SideEffect::UpdateValidation(valid_state)])
+    } else if status == 401 {
+        let invalid_state = ValidationState {
+            status: crate::ValidationStatus::Invalid,
+            last_check: Some(now),
+            message: Some("API returned 401 Unauthorized — credentials are invalid".into()),
+        };
+        let result = AuthStatusResult::new(resolved_auth, Some(&invalid_state), now);
+        let tool_effect = match Content::json(&result) {
+            Ok(c) => ToolEffect::Done(Ok(CallToolResult::success(vec![c]))),
+            Err(e) => ToolEffect::Done(Err(e)),
+        };
+        (
+            tool_effect,
+            vec![SideEffect::UpdateValidation(invalid_state)],
+        )
+    } else {
+        // Unexpected status — don't update validation state.
+        let result = AuthStatusResult::new(resolved_auth, None, now);
+        let mut auth_result = match Content::json(&result) {
+            Ok(c) => CallToolResult::success(vec![c]),
+            Err(e) => {
+                return (ToolEffect::Done(Err(e)), vec![]);
+            }
+        };
+        // Add a note about the unexpected status.
+        auth_result.content.push(Content::text(format!(
+            "Warning: credential validation returned unexpected HTTP {status}"
+        )));
+        (ToolEffect::Done(Ok(auth_result)), vec![])
+    }
+}
+
+/// Process screenshot API response: decode base64 image and produce `WriteFiles`.
+///
+/// Extracted from [`resume()`] for readability.
+fn resume_screenshot_response(
+    status: u16,
+    body: &str,
+    output_path: PathBuf,
+    label: String,
+    view_matrix: String,
+) -> (ToolEffect, Vec<SideEffect>) {
+    if !(200..300).contains(&status) {
+        return (
+            ToolEffect::Done(Ok(CallToolResult::error(vec![Content::text(format!(
+                "Shaded views API error (HTTP {status}): {body}"
+            ))]))),
+            vec![],
+        );
+    }
+
+    // Parse the response JSON.
+    let response: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                tool_input_error(format!("failed to parse shaded views response: {e}")),
+                vec![],
+            );
+        }
+    };
+
+    // Extract the first image from the images array.
+    // Response shape: { "images": ["base64string"] }
+    let Some(images) = response.get("images").and_then(Value::as_array) else {
+        return (
+            tool_input_error("shaded views response missing \"images\" array"),
+            vec![],
+        );
+    };
+
+    let Some(first_image) = images.first() else {
+        return (
+            tool_input_error("shaded views response returned empty \"images\" array"),
+            vec![],
+        );
+    };
+
+    let Some(b64_str) = first_image.as_str() else {
+        return (
+            tool_input_error("first image in response is not a string"),
+            vec![],
+        );
+    };
+
+    // Decode base64 image into bytes.
+    let engine = base64::engine::general_purpose::STANDARD;
+    let data = match engine.decode(b64_str) {
+        Ok(d) => d,
+        Err(e) => {
+            return (
+                tool_input_error(format!("failed to decode base64 image: {e}")),
+                vec![],
+            );
+        }
+    };
+
+    let file_write = FileWrite {
+        path: output_path,
+        data,
+    };
+
+    (
+        ToolEffect::WriteFiles {
+            files: vec![file_write],
+            continuation: Continuation::FormatScreenshotWrite { label, view_matrix },
+        },
+        vec![],
+    )
+}
+
 // ============================================================================
 // Tool Registry
 // ============================================================================
@@ -223,8 +473,8 @@ pub fn list_tools() -> Vec<Tool> {
 ///
 /// # Errors
 ///
-/// Returns an error (via `ToolResult::Immediate`) if the tool is not found
-/// or input validation fails. Returns `ToolResult::OnshapeApiRequest` if the
+/// Returns an error (via `ToolEffect::Done`) if the tool is not found
+/// or input validation fails. Returns `ToolEffect::ApiRequest` if the
 /// tool needs an HTTP request executed.
 #[must_use]
 pub fn call_tool(
@@ -233,49 +483,49 @@ pub fn call_tool(
     resolved_auth: &ResolvedAuth,
     validation: &ValidationState,
     spec: Option<&OpenApiSpec>,
-) -> ToolResult {
+) -> ToolEffect {
     match name {
-        "onshape_mcp_get_started" => ToolResult::Immediate(Ok(call_get_started())),
+        "onshape_mcp_get_started" => ToolEffect::Done(Ok(call_get_started())),
         "onshape_auth_status" => call_auth_status(arguments, resolved_auth, validation, spec),
         "onshape_auth_login" => call_auth_login(arguments),
         "onshape_api_search" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
-                Err(e) => return ToolResult::Immediate(Err(e)),
+                Err(e) => return ToolEffect::Done(Err(e)),
             };
-            ToolResult::Immediate(call_api_search(arguments, spec))
+            ToolEffect::Done(call_api_search(arguments, spec))
         }
         "onshape_api_explain" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
-                Err(e) => return ToolResult::Immediate(Err(e)),
+                Err(e) => return ToolEffect::Done(Err(e)),
             };
-            ToolResult::Immediate(call_api_explain(arguments, spec))
+            ToolEffect::Done(call_api_explain(arguments, spec))
         }
         "onshape_api_call" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
-                Err(e) => return ToolResult::Immediate(Err(e)),
+                Err(e) => return ToolEffect::Done(Err(e)),
             };
             call_api_call(arguments, spec)
         }
         "onshape_api_schema" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
-                Err(e) => return ToolResult::Immediate(Err(e)),
+                Err(e) => return ToolEffect::Done(Err(e)),
             };
-            ToolResult::Immediate(call_api_schema(arguments, spec))
+            ToolEffect::Done(call_api_schema(arguments, spec))
         }
-        "onshape_list_resources" => ToolResult::Immediate(Ok(call_list_resources())),
-        "onshape_read_resource" => ToolResult::Immediate(Ok(call_read_resource(arguments))),
+        "onshape_list_resources" => ToolEffect::Done(Ok(call_list_resources())),
+        "onshape_read_resource" => ToolEffect::Done(Ok(call_read_resource(arguments))),
         "onshape_screenshot" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
-                Err(e) => return ToolResult::Immediate(Err(e)),
+                Err(e) => return ToolEffect::Done(Err(e)),
             };
             call_screenshot(arguments, spec)
         }
-        _ => ToolResult::Immediate(Err(ErrorData::new(
+        _ => ToolEffect::Done(Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
             format!("Unknown tool: {name}"),
             None,
@@ -662,7 +912,7 @@ fn call_auth_status(
     resolved_auth: &ResolvedAuth,
     validation: &ValidationState,
     spec: Option<&OpenApiSpec>,
-) -> ToolResult {
+) -> ToolEffect {
     let input: AuthStatusInput = match parse_arguments(arguments) {
         Ok(input) => input,
         Err(e) => return tool_input_error(e.message),
@@ -674,22 +924,22 @@ fn call_auth_status(
         let result = AuthStatusResult::new(resolved_auth, Some(validation), now);
         let content = match Content::json(&result) {
             Ok(c) => c,
-            Err(e) => return ToolResult::Immediate(Err(e)),
+            Err(e) => return ToolEffect::Done(Err(e)),
         };
-        return ToolResult::Immediate(Ok(CallToolResult::success(vec![content])));
+        return ToolEffect::Done(Ok(CallToolResult::success(vec![content])));
     }
 
     // validate=true: actively check credentials via GET /users/sessioninfo.
     let spec = match require_spec(spec) {
         Ok(s) => s,
-        Err(e) => return ToolResult::Immediate(Err(e)),
+        Err(e) => return ToolEffect::Done(Err(e)),
     };
 
     let empty_map = HashMap::new();
     let request = match spec.build_request("sessionInfo", &empty_map, &empty_map, None) {
         Ok(req) => req,
         Err(e) => {
-            return ToolResult::Immediate(Err(ErrorData::new(
+            return ToolEffect::Done(Err(ErrorData::new(
                 ErrorCode::INTERNAL_ERROR,
                 format!("failed to build sessionInfo request: {e}"),
                 None,
@@ -697,64 +947,18 @@ fn call_auth_status(
         }
     };
 
-    // Capture what we need for the callback closure.
-    let resolved_auth = resolved_auth.clone();
-
-    ToolResult::OnshapeApiRequestThen {
+    ToolEffect::ApiRequest {
         request,
-        then: Box::new(move |status, _body| {
-            let now = chrono::Utc::now();
-
-            if (200..300).contains(&status) {
-                let valid_state = ValidationState {
-                    status: crate::ValidationStatus::Valid,
-                    last_check: Some(now),
-                    message: Some("Credentials validated successfully".into()),
-                };
-                let result = AuthStatusResult::new(&resolved_auth, Some(&valid_state), now);
-                let tool_result = match Content::json(&result) {
-                    Ok(c) => ToolResult::Immediate(Ok(CallToolResult::success(vec![c]))),
-                    Err(e) => ToolResult::Immediate(Err(e)),
-                };
-                (tool_result, vec![SideEffect::UpdateValidation(valid_state)])
-            } else if status == 401 {
-                let invalid_state = ValidationState {
-                    status: crate::ValidationStatus::Invalid,
-                    last_check: Some(now),
-                    message: Some("API returned 401 Unauthorized — credentials are invalid".into()),
-                };
-                let result = AuthStatusResult::new(&resolved_auth, Some(&invalid_state), now);
-                let tool_result = match Content::json(&result) {
-                    Ok(c) => ToolResult::Immediate(Ok(CallToolResult::success(vec![c]))),
-                    Err(e) => ToolResult::Immediate(Err(e)),
-                };
-                (
-                    tool_result,
-                    vec![SideEffect::UpdateValidation(invalid_state)],
-                )
-            } else {
-                // Unexpected status — don't update validation state.
-                let result = AuthStatusResult::new(&resolved_auth, None, now);
-                let mut auth_result = match Content::json(&result) {
-                    Ok(c) => CallToolResult::success(vec![c]),
-                    Err(e) => {
-                        return (ToolResult::Immediate(Err(e)), vec![]);
-                    }
-                };
-                // Add a note about the unexpected status.
-                auth_result.content.push(Content::text(format!(
-                    "Warning: credential validation returned unexpected HTTP {status}"
-                )));
-                (ToolResult::Immediate(Ok(auth_result)), vec![])
-            }
-        }),
+        continuation: Continuation::ProcessAuthValidation {
+            resolved_auth: resolved_auth.clone(),
+        },
     }
 }
 
 /// Default OAuth proxy URL used when no `proxy_url` is specified.
 pub const DEFAULT_PROXY_URL: &str = "https://onshape-oauth-proxy.fstab.workers.dev";
 
-fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolResult {
+fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolEffect {
     let input: AuthLoginInput = match parse_arguments(arguments) {
         Ok(input) => input,
         Err(e) => return tool_input_error(e.message),
@@ -788,7 +992,7 @@ fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolResult {
         }
     };
 
-    ToolResult::OAuthLoginFlow { mode }
+    ToolEffect::OAuthLoginFlow { mode }
 }
 
 fn call_api_search(
@@ -842,7 +1046,7 @@ fn call_api_explain(
     Ok(CallToolResult::success(vec![content]))
 }
 
-fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolResult {
+fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolEffect {
     let input: ApiCallInput = match parse_arguments(arguments) {
         Ok(input) => input,
         Err(e) => return tool_input_error(e.message),
@@ -873,7 +1077,10 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
         }
     };
 
-    ToolResult::OnshapeApiRequest { request }
+    ToolEffect::ApiRequest {
+        request,
+        continuation: Continuation::FormatApiResponse,
+    }
 }
 
 fn call_list_resources() -> CallToolResult {
@@ -1065,7 +1272,8 @@ fn tool_screenshot_def() -> Tool {
     .annotate(ToolAnnotations::new().read_only(false).destructive(false))
 }
 
-fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolResult {
+#[allow(clippy::too_many_lines)]
+fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolEffect {
     const MAX_SCREENSHOT_DIM: u32 = 4096;
 
     let input: ScreenshotInput = match parse_arguments(arguments) {
@@ -1151,7 +1359,7 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
         query_params.insert("includeWires".to_string(), iw.to_string());
     }
 
-    // --- Prepare data for the callback closure ---
+    // --- Prepare data for the continuation ---
 
     let label = view_label(&input.view);
     let output_path = PathBuf::from(&input.output_path);
@@ -1179,99 +1387,14 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
 
     // --- Return the two-phase effect: API call, then file writes ---
 
-    ToolResult::OnshapeApiRequestThen {
+    ToolEffect::ApiRequest {
         request,
-        then: Box::new(move |status, body| {
-            process_screenshot_response(status, body, output_path, label, view_matrix)
-        }),
-    }
-}
-
-/// Process the shaded views API response: decode the base64 image and produce
-/// a [`ToolResult::WriteFiles`] effect.
-///
-/// Extracted from [`call_screenshot`] to keep function lengths manageable.
-fn process_screenshot_response(
-    status: u16,
-    body: &str,
-    output_path: PathBuf,
-    label: String,
-    view_matrix: String,
-) -> (ToolResult, Vec<SideEffect>) {
-    if !(200..300).contains(&status) {
-        return (
-            ToolResult::Immediate(Ok(CallToolResult::error(vec![Content::text(format!(
-                "Shaded views API error (HTTP {status}): {body}"
-            ))]))),
-            vec![],
-        );
-    }
-
-    // Parse the response JSON.
-    let response: Value = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                tool_input_error(format!("failed to parse shaded views response: {e}")),
-                vec![],
-            );
-        }
-    };
-
-    // Extract the first image from the images array.
-    // Response shape: { "images": ["base64string"] }
-    let Some(images) = response.get("images").and_then(Value::as_array) else {
-        return (
-            tool_input_error("shaded views response missing \"images\" array"),
-            vec![],
-        );
-    };
-
-    let Some(first_image) = images.first() else {
-        return (
-            tool_input_error("shaded views response returned empty \"images\" array"),
-            vec![],
-        );
-    };
-
-    let Some(b64_str) = first_image.as_str() else {
-        return (
-            tool_input_error("first image in response is not a string"),
-            vec![],
-        );
-    };
-
-    // Decode base64 image into bytes.
-    let engine = base64::engine::general_purpose::STANDARD;
-    let data = match engine.decode(b64_str) {
-        Ok(d) => d,
-        Err(e) => {
-            return (
-                tool_input_error(format!("failed to decode base64 image: {e}")),
-                vec![],
-            );
-        }
-    };
-
-    let file_write = FileWrite {
-        path: output_path,
-        data,
-    };
-
-    (
-        ToolResult::WriteFiles {
-            files: vec![file_write],
-            format: Box::new(move |results: &[FileWriteResult]| {
-                let Some(result) = results.first() else {
-                    return CallToolResult::error(vec![Content::text(
-                        "internal error: no file write results",
-                    )]);
-                };
-                format_screenshot_result(result, &label, &view_matrix)
-            }),
+        continuation: Continuation::ProcessScreenshotResponse {
+            output_path,
+            label,
+            view_matrix,
         },
-        vec![],
-    )
+    }
 }
 
 /// Format the final [`CallToolResult`] for the screenshot tool.
@@ -1451,45 +1574,25 @@ mod tests {
         .expect("test spec should parse")
     }
 
-    fn assert_immediate_ok(result: ToolResult) -> CallToolResult {
-        match result {
-            ToolResult::Immediate(Ok(r)) => r,
-            ToolResult::Immediate(Err(e)) => panic!("expected Ok, got Err: {e:?}"),
-            ToolResult::OnshapeApiRequest { .. } => panic!("expected Immediate, got ApiRequest"),
-            ToolResult::OnshapeApiRequestThen { .. } => {
-                panic!("expected Immediate, got ApiRequestThen")
-            }
-            ToolResult::OAuthLoginFlow { .. } => {
-                panic!("expected Immediate, got OAuthLoginFlow")
-            }
-            ToolResult::WriteFiles { .. } => {
-                panic!("expected Immediate, got WriteFiles")
-            }
+    fn assert_done_ok(effect: ToolEffect) -> CallToolResult {
+        match effect {
+            ToolEffect::Done(Ok(r)) => r,
+            other => panic!("expected Done(Ok), got {other:?}"),
         }
     }
 
-    fn assert_immediate_err(result: ToolResult) -> ErrorData {
-        match result {
-            ToolResult::Immediate(Err(e)) => e,
-            ToolResult::Immediate(Ok(_)) => panic!("expected Err, got Ok"),
-            ToolResult::OnshapeApiRequest { .. } => panic!("expected Immediate, got ApiRequest"),
-            ToolResult::OnshapeApiRequestThen { .. } => {
-                panic!("expected Immediate, got ApiRequestThen")
-            }
-            ToolResult::OAuthLoginFlow { .. } => {
-                panic!("expected Immediate Err, got OAuthLoginFlow")
-            }
-            ToolResult::WriteFiles { .. } => {
-                panic!("expected Immediate Err, got WriteFiles")
-            }
+    fn assert_done_err(effect: ToolEffect) -> ErrorData {
+        match effect {
+            ToolEffect::Done(Err(e)) => e,
+            other => panic!("expected Done(Err), got {other:?}"),
         }
     }
 
-    /// Asserts that `result` is a tool-level error (`is_error: Some(true)`)
+    /// Asserts that `effect` is a tool-level error (`is_error: Some(true)`)
     /// and returns the concatenated text content for further assertions.
-    fn assert_tool_error(result: ToolResult) -> String {
-        match result {
-            ToolResult::Immediate(Ok(r)) => {
+    fn assert_tool_error(effect: ToolEffect) -> String {
+        match effect {
+            ToolEffect::Done(Ok(r)) => {
                 assert_eq!(
                     r.is_error,
                     Some(true),
@@ -1501,32 +1604,37 @@ mod tests {
                     .filter_map(|c| c.as_text().map(|t| t.text.clone()))
                     .collect::<String>()
             }
-            ToolResult::Immediate(Err(e)) => {
+            ToolEffect::Done(Err(e)) => {
                 panic!("expected tool error (is_error=true), got protocol error: {e:?}")
             }
-            other => panic!(
-                "expected Immediate tool error, got {:?}",
-                std::mem::discriminant(&other)
-            ),
+            other => panic!("expected Done tool error, got {other:?}"),
         }
     }
 
-    fn assert_api_request(result: ToolResult) -> ApiRequest {
-        match result {
-            ToolResult::OnshapeApiRequest { request } => request,
-            ToolResult::Immediate(Ok(_)) => panic!("expected ApiRequest, got Immediate Ok"),
-            ToolResult::Immediate(Err(e)) => {
-                panic!("expected ApiRequest, got Immediate Err: {e:?}")
-            }
-            ToolResult::OnshapeApiRequestThen { .. } => {
-                panic!("expected ApiRequest, got ApiRequestThen")
-            }
-            ToolResult::OAuthLoginFlow { .. } => {
-                panic!("expected ApiRequest, got OAuthLoginFlow")
-            }
-            ToolResult::WriteFiles { .. } => {
-                panic!("expected ApiRequest, got WriteFiles")
-            }
+    fn assert_api_request(effect: ToolEffect) -> (ApiRequest, Continuation) {
+        match effect {
+            ToolEffect::ApiRequest {
+                request,
+                continuation,
+            } => (request, continuation),
+            other => panic!("expected ApiRequest, got {other:?}"),
+        }
+    }
+
+    fn assert_write_files(effect: ToolEffect) -> (Vec<FileWrite>, Continuation) {
+        match effect {
+            ToolEffect::WriteFiles {
+                files,
+                continuation,
+            } => (files, continuation),
+            other => panic!("expected WriteFiles, got {other:?}"),
+        }
+    }
+
+    fn assert_oauth_login_flow(effect: ToolEffect) -> LoginMode {
+        match effect {
+            ToolEffect::OAuthLoginFlow { mode } => mode,
+            other => panic!("expected OAuthLoginFlow, got {other:?}"),
         }
     }
 
@@ -1598,7 +1706,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
         assert_eq!(call_result.content.len(), 1);
 
@@ -1618,7 +1726,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -1637,7 +1745,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -1661,7 +1769,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -1678,7 +1786,7 @@ mod tests {
     #[test]
     fn call_tool_unknown_returns_not_found() {
         let auth = not_configured();
-        let err = assert_immediate_err(call_tool(
+        let err = assert_done_err(call_tool(
             "unknown_tool",
             None,
             &auth,
@@ -1696,7 +1804,7 @@ mod tests {
         args.insert("unexpected".to_string(), Value::String("value".to_string()));
         // Extra arguments are silently ignored, consistent with the API
         // tools which use serde's default lenient deserialization.
-        let call_result = assert_immediate_ok(call_tool(
+        let call_result = assert_done_ok(call_tool(
             "onshape_auth_status",
             Some(&args),
             &auth,
@@ -1735,7 +1843,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -1755,7 +1863,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -1780,7 +1888,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -1803,7 +1911,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -1830,7 +1938,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -1860,7 +1968,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -1883,7 +1991,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
 
         let content = &call_result.content[0];
         let text = content.raw.as_text().expect("should be text content");
@@ -1897,7 +2005,7 @@ mod tests {
         let mut args = Map::new();
         args.insert("query".to_string(), Value::String("test".to_string()));
 
-        let err = assert_immediate_err(call_tool(
+        let err = assert_done_err(call_tool(
             "onshape_api_search",
             Some(&args),
             &auth,
@@ -1926,7 +2034,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
 
         let content = &call_result.content[0];
         let text = content.raw.as_text().expect("should be text content");
@@ -1945,7 +2053,7 @@ mod tests {
             Value::String("nonexistent".to_string()),
         );
 
-        let result = assert_immediate_ok(call_tool(
+        let result = assert_done_ok(call_tool(
             "onshape_api_explain",
             Some(&args),
             &auth,
@@ -1977,7 +2085,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let request = assert_api_request(result);
+        let (request, _continuation) = assert_api_request(result);
         assert_eq!(request.path, "/documents/abc123");
     }
 
@@ -2011,7 +2119,7 @@ mod tests {
             Value::String("getDocument".to_string()),
         );
 
-        let err = assert_immediate_err(call_tool(
+        let err = assert_done_err(call_tool(
             "onshape_api_call",
             Some(&args),
             &auth,
@@ -2042,7 +2150,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let request = assert_api_request(result);
+        let (request, _continuation) = assert_api_request(result);
         assert_eq!(request.path, "/documents/search");
 
         let body = request
@@ -2125,7 +2233,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let request = assert_api_request(result);
+        let (request, _continuation) = assert_api_request(result);
         assert_eq!(request.method, HttpMethod::Get);
         assert_eq!(request.path, "/documents");
         assert!(
@@ -2187,53 +2295,6 @@ mod tests {
     }
 
     #[allow(clippy::type_complexity)]
-    fn assert_api_request_then(
-        result: ToolResult,
-    ) -> (
-        ApiRequest,
-        Box<dyn FnOnce(u16, &str) -> (ToolResult, Vec<SideEffect>) + Send>,
-    ) {
-        match result {
-            ToolResult::OnshapeApiRequestThen { request, then } => (request, then),
-            ToolResult::Immediate(Ok(_)) => {
-                panic!("expected ApiRequestThen, got Immediate Ok")
-            }
-            ToolResult::Immediate(Err(e)) => {
-                panic!("expected ApiRequestThen, got Immediate Err: {e:?}")
-            }
-            ToolResult::OnshapeApiRequest { .. } => {
-                panic!("expected ApiRequestThen, got ApiRequest")
-            }
-            ToolResult::OAuthLoginFlow { .. } => {
-                panic!("expected ApiRequestThen, got OAuthLoginFlow")
-            }
-            ToolResult::WriteFiles { .. } => {
-                panic!("expected ApiRequestThen, got WriteFiles")
-            }
-        }
-    }
-
-    fn assert_oauth_login_flow(result: ToolResult) -> LoginMode {
-        match result {
-            ToolResult::OAuthLoginFlow { mode } => mode,
-            ToolResult::Immediate(Ok(_)) => {
-                panic!("expected OAuthLoginFlow, got Immediate Ok")
-            }
-            ToolResult::Immediate(Err(e)) => {
-                panic!("expected OAuthLoginFlow, got Immediate Err: {e:?}")
-            }
-            ToolResult::OnshapeApiRequest { .. } => {
-                panic!("expected OAuthLoginFlow, got ApiRequest")
-            }
-            ToolResult::OnshapeApiRequestThen { .. } => {
-                panic!("expected OAuthLoginFlow, got ApiRequestThen")
-            }
-            ToolResult::WriteFiles { .. } => {
-                panic!("expected OAuthLoginFlow, got WriteFiles")
-            }
-        }
-    }
-
     #[test]
     fn auth_status_validate_false_returns_immediate() {
         let auth = basic_ready();
@@ -2247,7 +2308,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
     }
 
@@ -2261,7 +2322,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
     }
 
@@ -2278,12 +2339,12 @@ mod tests {
             &default_validation(),
             None,
         );
-        let err = assert_immediate_err(result);
+        let err = assert_done_err(result);
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
     }
 
     #[test]
-    fn auth_status_validate_true_returns_api_request_then() {
+    fn auth_status_validate_true_returns_api_request() {
         let auth = basic_ready();
         let spec = test_spec_with_session_info();
         let mut args = Map::new();
@@ -2296,8 +2357,12 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let (request, _then) = assert_api_request_then(result);
+        let (request, continuation) = assert_api_request(result);
         assert_eq!(request.path, "/users/sessioninfo");
+        assert!(matches!(
+            continuation,
+            Continuation::ProcessAuthValidation { .. }
+        ));
     }
 
     #[test]
@@ -2314,12 +2379,18 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let (_request, then) = assert_api_request_then(result);
+        let (_request, continuation) = assert_api_request(result);
 
-        let (tool_result, side_effects) = then(200, r#"{"id": "user123"}"#);
+        let (tool_effect, side_effects) = resume(
+            continuation,
+            IoResult::ApiResponse {
+                status: 200,
+                body: r#"{"id": "user123"}"#,
+            },
+        );
 
-        // Should return an Immediate result with status: valid.
-        let call_result = assert_immediate_ok(tool_result);
+        // Should return a Done result with status: valid.
+        let call_result = assert_done_ok(tool_effect);
         assert_eq!(call_result.is_error, Some(false));
         let content = &call_result.content[0];
         let text = content.raw.as_text().expect("should be text content");
@@ -2350,11 +2421,17 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let (_request, then) = assert_api_request_then(result);
+        let (_request, continuation) = assert_api_request(result);
 
-        let (tool_result, side_effects) = then(401, "Unauthorized");
+        let (tool_effect, side_effects) = resume(
+            continuation,
+            IoResult::ApiResponse {
+                status: 401,
+                body: "Unauthorized",
+            },
+        );
 
-        let call_result = assert_immediate_ok(tool_result);
+        let call_result = assert_done_ok(tool_effect);
         assert_eq!(call_result.is_error, Some(false));
         let content = &call_result.content[0];
         let text = content.raw.as_text().expect("should be text content");
@@ -2383,12 +2460,18 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let (_request, then) = assert_api_request_then(result);
+        let (_request, continuation) = assert_api_request(result);
 
-        let (tool_result, side_effects) = then(500, "Internal Server Error");
+        let (tool_effect, side_effects) = resume(
+            continuation,
+            IoResult::ApiResponse {
+                status: 500,
+                body: "Internal Server Error",
+            },
+        );
 
-        // Should still return an Immediate result, but no side effects.
-        let _call_result = assert_immediate_ok(tool_result);
+        // Should still return a Done result, but no side effects.
+        let _call_result = assert_done_ok(tool_effect);
         assert!(side_effects.is_empty());
     }
 
@@ -2401,7 +2484,7 @@ mod tests {
             message: Some("previously validated".into()),
         };
         let result = call_tool("onshape_auth_status", None, &auth, &validation, None);
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         let content = &call_result.content[0];
         let text = content.raw.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
@@ -2420,7 +2503,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let text = call_result.content[0]
@@ -2453,7 +2536,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let text = call_result.content[0]
@@ -2485,7 +2568,7 @@ mod tests {
             &default_validation(),
             None,
         );
-        let result = assert_immediate_ok(result);
+        let result = assert_done_ok(result);
         assert_eq!(result.is_error, Some(true));
         let text = result.content.first().expect("should have content");
         let text = match text.raw {
@@ -2639,26 +2722,6 @@ mod tests {
     // ====================================================================
     // Screenshot Tool Tests
     // ====================================================================
-
-    #[allow(clippy::type_complexity)]
-    fn assert_write_files(result: ToolResult) -> (Vec<FileWrite>, WriteFilesFormatter) {
-        match result {
-            ToolResult::WriteFiles { files, format } => (files, format),
-            ToolResult::Immediate(Ok(_)) => panic!("expected WriteFiles, got Immediate Ok"),
-            ToolResult::Immediate(Err(e)) => {
-                panic!("expected WriteFiles, got Immediate Err: {e:?}")
-            }
-            ToolResult::OnshapeApiRequest { .. } => {
-                panic!("expected WriteFiles, got ApiRequest")
-            }
-            ToolResult::OnshapeApiRequestThen { .. } => {
-                panic!("expected WriteFiles, got ApiRequestThen")
-            }
-            ToolResult::OAuthLoginFlow { .. } => {
-                panic!("expected WriteFiles, got OAuthLoginFlow")
-            }
-        }
-    }
 
     // --- View matrix computation tests ---
 
@@ -3023,7 +3086,7 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_builds_api_request_then() {
+    fn screenshot_builds_api_request() {
         let auth = not_configured();
         let spec = screenshot_spec();
         let args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
@@ -3035,8 +3098,12 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let (request, _then) = assert_api_request_then(result);
+        let (request, continuation) = assert_api_request(result);
         assert!(request.path.contains("/shadedviews"));
+        assert!(matches!(
+            continuation,
+            Continuation::ProcessScreenshotResponse { .. }
+        ));
 
         // Should have pixelSize=0.
         let pixel_size = request.query_params.iter().find(|(k, _)| k == "pixelSize");
@@ -3052,7 +3119,7 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_callback_api_error_returns_immediate() {
+    fn screenshot_callback_api_error_returns_done() {
         let auth = not_configured();
         let spec = screenshot_spec();
         let args = screenshot_args(r#"{"type": "preset", "name": "front"}"#);
@@ -3064,10 +3131,16 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let (_request, then) = assert_api_request_then(result);
-        let (tool_result, side_effects) = then(500, "Internal Server Error");
+        let (_request, continuation) = assert_api_request(result);
+        let (tool_effect, side_effects) = resume(
+            continuation,
+            IoResult::ApiResponse {
+                status: 500,
+                body: "Internal Server Error",
+            },
+        );
         assert!(side_effects.is_empty());
-        let call_result = assert_immediate_ok(tool_result);
+        let call_result = assert_done_ok(tool_effect);
         assert_eq!(call_result.is_error, Some(true));
     }
 
@@ -3086,17 +3159,23 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let (_request, then) = assert_api_request_then(result);
+        let (_request, continuation) = assert_api_request(result);
 
         // Simulate a successful API response with a base64-encoded PNG.
         let fake_png = b"fake png data";
         let encoded = engine.encode(fake_png);
         let body = serde_json::json!({ "images": [encoded] }).to_string();
 
-        let (tool_result, side_effects) = then(200, &body);
+        let (tool_effect, side_effects) = resume(
+            continuation,
+            IoResult::ApiResponse {
+                status: 200,
+                body: &body,
+            },
+        );
         assert!(side_effects.is_empty());
 
-        let (files, _format) = assert_write_files(tool_result);
+        let (files, _continuation) = assert_write_files(tool_effect);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].data, fake_png);
         assert_eq!(
@@ -3173,7 +3252,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let (request, _then) = assert_api_request_then(result);
+        let (request, _continuation) = assert_api_request(result);
 
         let find_param = |name: &str| -> Option<String> {
             request
@@ -3208,11 +3287,17 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let (_request, then) = assert_api_request_then(result);
+        let (_request, continuation) = assert_api_request(result);
 
         let body = serde_json::json!({ "images": [engine.encode(b"data")] }).to_string();
-        let (tool_result, _) = then(200, &body);
-        let (files, _format) = assert_write_files(tool_result);
+        let (tool_effect, _) = resume(
+            continuation,
+            IoResult::ApiResponse {
+                status: 200,
+                body: &body,
+            },
+        );
+        let (files, _continuation) = assert_write_files(tool_effect);
         assert_eq!(
             files[0].path,
             std::path::PathBuf::from("/home/user/my-part.png")
@@ -3333,7 +3418,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -3363,7 +3448,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
@@ -3399,7 +3484,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         );
-        let call_result = assert_immediate_ok(result);
+        let call_result = assert_done_ok(result);
         assert_eq!(
             call_result.is_error,
             Some(true),
@@ -3416,7 +3501,7 @@ mod tests {
             Value::String("BTMFeature-134".to_string()),
         );
 
-        let err = assert_immediate_err(call_tool(
+        let err = assert_done_err(call_tool(
             "onshape_api_schema",
             Some(&args),
             &auth,

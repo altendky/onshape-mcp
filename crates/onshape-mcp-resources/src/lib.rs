@@ -57,7 +57,7 @@ pub use generated::RESOURCES;
 
 /// Result of dispatching a resource operation.
 ///
-/// Mirrors the [`ToolResult`](../onshape_mcp_core/tools/enum.ToolResult.html)
+/// Mirrors the [`ToolEffect`](../onshape_mcp_core/tools/enum.ToolEffect.html)
 /// pattern. Currently all resources are static, so only `Immediate` is used.
 /// The enum exists to establish a common effects-as-data pattern that can be
 /// extended if resources ever need I/O.
