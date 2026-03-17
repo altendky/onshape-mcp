@@ -51,10 +51,12 @@
     // After bumping a mise tool version, re-lock just that tool so mise.lock
     // stays in sync with mise.toml (requires mise binary mounted into the
     // Renovate container — see .github/workflows/renovate.yml).
+    // --yes is required because mise doesn't trust the config inside the
+    // Renovate Docker container (no MISE_TRUSTED_CONFIG_PATHS set there).
     {
       "matchManagers": ["mise"],
       "postUpgradeTasks": {
-        "commands": ["mise lock {{{depName}}}"],
+        "commands": ["mise lock --yes -- {{{depName}}}"],
         "fileFilters": ["mise.lock"],
         "executionMode": "update"
       }
