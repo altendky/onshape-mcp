@@ -36,4 +36,4 @@ jobs:
           docker-volumes: /tmp:/tmp;${{ steps.mise-path.outputs.bin }}:/usr/local/bin/mise
         env:
           RENOVATE_REPOSITORIES: '["${{ github.repository }}"]'
-          RENOVATE_ALLOWED_COMMANDS: '["^mise lock "]'
+          RENOVATE_ALLOWED_COMMANDS: '["^mise lock --yes "]'
