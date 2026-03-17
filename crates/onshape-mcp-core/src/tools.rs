@@ -1400,10 +1400,13 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
         );
     }
 
-    // Validate file reference paths before building the request.
+    // Validate file reference paths and field names before building the request.
     for file_ref in &input.file_refs {
         if let Err(msg) = validate_file_path(&file_ref.path) {
             return tool_input_error(format!("invalid file_ref path: {msg}"));
+        }
+        if file_ref.field.trim().is_empty() {
+            return tool_input_error("invalid file_ref field: field must not be empty");
         }
     }
 
