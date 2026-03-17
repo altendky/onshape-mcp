@@ -26,6 +26,7 @@ use oauth2::{
 use rand::RngExt;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
 
 use onshape_client_core::oauth::onshape_oauth_client;
@@ -1089,7 +1090,12 @@ async fn handle_auth_code_grant(
     let Some(registered) = clients.get(&issued_code.client_id) else {
         return Err(token_error("invalid_client", "unknown client_id"));
     };
-    if provided_secret != &registered.client_secret {
+    // Use constant-time comparison to avoid timing side-channel leaks.
+    if provided_secret
+        .as_bytes()
+        .ct_ne(registered.client_secret.as_bytes())
+        .into()
+    {
         return Err(token_error("invalid_client", "invalid client_secret"));
     }
     drop(clients);
@@ -1176,7 +1182,12 @@ async fn handle_refresh_token_grant(
     let Some(registered) = clients.get(client_id.as_str()) else {
         return Err(token_error("invalid_client", "unknown client_id"));
     };
-    if provided_secret != &registered.client_secret {
+    // Use constant-time comparison to avoid timing side-channel leaks.
+    if provided_secret
+        .as_bytes()
+        .ct_ne(registered.client_secret.as_bytes())
+        .into()
+    {
         return Err(token_error("invalid_client", "invalid client_secret"));
     }
     drop(clients);

@@ -29,6 +29,7 @@ rmcp = { workspace = true, features = ["server", "transport-io", "transport-stre
 base64.workspace = true
 secrecy.workspace = true
 sha2.workspace = true
+subtle.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
