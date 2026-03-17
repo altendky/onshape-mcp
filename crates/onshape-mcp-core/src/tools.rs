@@ -519,6 +519,15 @@ fn inject_into_multipart_field(
         ));
     };
 
+    // Strip any existing entries for this field so file_ref wins
+    // (matches JSON path semantics where Map::insert replaces).
+    multipart
+        .text_fields
+        .retain(|(name, _)| name != &file_ref.field);
+    multipart
+        .binary_fields
+        .retain(|f| f.field_name != file_ref.field);
+
     match file_ref.encoding {
         FileEncoding::RawBytes => {
             multipart.binary_fields.push(BinaryField {
