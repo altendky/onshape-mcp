@@ -27,6 +27,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use onshape_client_core::request::{BinaryField, RequestBody};
+
 use crate::config::ResolvedAuth;
 use crate::openapi::{ApiRequest, OpenApiSpec, SearchFilters};
 use crate::{AuthStatusResult, ValidationState};
@@ -67,6 +69,37 @@ pub enum FileWriteResult {
         path: PathBuf,
     },
     /// The file write failed.
+    Error {
+        /// The path that was attempted.
+        path: PathBuf,
+        /// Human-readable error message.
+        message: String,
+    },
+}
+
+// ============================================================================
+// File Read Effect Types
+// ============================================================================
+
+/// A file to be read from disk by the I/O layer.
+///
+/// This is a pure data description of the read — no I/O is performed here.
+#[derive(Debug)]
+pub struct FileRead {
+    /// The file path to read.
+    pub path: PathBuf,
+}
+
+/// The outcome of a single file read attempt, reported by the I/O layer.
+pub enum FileReadResult {
+    /// The file was read successfully.
+    Success {
+        /// The path that was read.
+        path: PathBuf,
+        /// The raw file contents.
+        data: Vec<u8>,
+    },
+    /// The file read failed.
     Error {
         /// The path that was attempted.
         path: PathBuf,
@@ -142,6 +175,17 @@ pub enum ToolEffect {
         /// What to do with the write results.
         continuation: Continuation,
     },
+    /// Tool needs files read from disk.
+    ///
+    /// The I/O layer reads each [`FileRead`] and reports outcomes via
+    /// [`FileReadResult`]. Then it calls [`resume()`] with the continuation
+    /// and an [`IoResult::FileReadResults`] to get the next effect.
+    ReadFiles {
+        /// Files to read.
+        reads: Vec<FileRead>,
+        /// What to do with the read results.
+        continuation: Continuation,
+    },
 }
 
 /// Plain-data continuation describing how to process an I/O result.
@@ -183,6 +227,18 @@ pub enum Continuation {
         /// The view matrix string used in the API request.
         view_matrix: String,
     },
+    /// After file reads: inject file content into an already-built API request.
+    ///
+    /// Used by `onshape_api_call` when `file_refs` are present. The request
+    /// was built by [`OpenApiSpec::build_request()`] with file-ref fields
+    /// omitted from the body. After reading files, [`resume()`] injects
+    /// the content into the request body and returns an [`ToolEffect::ApiRequest`].
+    InjectFilesIntoRequest {
+        /// The pre-built API request (file-ref fields absent from the body).
+        request: ApiRequest,
+        /// File references describing which fields to populate.
+        file_refs: Vec<FileReference>,
+    },
 }
 
 /// What the I/O layer feeds back to [`resume()`] after executing an effect.
@@ -196,6 +252,8 @@ pub enum IoResult<'a> {
     },
     /// Results of file write operations.
     FileWriteResults(&'a [FileWriteResult]),
+    /// Results of file read operations.
+    FileReadResults(&'a [FileReadResult]),
 }
 
 /// Create a [`ToolEffect`] for an expected user-input error.
@@ -208,6 +266,28 @@ fn tool_input_error(message: impl Into<String>) -> ToolEffect {
     ToolEffect::Done(Ok(CallToolResult::error(vec![Content::text(
         message.into(),
     )])))
+}
+
+/// Validate a file path for use in file I/O effects.
+///
+/// Returns `Ok(PathBuf)` if the path is valid. Returns `Err(message)` if:
+/// - The path is empty or whitespace-only
+/// - The path has no file name component
+/// - The path contains `..` segments (directory traversal)
+fn validate_file_path(path: &str) -> Result<PathBuf, String> {
+    let path_buf = PathBuf::from(path);
+    if path.trim().is_empty() || path_buf.file_name().is_none() {
+        return Err(format!("file path must include a file name: {path:?}"));
+    }
+    if path_buf
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "file path must not contain '..' segments: {path:?}"
+        ));
+    }
+    Ok(path_buf)
 }
 
 /// Convert a raw HTTP response from the Onshape API into a [`CallToolResult`].
@@ -298,6 +378,12 @@ pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, 
             )
         }
 
+        // --- InjectFilesIntoRequest ---
+        (
+            Continuation::InjectFilesIntoRequest { request, file_refs },
+            IoResult::FileReadResults(results),
+        ) => (resume_inject_files(request, &file_refs, results), vec![]),
+
         // --- Mismatched continuation/result ---
         (continuation, result) => {
             unreachable!(
@@ -306,10 +392,166 @@ pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, 
                 match result {
                     IoResult::ApiResponse { .. } => "ApiResponse",
                     IoResult::FileWriteResults(_) => "FileWriteResults",
+                    IoResult::FileReadResults(_) => "FileReadResults",
                 }
             )
         }
     }
+}
+
+/// Inject file content into an API request body after file reads complete.
+///
+/// Extracted from [`resume()`] for readability.
+///
+/// Handles both JSON and multipart request bodies:
+///
+/// - **JSON**: injects content as string values at top-level keys.
+///   [`FileEncoding::TextUtf8`] produces a UTF-8 string, [`FileEncoding::Base64`]
+///   produces a base64-encoded string, and [`FileEncoding::RawBytes`] is an error.
+/// - **Multipart**: [`FileEncoding::RawBytes`] adds a binary form field,
+///   [`FileEncoding::TextUtf8`] adds a text form field, and
+///   [`FileEncoding::Base64`] adds a text form field with base64 content.
+#[allow(clippy::too_many_lines)]
+fn resume_inject_files(
+    mut request: ApiRequest,
+    file_refs: &[FileReference],
+    results: &[FileReadResult],
+) -> ToolEffect {
+    // Build a map from path → data for successful reads.
+    let mut reads: HashMap<PathBuf, &[u8]> = HashMap::new();
+    for result in results {
+        match result {
+            FileReadResult::Success { path, data } => {
+                reads.insert(path.clone(), data);
+            }
+            FileReadResult::Error { path, message } => {
+                return tool_input_error(format!(
+                    "failed to read file {}: {message}",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    let Some(body) = request.body.as_mut() else {
+        return tool_input_error("file_refs provided but the endpoint has no request body");
+    };
+
+    match body {
+        RequestBody::Json(value) => {
+            let Some(obj) = value.as_object_mut() else {
+                return tool_input_error("file_refs require the request body to be a JSON object");
+            };
+
+            for file_ref in file_refs {
+                if let Err(e) = inject_into_json_field(obj, file_ref, &reads) {
+                    return tool_input_error(e);
+                }
+            }
+        }
+
+        RequestBody::Multipart(multipart) => {
+            for file_ref in file_refs {
+                if let Err(e) = inject_into_multipart_field(multipart, file_ref, &reads) {
+                    return tool_input_error(e);
+                }
+            }
+        }
+    }
+
+    ToolEffect::ApiRequest {
+        request,
+        continuation: Continuation::FormatApiResponse,
+    }
+}
+
+/// Inject a single file reference into a JSON object field.
+///
+/// Returns `Err(message)` on encoding/lookup errors.
+fn inject_into_json_field(
+    obj: &mut Map<String, Value>,
+    file_ref: &FileReference,
+    reads: &HashMap<PathBuf, &[u8]>,
+) -> Result<(), String> {
+    let path = PathBuf::from(&file_ref.path);
+    let Some(data) = reads.get(&path) else {
+        return Err(format!(
+            "no read result for file reference: {}",
+            file_ref.path
+        ));
+    };
+
+    match file_ref.encoding {
+        FileEncoding::TextUtf8 => {
+            let text = std::str::from_utf8(data)
+                .map_err(|e| format!("file {} is not valid UTF-8: {e}", file_ref.path))?;
+            obj.insert(file_ref.field.clone(), Value::String(text.to_owned()));
+        }
+        FileEncoding::Base64 => {
+            let engine = base64::engine::general_purpose::STANDARD;
+            let encoded = engine.encode(data);
+            obj.insert(file_ref.field.clone(), Value::String(encoded));
+        }
+        FileEncoding::RawBytes => {
+            return Err(format!(
+                "file_ref for field {:?} uses raw_bytes encoding, which cannot \
+                 be used with JSON request bodies. Use text_utf8 or base64 instead.",
+                file_ref.field
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Inject a single file reference into a multipart form body.
+///
+/// Returns `Err(message)` on encoding/lookup errors.
+fn inject_into_multipart_field(
+    multipart: &mut onshape_client_core::request::MultipartBody,
+    file_ref: &FileReference,
+    reads: &HashMap<PathBuf, &[u8]>,
+) -> Result<(), String> {
+    let path = PathBuf::from(&file_ref.path);
+    let Some(data) = reads.get(&path) else {
+        return Err(format!(
+            "no read result for file reference: {}",
+            file_ref.path
+        ));
+    };
+
+    // Strip any existing entries for this field so file_ref wins
+    // (matches JSON path semantics where Map::insert replaces).
+    multipart
+        .text_fields
+        .retain(|(name, _)| name != &file_ref.field);
+    multipart
+        .binary_fields
+        .retain(|f| f.field_name != file_ref.field);
+
+    match file_ref.encoding {
+        FileEncoding::RawBytes => {
+            multipart.binary_fields.push(BinaryField {
+                field_name: file_ref.field.clone(),
+                data: data.to_vec(),
+                content_type: None,
+            });
+        }
+        FileEncoding::TextUtf8 => {
+            let text = std::str::from_utf8(data)
+                .map_err(|e| format!("file {} is not valid UTF-8: {e}", file_ref.path))?;
+            multipart
+                .text_fields
+                .push((file_ref.field.clone(), text.to_owned()));
+        }
+        FileEncoding::Base64 => {
+            let engine = base64::engine::general_purpose::STANDARD;
+            let encoded = engine.encode(data);
+            multipart
+                .text_fields
+                .push((file_ref.field.clone(), encoded));
+        }
+    }
+    Ok(())
 }
 
 /// Process auth validation API response.
@@ -574,6 +816,54 @@ pub struct ApiExplainInput {
     pub endpoint: String,
 }
 
+/// How file content should be encoded when injected into a request body.
+///
+/// The encoding determines how raw file bytes are converted for the target
+/// field. The appropriate encoding depends on the field type:
+///
+/// - **Text fields** (JSON string values, multipart text parts): use [`TextUtf8`](FileEncoding::TextUtf8)
+/// - **Binary fields** (multipart `format: binary` parts): use [`RawBytes`](FileEncoding::RawBytes)
+/// - **Embedded binary in JSON**: use [`Base64`](FileEncoding::Base64)
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileEncoding {
+    /// Read the file as UTF-8 text.
+    ///
+    /// For JSON bodies: injected as a JSON string value.
+    /// For multipart bodies: injected as a text form field.
+    ///
+    /// Returns an error if the file is not valid UTF-8.
+    TextUtf8,
+    /// Read the file as raw bytes and base64-encode.
+    ///
+    /// For JSON bodies: injected as a base64-encoded JSON string value.
+    /// For multipart bodies: injected as a text form field containing base64.
+    Base64,
+    /// Read the file as raw bytes (no encoding).
+    ///
+    /// For multipart bodies: injected as a binary form field (`BinaryField`).
+    /// For JSON bodies: returns an error (raw bytes cannot be embedded in JSON).
+    RawBytes,
+}
+
+/// A reference to a file whose content should be injected into a request body field.
+///
+/// Instead of the LLM reading a file into its context and inlining the content,
+/// the server reads the file at execution time. This keeps large file content
+/// out of the LLM's context window.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct FileReference {
+    /// File system path to read. Must not be empty or contain `..` segments.
+    pub path: String,
+    /// The body field name to populate with the file content.
+    ///
+    /// For JSON bodies, this is a top-level key in the JSON object.
+    /// For multipart bodies, this is the form field name.
+    pub field: String,
+    /// How to encode the file content for the target field.
+    pub encoding: FileEncoding,
+}
+
 /// Input schema for `onshape_api_call`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ApiCallInput {
@@ -589,6 +879,18 @@ pub struct ApiCallInput {
     /// Use `onshape_api_explain` to see the expected schema for each endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+    /// File references for fields whose content should be read from disk.
+    ///
+    /// Each reference specifies a file path, a body field name, and an encoding.
+    /// The server reads the files and injects their content into the request body
+    /// after building the request. Fields listed here should be omitted from `body`.
+    ///
+    /// Example: to upload a file via `uploadFileCreateElement`, pass the metadata
+    /// fields in `body` and use `file_refs` for the binary content:
+    /// `body: "{\"formatName\": \"PARASOLID\"}"`,
+    /// `file_refs: [{"path": "/tmp/part.x_t", "field": "file", "encoding": "raw_bytes"}]`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_refs: Vec<FileReference>,
 }
 
 /// Input schema for `onshape_auth_login`.
@@ -836,7 +1138,10 @@ fn tool_api_call_def() -> Tool {
         "onshape_api_call",
         "Invoke an Onshape API endpoint. Provide the operationId and structured parameters \
          (path_params, query_params, body). Path parameters are named fields (e.g., \
-         {\"did\": \"abc123\"}), not baked into a URL string. Returns the API response.",
+         {\"did\": \"abc123\"}), not baked into a URL string. For endpoints that accept \
+         file content (e.g., file uploads), use `file_refs` to reference local files \
+         instead of inlining content in the body — the server reads them directly. \
+         Returns the API response.",
         Arc::new(input_schema),
     )
     .annotate(ToolAnnotations::new().read_only(false).destructive(true))
@@ -1095,6 +1400,16 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
         );
     }
 
+    // Validate file reference paths and field names before building the request.
+    for file_ref in &input.file_refs {
+        if let Err(msg) = validate_file_path(&file_ref.path) {
+            return tool_input_error(format!("invalid file_ref path: {msg}"));
+        }
+        if file_ref.field.trim().is_empty() {
+            return tool_input_error("invalid file_ref field: field must not be empty");
+        }
+    }
+
     let request = match spec.build_request(
         &input.endpoint,
         &input.path_params,
@@ -1107,9 +1422,61 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
         }
     };
 
-    ToolEffect::ApiRequest {
-        request,
-        continuation: Continuation::FormatApiResponse,
+    // Validate request body shape before scheduling file reads.
+    // resume_inject_files() rejects these cases too (defense-in-depth),
+    // but checking early avoids unnecessary disk I/O.
+    if !input.file_refs.is_empty() {
+        match request.body.as_ref() {
+            Some(RequestBody::Json(value)) => {
+                if !value.is_object() {
+                    return tool_input_error(
+                        "file_refs require the request body to be a JSON object",
+                    );
+                }
+                if input
+                    .file_refs
+                    .iter()
+                    .any(|fr| matches!(fr.encoding, FileEncoding::RawBytes))
+                {
+                    return tool_input_error(
+                        "raw_bytes file_refs cannot be used with JSON request bodies; \
+                         use text_utf8 or base64 instead",
+                    );
+                }
+            }
+            Some(RequestBody::Multipart(_)) => {}
+            None => {
+                return tool_input_error("file_refs provided but the endpoint has no request body");
+            }
+        }
+    }
+
+    // If file references are present, emit a ReadFiles effect first.
+    // After reads complete, resume() will inject the content and forward
+    // the request as an ApiRequest effect.
+    if input.file_refs.is_empty() {
+        ToolEffect::ApiRequest {
+            request,
+            continuation: Continuation::FormatApiResponse,
+        }
+    } else {
+        let mut seen = std::collections::HashSet::new();
+        let reads: Vec<FileRead> = input
+            .file_refs
+            .iter()
+            .filter_map(|fr| {
+                let path = PathBuf::from(&fr.path);
+                seen.insert(path.clone()).then_some(FileRead { path })
+            })
+            .collect();
+
+        ToolEffect::ReadFiles {
+            reads,
+            continuation: Continuation::InjectFilesIntoRequest {
+                request,
+                file_refs: input.file_refs,
+            },
+        }
     }
 }
 
@@ -1449,16 +1816,10 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
     // --- Prepare data for the continuation ---
 
     let label = view_label(&input.view);
-    let output_path = PathBuf::from(&input.output_path);
-    if input.output_path.trim().is_empty() || output_path.file_name().is_none() {
-        return tool_input_error("output_path must include a file name");
-    }
-    if output_path
-        .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return tool_input_error("output_path must not contain '..' segments");
-    }
+    let output_path = match validate_file_path(&input.output_path) {
+        Ok(p) => p,
+        Err(msg) => return tool_input_error(msg),
+    };
 
     let request = match spec.build_request(
         "getPartStudioShadedViews",
@@ -3278,7 +3639,10 @@ mod tests {
             &default_validation(),
             Some(&spec),
         ));
-        assert!(msg.contains("output_path"));
+        assert!(
+            msg.contains("file path") && msg.contains("file name"),
+            "expected path validation error, got: {msg}"
+        );
     }
 
     #[test]
@@ -3725,5 +4089,586 @@ mod tests {
             None,
         ));
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+    }
+
+    // ====================================================================
+    // File path validation
+    // ====================================================================
+
+    #[test]
+    fn validate_file_path_accepts_absolute_path() {
+        let result = validate_file_path("/tmp/data.txt");
+        assert!(result.is_ok());
+        assert_eq!(
+            result.expect("should be valid"),
+            PathBuf::from("/tmp/data.txt")
+        );
+    }
+
+    #[test]
+    fn validate_file_path_accepts_relative_path() {
+        let result = validate_file_path("data/file.bin");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_file_path_rejects_empty() {
+        let result = validate_file_path("");
+        assert!(result.is_err());
+        assert!(result.expect_err("should be err").contains("file name"));
+    }
+
+    #[test]
+    fn validate_file_path_rejects_whitespace_only() {
+        let result = validate_file_path("   ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_file_path_rejects_traversal() {
+        let result = validate_file_path("/tmp/../etc/passwd");
+        assert!(result.is_err());
+        assert!(result.expect_err("should be err").contains(".."));
+    }
+
+    #[test]
+    fn validate_file_path_rejects_relative_traversal() {
+        let result = validate_file_path("../secret.txt");
+        assert!(result.is_err());
+    }
+
+    // ====================================================================
+    // File reference types
+    // ====================================================================
+
+    #[test]
+    fn file_encoding_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&FileEncoding::TextUtf8).expect("should serialize"),
+            r#""text_utf8""#
+        );
+        assert_eq!(
+            serde_json::to_string(&FileEncoding::Base64).expect("should serialize"),
+            r#""base64""#
+        );
+        assert_eq!(
+            serde_json::to_string(&FileEncoding::RawBytes).expect("should serialize"),
+            r#""raw_bytes""#
+        );
+    }
+
+    #[test]
+    fn file_encoding_deserializes_snake_case() {
+        let enc: FileEncoding = serde_json::from_str(r#""text_utf8""#).expect("should deserialize");
+        assert!(matches!(enc, FileEncoding::TextUtf8));
+    }
+
+    #[test]
+    fn file_reference_roundtrips() {
+        let fr = FileReference {
+            path: "/tmp/test.fs".to_string(),
+            field: "file".to_string(),
+            encoding: FileEncoding::RawBytes,
+        };
+        let json = serde_json::to_string(&fr).expect("should serialize");
+        let fr2: FileReference = serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(fr2.path, fr.path);
+        assert_eq!(fr2.field, fr.field);
+    }
+
+    #[test]
+    fn api_call_input_file_refs_default_empty() {
+        let input: ApiCallInput =
+            serde_json::from_str(r#"{"endpoint": "getDocuments"}"#).expect("should parse");
+        assert!(input.file_refs.is_empty());
+    }
+
+    #[test]
+    fn api_call_input_with_file_refs_parses() {
+        let input: ApiCallInput = serde_json::from_str(
+            r#"{
+                "endpoint": "uploadFileCreateElement",
+                "file_refs": [
+                    {"path": "/tmp/part.x_t", "field": "file", "encoding": "raw_bytes"}
+                ]
+            }"#,
+        )
+        .expect("should parse");
+        assert_eq!(input.file_refs.len(), 1);
+        assert_eq!(input.file_refs[0].path, "/tmp/part.x_t");
+        assert_eq!(input.file_refs[0].field, "file");
+        assert!(matches!(
+            input.file_refs[0].encoding,
+            FileEncoding::RawBytes
+        ));
+    }
+
+    // ====================================================================
+    // call_api_call with file_refs
+    // ====================================================================
+
+    fn assert_read_files(effect: ToolEffect) -> (Vec<FileRead>, Continuation) {
+        match effect {
+            ToolEffect::ReadFiles {
+                reads,
+                continuation,
+            } => (reads, continuation),
+            other => panic!("expected ReadFiles, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn api_call_without_file_refs_returns_api_request() {
+        let spec = test_spec();
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("getDocuments".to_string()),
+        );
+
+        let effect = call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        // Should be a direct ApiRequest, no ReadFiles indirection.
+        let (_request, continuation) = assert_api_request(effect);
+        assert!(matches!(continuation, Continuation::FormatApiResponse));
+    }
+
+    #[test]
+    fn api_call_with_file_refs_returns_read_files() {
+        let spec = test_spec();
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("searchDocuments".to_string()),
+        );
+        args.insert(
+            "body".to_string(),
+            Value::String(r#"{"limit": 10}"#.to_string()),
+        );
+        args.insert(
+            "file_refs".to_string(),
+            serde_json::from_str(
+                r#"[{"path": "/tmp/query.txt", "field": "rawQuery", "encoding": "text_utf8"}]"#,
+            )
+            .expect("should parse file_refs JSON"),
+        );
+
+        let effect = call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+
+        let (reads, continuation) = assert_read_files(effect);
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].path, PathBuf::from("/tmp/query.txt"));
+        assert!(matches!(
+            continuation,
+            Continuation::InjectFilesIntoRequest { .. }
+        ));
+    }
+
+    #[test]
+    fn api_call_file_ref_invalid_path_returns_error() {
+        let spec = test_spec();
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("searchDocuments".to_string()),
+        );
+        args.insert(
+            "file_refs".to_string(),
+            serde_json::from_str(
+                r#"[{"path": "../etc/passwd", "field": "rawQuery", "encoding": "text_utf8"}]"#,
+            )
+            .expect("should parse file_refs JSON"),
+        );
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains(".."), "expected traversal error, got: {msg}");
+    }
+
+    #[test]
+    fn api_call_file_ref_empty_path_returns_error() {
+        let spec = test_spec();
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("searchDocuments".to_string()),
+        );
+        args.insert(
+            "file_refs".to_string(),
+            serde_json::from_str(r#"[{"path": "", "field": "rawQuery", "encoding": "text_utf8"}]"#)
+                .expect("should parse file_refs JSON"),
+        );
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(
+            msg.contains("file path"),
+            "expected path validation error, got: {msg}"
+        );
+    }
+
+    // ====================================================================
+    // resume() with InjectFilesIntoRequest — JSON body
+    // ====================================================================
+
+    /// Build a minimal `ApiRequest` with a JSON body for injection tests.
+    fn json_request_for_injection(body: Value) -> ApiRequest {
+        use onshape_client_core::request::{HttpMethod, RequestBody};
+        ApiRequest {
+            method: HttpMethod::Post,
+            path: "/test".to_string(),
+            query_params: vec![],
+            body: Some(RequestBody::Json(body)),
+            content_type: Some("application/json".to_string()),
+        }
+    }
+
+    #[test]
+    fn resume_inject_text_utf8_into_json_body() {
+        let request = json_request_for_injection(serde_json::json!({"existing": "value"}));
+        let file_refs = vec![FileReference {
+            path: "/tmp/script.fs".to_string(),
+            field: "content".to_string(),
+            encoding: FileEncoding::TextUtf8,
+        }];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let results = vec![FileReadResult::Success {
+            path: PathBuf::from("/tmp/script.fs"),
+            data: b"function hello() {}".to_vec(),
+        }];
+
+        let (effect, side_effects) = resume(continuation, IoResult::FileReadResults(&results));
+        assert!(side_effects.is_empty());
+
+        let (req, cont) = assert_api_request(effect);
+        assert!(matches!(cont, Continuation::FormatApiResponse));
+
+        let body = req.body.expect("should have body");
+        let json = body.as_json().expect("should be JSON");
+        assert_eq!(json["existing"], "value");
+        assert_eq!(json["content"], "function hello() {}");
+    }
+
+    #[test]
+    fn resume_inject_base64_into_json_body() {
+        let request = json_request_for_injection(serde_json::json!({}));
+        let file_refs = vec![FileReference {
+            path: "/tmp/data.bin".to_string(),
+            field: "payload".to_string(),
+            encoding: FileEncoding::Base64,
+        }];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let raw_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let results = vec![FileReadResult::Success {
+            path: PathBuf::from("/tmp/data.bin"),
+            data: raw_data.clone(),
+        }];
+
+        let (effect, _) = resume(continuation, IoResult::FileReadResults(&results));
+        let (req, _) = assert_api_request(effect);
+
+        let json = req.body.expect("should have body");
+        let encoded = json.as_json().expect("should be JSON")["payload"]
+            .as_str()
+            .expect("should be string");
+        let engine = base64::engine::general_purpose::STANDARD;
+        let decoded = base64::Engine::decode(&engine, encoded).expect("should decode base64");
+        assert_eq!(decoded, raw_data);
+    }
+
+    #[test]
+    fn resume_inject_raw_bytes_into_json_body_returns_error() {
+        let request = json_request_for_injection(serde_json::json!({}));
+        let file_refs = vec![FileReference {
+            path: "/tmp/data.bin".to_string(),
+            field: "payload".to_string(),
+            encoding: FileEncoding::RawBytes,
+        }];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let results = vec![FileReadResult::Success {
+            path: PathBuf::from("/tmp/data.bin"),
+            data: vec![0xFF],
+        }];
+
+        let (effect, _) = resume(continuation, IoResult::FileReadResults(&results));
+        let msg = assert_tool_error(effect);
+        assert!(
+            msg.contains("raw_bytes") && msg.contains("JSON"),
+            "expected raw_bytes + JSON error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn resume_inject_invalid_utf8_returns_error() {
+        let request = json_request_for_injection(serde_json::json!({}));
+        let file_refs = vec![FileReference {
+            path: "/tmp/bad.txt".to_string(),
+            field: "content".to_string(),
+            encoding: FileEncoding::TextUtf8,
+        }];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let results = vec![FileReadResult::Success {
+            path: PathBuf::from("/tmp/bad.txt"),
+            data: vec![0xFF, 0xFE], // invalid UTF-8
+        }];
+
+        let (effect, _) = resume(continuation, IoResult::FileReadResults(&results));
+        let msg = assert_tool_error(effect);
+        assert!(msg.contains("UTF-8"), "expected UTF-8 error, got: {msg}");
+    }
+
+    // ====================================================================
+    // resume() with InjectFilesIntoRequest — multipart body
+    // ====================================================================
+
+    /// Build a minimal `ApiRequest` with a multipart body for injection tests.
+    fn multipart_request_for_injection(text_fields: Vec<(String, String)>) -> ApiRequest {
+        use onshape_client_core::request::{HttpMethod, MultipartBody, RequestBody};
+        ApiRequest {
+            method: HttpMethod::Post,
+            path: "/upload".to_string(),
+            query_params: vec![],
+            body: Some(RequestBody::Multipart(MultipartBody {
+                text_fields,
+                binary_fields: vec![],
+            })),
+            content_type: Some("multipart/form-data".to_string()),
+        }
+    }
+
+    #[test]
+    fn resume_inject_raw_bytes_into_multipart_body() {
+        let request = multipart_request_for_injection(vec![(
+            "formatName".to_string(),
+            "PARASOLID".to_string(),
+        )]);
+        let file_refs = vec![FileReference {
+            path: "/tmp/part.x_t".to_string(),
+            field: "file".to_string(),
+            encoding: FileEncoding::RawBytes,
+        }];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let file_data = b"binary-file-content".to_vec();
+        let results = vec![FileReadResult::Success {
+            path: PathBuf::from("/tmp/part.x_t"),
+            data: file_data.clone(),
+        }];
+
+        let (effect, _) = resume(continuation, IoResult::FileReadResults(&results));
+        let (req, _) = assert_api_request(effect);
+
+        match req.body.expect("should have body") {
+            RequestBody::Multipart(m) => {
+                assert_eq!(m.binary_fields.len(), 1);
+                assert_eq!(m.binary_fields[0].field_name, "file");
+                assert_eq!(m.binary_fields[0].data, file_data);
+                // Existing text fields preserved.
+                assert!(
+                    m.text_fields
+                        .iter()
+                        .any(|(k, v)| k == "formatName" && v == "PARASOLID")
+                );
+            }
+            RequestBody::Json(j) => panic!("expected Multipart, got Json({j:?})"),
+        }
+    }
+
+    #[test]
+    fn resume_inject_text_utf8_into_multipart_body() {
+        let request = multipart_request_for_injection(vec![]);
+        let file_refs = vec![FileReference {
+            path: "/tmp/script.fs".to_string(),
+            field: "contents".to_string(),
+            encoding: FileEncoding::TextUtf8,
+        }];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let results = vec![FileReadResult::Success {
+            path: PathBuf::from("/tmp/script.fs"),
+            data: b"FeatureScript 2244;".to_vec(),
+        }];
+
+        let (effect, _) = resume(continuation, IoResult::FileReadResults(&results));
+        let (req, _) = assert_api_request(effect);
+
+        match req.body.expect("should have body") {
+            RequestBody::Multipart(m) => {
+                assert!(
+                    m.text_fields
+                        .iter()
+                        .any(|(k, v)| k == "contents" && v == "FeatureScript 2244;"),
+                    "text field not found: {:?}",
+                    m.text_fields
+                );
+            }
+            RequestBody::Json(j) => panic!("expected Multipart, got Json({j:?})"),
+        }
+    }
+
+    #[test]
+    fn resume_inject_base64_into_multipart_body() {
+        let request = multipart_request_for_injection(vec![]);
+        let file_refs = vec![FileReference {
+            path: "/tmp/data.bin".to_string(),
+            field: "encoded_data".to_string(),
+            encoding: FileEncoding::Base64,
+        }];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let raw_data = vec![0x01, 0x02, 0x03];
+        let results = vec![FileReadResult::Success {
+            path: PathBuf::from("/tmp/data.bin"),
+            data: raw_data.clone(),
+        }];
+
+        let (effect, _) = resume(continuation, IoResult::FileReadResults(&results));
+        let (req, _) = assert_api_request(effect);
+
+        match req.body.expect("should have body") {
+            RequestBody::Multipart(m) => {
+                let engine = base64::engine::general_purpose::STANDARD;
+                let expected = base64::Engine::encode(&engine, &raw_data);
+                assert!(
+                    m.text_fields
+                        .iter()
+                        .any(|(k, v)| k == "encoded_data" && v == &expected)
+                );
+            }
+            RequestBody::Json(j) => panic!("expected Multipart, got Json({j:?})"),
+        }
+    }
+
+    // ====================================================================
+    // resume() with InjectFilesIntoRequest — error cases
+    // ====================================================================
+
+    #[test]
+    fn resume_inject_file_read_error_returns_tool_error() {
+        let request = json_request_for_injection(serde_json::json!({}));
+        let file_refs = vec![FileReference {
+            path: "/tmp/missing.txt".to_string(),
+            field: "content".to_string(),
+            encoding: FileEncoding::TextUtf8,
+        }];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let results = vec![FileReadResult::Error {
+            path: PathBuf::from("/tmp/missing.txt"),
+            message: "No such file or directory".to_string(),
+        }];
+
+        let (effect, _) = resume(continuation, IoResult::FileReadResults(&results));
+        let msg = assert_tool_error(effect);
+        assert!(
+            msg.contains("missing.txt") && msg.contains("No such file"),
+            "expected read error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn resume_inject_no_body_returns_error() {
+        use onshape_client_core::request::HttpMethod;
+        let request = ApiRequest {
+            method: HttpMethod::Get,
+            path: "/test".to_string(),
+            query_params: vec![],
+            body: None,
+            content_type: None,
+        };
+        let file_refs = vec![FileReference {
+            path: "/tmp/data.txt".to_string(),
+            field: "content".to_string(),
+            encoding: FileEncoding::TextUtf8,
+        }];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let results = vec![FileReadResult::Success {
+            path: PathBuf::from("/tmp/data.txt"),
+            data: b"hello".to_vec(),
+        }];
+
+        let (effect, _) = resume(continuation, IoResult::FileReadResults(&results));
+        let msg = assert_tool_error(effect);
+        assert!(
+            msg.contains("no request body"),
+            "expected no-body error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn resume_inject_multiple_files_into_json_body() {
+        let request = json_request_for_injection(serde_json::json!({"base": true}));
+        let file_refs = vec![
+            FileReference {
+                path: "/tmp/a.txt".to_string(),
+                field: "field_a".to_string(),
+                encoding: FileEncoding::TextUtf8,
+            },
+            FileReference {
+                path: "/tmp/b.bin".to_string(),
+                field: "field_b".to_string(),
+                encoding: FileEncoding::Base64,
+            },
+        ];
+        let continuation = Continuation::InjectFilesIntoRequest { request, file_refs };
+
+        let results = vec![
+            FileReadResult::Success {
+                path: PathBuf::from("/tmp/a.txt"),
+                data: b"alpha".to_vec(),
+            },
+            FileReadResult::Success {
+                path: PathBuf::from("/tmp/b.bin"),
+                data: vec![0xCA, 0xFE],
+            },
+        ];
+
+        let (effect, _) = resume(continuation, IoResult::FileReadResults(&results));
+        let (req, _) = assert_api_request(effect);
+        let json = req
+            .body
+            .expect("should have body")
+            .as_json()
+            .expect("should be JSON")
+            .clone();
+
+        assert_eq!(json["base"], true);
+        assert_eq!(json["field_a"], "alpha");
+        // field_b should be base64-encoded
+        let engine = base64::engine::general_purpose::STANDARD;
+        let decoded =
+            base64::Engine::decode(&engine, json["field_b"].as_str().expect("should be string"))
+                .expect("should decode base64");
+        assert_eq!(decoded, vec![0xCA, 0xFE]);
     }
 }
