@@ -1427,10 +1427,24 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
     // but checking early avoids unnecessary disk I/O.
     if !input.file_refs.is_empty() {
         match request.body.as_ref() {
-            Some(RequestBody::Json(value)) if !value.is_object() => {
-                return tool_input_error("file_refs require the request body to be a JSON object");
+            Some(RequestBody::Json(value)) => {
+                if !value.is_object() {
+                    return tool_input_error(
+                        "file_refs require the request body to be a JSON object",
+                    );
+                }
+                if input
+                    .file_refs
+                    .iter()
+                    .any(|fr| matches!(fr.encoding, FileEncoding::RawBytes))
+                {
+                    return tool_input_error(
+                        "raw_bytes file_refs cannot be used with JSON request bodies; \
+                         use text_utf8 or base64 instead",
+                    );
+                }
             }
-            Some(RequestBody::Json(_) | RequestBody::Multipart(_)) => {}
+            Some(RequestBody::Multipart(_)) => {}
             None => {
                 return tool_input_error("file_refs provided but the endpoint has no request body");
             }
