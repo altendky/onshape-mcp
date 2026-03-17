@@ -395,6 +395,7 @@ impl OnshapeMcpServer {
             &self.validation,
             Some(&self.login_state),
             true, // stdio: file writes allowed
+            true, // stdio: file reads allowed
         )
         .await
     }
@@ -457,22 +458,23 @@ impl OnshapeMcpServer {
             ApiState::Basic(client)
         };
 
-        dispatch_tool_effect(result, &mut api_state, &self.validation, None, false).await
+        dispatch_tool_effect(result, &mut api_state, &self.validation, None, false, false).await
     }
 }
 
 /// Shared dispatch loop for tool effects.
 ///
-/// Handles `Done`, `ApiRequest`, `OAuthLoginFlow`, and `WriteFiles` variants.
-/// Used by both stdio and HTTP modes.
+/// Handles `Done`, `ApiRequest`, `OAuthLoginFlow`, `WriteFiles`, and `ReadFiles`
+/// variants. Used by both stdio and HTTP modes.
 ///
-/// After executing an `ApiRequest` or `WriteFiles` effect, calls
+/// After executing an `ApiRequest`, `WriteFiles`, or `ReadFiles` effect, calls
 /// [`tools::resume()`] with the continuation and the I/O result to get the
 /// next effect, then loops.
 ///
-/// `allow_file_writes` controls whether `WriteFiles` effects are executed.
-/// The stdio transport passes `true` (local, single-user process); the HTTP
-/// transport passes `false` to prevent network-facing file-system access.
+/// `allow_file_writes` and `allow_file_reads` control whether file I/O effects
+/// are executed. The stdio transport passes `true` for both (local, single-user
+/// process); the HTTP transport passes `false` to prevent network-facing
+/// file-system access.
 #[allow(clippy::significant_drop_tightening)]
 async fn dispatch_tool_effect(
     initial_effect: ToolEffect,
@@ -480,6 +482,7 @@ async fn dispatch_tool_effect(
     validation: &tokio::sync::Mutex<ValidationState>,
     login_state: Option<&tokio::sync::Mutex<login::LoginState>>,
     allow_file_writes: bool,
+    allow_file_reads: bool,
 ) -> Result<CallToolResult, McpError> {
     let mut current = initial_effect;
     loop {
@@ -555,6 +558,28 @@ async fn dispatch_tool_effect(
 
                 current = next_effect;
             }
+            ToolEffect::ReadFiles {
+                reads,
+                continuation,
+            } => {
+                if !allow_file_reads {
+                    return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
+                        "File read operations are not supported over the HTTP transport. \
+                         File references in onshape_api_call require the stdio transport \
+                         (local process).",
+                    )]));
+                }
+                let results = read_files(&reads).await;
+
+                let (next_effect, side_effects) =
+                    tools::resume(continuation, IoResult::FileReadResults(&results));
+
+                for effect in side_effects {
+                    apply_side_effect(validation, effect).await;
+                }
+
+                current = next_effect;
+            }
         }
     }
 }
@@ -591,6 +616,34 @@ async fn write_files(files: &[tools::FileWrite]) -> Vec<tools::FileWriteResult> 
                 results.push(tools::FileWriteResult::Error {
                     path: file.path.clone(),
                     message: format!("failed to write file: {e}"),
+                });
+            }
+        }
+    }
+    results
+}
+
+// ============================================================================
+// File Read Execution
+// ============================================================================
+
+/// Read files from disk as requested by [`ToolEffect::ReadFiles`].
+///
+/// Returns one [`tools::FileReadResult`] per input file.
+async fn read_files(reads: &[tools::FileRead]) -> Vec<tools::FileReadResult> {
+    let mut results = Vec::with_capacity(reads.len());
+    for read in reads {
+        match tokio::fs::read(&read.path).await {
+            Ok(data) => {
+                results.push(tools::FileReadResult::Success {
+                    path: read.path.clone(),
+                    data,
+                });
+            }
+            Err(e) => {
+                results.push(tools::FileReadResult::Error {
+                    path: read.path.clone(),
+                    message: format!("failed to read file: {e}"),
                 });
             }
         }
@@ -1843,6 +1896,7 @@ mod tests {
             &validation,
             None,
             false, // disallow file writes
+            false, // disallow file reads
         )
         .await
         .expect("should not return protocol error");
@@ -1880,6 +1934,7 @@ mod tests {
             &validation,
             None,
             true, // allow file writes
+            true, // allow file reads
         )
         .await
         .expect("should not return protocol error");
