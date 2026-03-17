@@ -1419,6 +1419,21 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
         }
     };
 
+    // Validate request body shape before scheduling file reads.
+    // resume_inject_files() rejects these cases too (defense-in-depth),
+    // but checking early avoids unnecessary disk I/O.
+    if !input.file_refs.is_empty() {
+        match request.body.as_ref() {
+            Some(RequestBody::Json(value)) if !value.is_object() => {
+                return tool_input_error("file_refs require the request body to be a JSON object");
+            }
+            Some(RequestBody::Json(_) | RequestBody::Multipart(_)) => {}
+            None => {
+                return tool_input_error("file_refs provided but the endpoint has no request body");
+            }
+        }
+    }
+
     // If file references are present, emit a ReadFiles effect first.
     // After reads complete, resume() will inject the content and forward
     // the request as an ApiRequest effect.
