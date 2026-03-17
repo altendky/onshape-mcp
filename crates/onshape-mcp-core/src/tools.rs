@@ -875,6 +875,11 @@ pub struct ApiCallInput {
     /// Each reference specifies a file path, a body field name, and an encoding.
     /// The server reads the files and injects their content into the request body
     /// after building the request. Fields listed here should be omitted from `body`.
+    ///
+    /// Example: to upload a file via `uploadFileCreateElement`, pass the metadata
+    /// fields in `body` and use `file_refs` for the binary content:
+    /// `body: "{\"formatName\": \"PARASOLID\"}"`,
+    /// `file_refs: [{"path": "/tmp/part.x_t", "field": "file", "encoding": "raw_bytes"}]`
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub file_refs: Vec<FileReference>,
 }
@@ -1124,7 +1129,10 @@ fn tool_api_call_def() -> Tool {
         "onshape_api_call",
         "Invoke an Onshape API endpoint. Provide the operationId and structured parameters \
          (path_params, query_params, body). Path parameters are named fields (e.g., \
-         {\"did\": \"abc123\"}), not baked into a URL string. Returns the API response.",
+         {\"did\": \"abc123\"}), not baked into a URL string. For endpoints that accept \
+         file content (e.g., file uploads), use `file_refs` to reference local files \
+         instead of inlining content in the body — the server reads them directly. \
+         Returns the API response.",
         Arc::new(input_schema),
     )
     .annotate(ToolAnnotations::new().read_only(false).destructive(true))
