@@ -56,7 +56,7 @@
     {
       "matchManagers": ["mise"],
       "postUpgradeTasks": {
-        "commands": ["mise lock --yes {{{depName}}}"],
+        "commands": ["mise lock --yes -- {{{depName}}}"],
         "fileFilters": ["mise.lock"],
         "executionMode": "update"
       }
