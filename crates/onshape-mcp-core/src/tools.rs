@@ -1443,11 +1443,13 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
             continuation: Continuation::FormatApiResponse,
         }
     } else {
+        let mut seen = std::collections::HashSet::new();
         let reads: Vec<FileRead> = input
             .file_refs
             .iter()
-            .map(|fr| FileRead {
-                path: PathBuf::from(&fr.path),
+            .filter_map(|fr| {
+                let path = PathBuf::from(&fr.path);
+                seen.insert(path.clone()).then_some(FileRead { path })
             })
             .collect();
 
