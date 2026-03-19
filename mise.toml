@@ -5,6 +5,7 @@
 # simplicity over CI-only env vars. See #247.
 github_attestations = false
 http_timeout = "120s"
+locked = true
 
 [tools]
 node = "24"
