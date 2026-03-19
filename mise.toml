@@ -5,6 +5,7 @@
 # simplicity over CI-only env vars. See #247.
 github_attestations = false
 http_timeout = "120s"
+locked = true
 
 [tools]
 node = "24"
@@ -13,7 +14,7 @@ python = "3"
 # Non-core tools: use explicit backend prefix (aqua:/github:) for Renovate compatibility
 "aqua:taiki-e/cargo-llvm-cov" = "0.8.4"
 "aqua:EmbarkStudios/cargo-deny" = "0.19.0"
-"github:nextest-rs/nextest" = { version = "0.9.130", version_prefix = "cargo-nextest-" }
+"github:nextest-rs/nextest" = { version = "0.9.131", version_prefix = "cargo-nextest-" }
 # Provides cargo-binstall so the cargo backend can download pre-built binaries
 # instead of compiling from source.
 cargo-binstall = "latest"
