@@ -48,15 +48,19 @@
       "extractVersion": "^cargo-nextest-(?<version>.+)$"
     },
 
-    // After bumping a mise tool version, re-lock just that tool so mise.lock
-    // stays in sync with mise.toml (requires mise binary mounted into the
-    // Renovate container — see .github/workflows/renovate.yml).
-    // --yes is required because mise doesn't trust the config inside the
-    // Renovate Docker container (no MISE_TRUSTED_CONFIG_PATHS set there).
+    // After bumping a mise tool version, re-lock that tool for all platforms
+    // so mise.lock stays in sync. Uses direct commands instead of a mise task
+    // to avoid mise trying to install all tools from mise.toml (which fails
+    // for pipx:pre-commit since pipx isn't available in the Docker container).
+    // Requires mise binary mounted into the Renovate container — see
+    // .github/workflows/renovate.yml.
     {
       "matchManagers": ["mise"],
       "postUpgradeTasks": {
-        "commands": ["mise lock --yes -- {{{depName}}}"],
+        "commands": [
+          "mise install --yes node python",
+          "mise lock --yes --platform linux-x64,linux-x64-musl,linux-arm64,linux-arm64-musl,macos-x64,macos-arm64,windows-x64 -- {{{depName}}}"
+        ],
         "fileFilters": ["mise.lock"],
         "executionMode": "update"
       }
