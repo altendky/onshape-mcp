@@ -53,10 +53,15 @@
     // Renovate container — see .github/workflows/renovate.yml).
     // --yes is required because mise doesn't trust the config inside the
     // Renovate Docker container (no MISE_TRUSTED_CONFIG_PATHS set there).
+    // We install node and python first because mise lock needs them to query
+    // npm and PyPI registries for npm:* and pipx:* packages respectively.
     {
       "matchManagers": ["mise"],
       "postUpgradeTasks": {
-        "commands": ["mise lock --yes -- {{{depName}}}"],
+        "commands": [
+          "mise install --yes node python",
+          "mise lock --yes -- {{{depName}}}"
+        ],
         "fileFilters": ["mise.lock"],
         "executionMode": "update"
       }
