@@ -48,19 +48,15 @@
       "extractVersion": "^cargo-nextest-(?<version>.+)$"
     },
 
-    // After bumping a mise tool version, re-lock just that tool so mise.lock
-    // stays in sync with mise.toml (requires mise binary mounted into the
-    // Renovate container — see .github/workflows/renovate.yml).
-    // --yes is required because mise doesn't trust the config inside the
-    // Renovate Docker container (no MISE_TRUSTED_CONFIG_PATHS set there).
-    // We install node and python first because mise lock needs them to query
-    // npm and PyPI registries for npm:* and pipx:* packages respectively.
+    // After bumping a mise tool version, re-lock that tool for all platforms
+    // so mise.lock stays in sync. See mise.toml [tasks.lock-tool] for details.
+    // Requires mise binary mounted into the Renovate container — see
+    // .github/workflows/renovate.yml.
     {
       "matchManagers": ["mise"],
       "postUpgradeTasks": {
         "commands": [
-          "mise install --yes node python",
-          "mise lock --yes -- {{{depName}}}"
+          "mise run --yes lock-tool {{{depName}}}"
         ],
         "fileFilters": ["mise.lock"],
         "executionMode": "update"
