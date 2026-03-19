@@ -56,7 +56,7 @@
       "matchManagers": ["mise"],
       "postUpgradeTasks": {
         "commands": [
-          "mise run --yes lock-tool {{{depName}}}"
+          "mise run --yes --no-prepare lock-tool {{{depName}}}"
         ],
         "fileFilters": ["mise.lock"],
         "executionMode": "update"
