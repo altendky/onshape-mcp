@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/onshape-mcp.svg)](https://www.npmjs.com/package/onshape-mcp)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
 
-A Rust-based [MCP](https://modelcontextprotocol.io/) server that gives AI assistants access to the full [Onshape](https://www.onshape.com/) REST API. Instead of exposing dozens of individual tools (which would consume LLM context), it embeds the complete Onshape OpenAPI specification and provides three generic tools — **search**, **explain**, and **call** — so the AI discovers and invokes endpoints dynamically.
+A Rust-based [MCP](https://modelcontextprotocol.io/) server that gives AI assistants access to the full [Onshape](https://www.onshape.com/) REST API. Instead of hard-coding individual API endpoints as tools (which would consume LLM context), it embeds the complete Onshape OpenAPI specification and lets the AI discover and invoke endpoints dynamically. The server provides 11 tools covering API discovery, authentication, CAD inspection, and built-in knowledge resources.
 
 ## Status
 
@@ -137,9 +137,42 @@ OAuth provides scoped, revocable access and is the better choice for ongoing use
 
 See the [Authentication docs](docs/src/project/authentication.md) for full details on token storage, refresh behavior, and security.
 
-## How It Works
+## Tools
 
-Once configured, the AI assistant uses the three tools in a natural progression:
+### API Discovery
+
+| Tool | Description |
+| ---- | ----------- |
+| `onshape_api_search` | Find Onshape API endpoints by keyword, HTTP method, or tag |
+| `onshape_api_explain` | Get full parameter schemas and docs for a specific endpoint |
+| `onshape_api_call` | Invoke an endpoint with path/query/body params and file references |
+| `onshape_api_schema` | Look up Onshape API schema definitions by name |
+
+### Auth Management
+
+| Tool | Description |
+| ---- | ----------- |
+| `onshape_auth_status` | Check current auth state (valid, invalid, expired, not configured) |
+| `onshape_auth_login` | Start an OAuth 2.0 authorization flow via browser |
+
+### CAD Inspection
+
+| Tool | Description |
+| ---- | ----------- |
+| `onshape_screenshot` | Render a Part Studio view (preset or custom angles) and save as PNG |
+| `onshape_error_lookup` | Resolve FeatureScript error enum values to human-readable messages |
+
+### Knowledge & Onboarding
+
+| Tool | Description |
+| ---- | ----------- |
+| `onshape_mcp_get_started` | Essential guidance for working with this server |
+| `onshape_list_resources` | List available insight documents |
+| `onshape_read_resource` | Read a specific insight document by URI |
+
+### Typical Workflow
+
+The AI uses the API discovery tools in a natural progression — you just describe what you want in natural language:
 
 **1. Search** for relevant endpoints:
 
@@ -162,19 +195,23 @@ onshape_api_call({
 })
 ```
 
-The AI handles this workflow automatically — you describe what you want in natural language.
+## Resources
+
+The server ships with built-in insight documents covering Onshape CAD concepts — sketches, extrudes, revolves, sweeps, fillets, construction planes, shaded views, FeatureScript, and more. AI assistants can browse these via `onshape_list_resources` / `onshape_read_resource` to learn tested patterns and working examples without needing external documentation.
 
 ## Permission Model
 
-Three permission modes control which HTTP methods are allowed:
+> **Note:** Permission modes are planned but not yet enforced. Currently all HTTP methods that the server knows about are available. See the [implementation roadmap](docs/src/project/implementation.md) for status.
+
+Three permission modes will control which HTTP methods are allowed:
 
 | Mode | Allowed Methods | Use Case |
 | ---- | --------------- | -------- |
-| `read` (default) | GET | Safe exploration and export |
+| `read` | GET | Safe exploration and export |
 | `modify` | GET, POST, PUT, PATCH | Creating and editing |
 | `destroy` | All including DELETE | Full access |
 
-Configure via `mode.max`, `mode.initial`, and `mode.allow_escalation`. See [Configuration docs](docs/src/project/configuration.md) for details.
+These will be configurable via `mode.max`, `mode.initial`, and `mode.allow_escalation`. See [Configuration docs](docs/src/project/configuration.md) for details.
 
 ## Configuration
 
@@ -185,8 +222,7 @@ Settings are loaded with this precedence (highest wins): CLI flags > environment
 | Access Key | `ONSHAPE_MCP_AUTH__ACCESS_KEY` | — |
 | Secret Key | `ONSHAPE_MCP_AUTH__SECRET_KEY` | — |
 | Auth Method | `ONSHAPE_MCP_AUTH__METHOD` | `auto` |
-| Max Mode | `ONSHAPE_MCP_MAX_MODE` | `read` |
-| HTTP Timeout | `ONSHAPE_MCP_HTTP__TIMEOUT` | `30s` |
+| API Timeout | `ONSHAPE_MCP_API__TIMEOUT` | `30s` |
 
 See the [full settings reference](docs/src/project/configuration.md#all-settings-reference) for all options including config file format and locations.
 
