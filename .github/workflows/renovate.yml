@@ -24,7 +24,7 @@ jobs:
           app-id: ${{ vars.RENOVATE_APP_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
 
-      - uses: jdx/mise-action@c1ecc8f748cd28cdeabf76dab3cccde4ce692fe4 # v4
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
           install: false
 
