@@ -8,6 +8,7 @@ queue_rules:
       - "#approved-reviews-by >= 1"
     merge_method: merge
     checks_timeout: 90 min
+    max_checks_retries: 2
 
 merge_queue:
   max_parallel_checks: 1
