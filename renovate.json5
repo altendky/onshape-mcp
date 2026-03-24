@@ -54,12 +54,17 @@
     // for pipx:pre-commit since pipx isn't available in the Docker container).
     // Requires mise binary mounted into the Renovate container — see
     // .github/workflows/renovate.yml.
+    //
+    // MISE_LOCKED=0 is required because mise.toml has `locked = true`, which
+    // prevents `mise lock` from running. The `sh -c` wrapper is needed because
+    // Renovate doesn't execute commands through a shell that interprets
+    // `VAR=value command` syntax.
     {
       "matchManagers": ["mise"],
       "postUpgradeTasks": {
         "commands": [
-          "mise install --yes node python",
-          "mise lock --yes --platform linux-x64,linux-x64-musl,linux-arm64,linux-arm64-musl,macos-x64,macos-arm64,windows-x64 -- {{{depName}}}"
+          "sh -c 'MISE_LOCKED=0 mise install --yes node python'",
+          "sh -c 'MISE_LOCKED=0 mise lock --yes --platform linux-x64,linux-x64-musl,linux-arm64,linux-arm64-musl,macos-x64,macos-arm64,windows-x64 -- {{{depName}}}'"
         ],
         "fileFilters": ["mise.lock"],
         "executionMode": "update"
