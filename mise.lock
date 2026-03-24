@@ -33,36 +33,36 @@ checksum = "sha256:413f0e2ce780d0d14ba8e9339f9fb033419a8a971ec7714faec518e4a664b
 url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.0/cargo-deny-0.19.0-x86_64-pc-windows-msvc.tar.gz"
 
 [[tools."aqua:superfly/flyctl"]]
-version = "0.4.22"
+version = "0.4.27"
 backend = "aqua:superfly/flyctl"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-arm64"]
-checksum = "sha256:a04f7cb5d4df70aa812148fcf8affbbc7ffcc04b97f3ef8ac8e1cb0119888c76"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.22/flyctl_0.4.22_Linux_arm64.tar.gz"
+checksum = "sha256:a8ffe7d0a0411774e451a050fdcb032467bd0499c2206df4dde5f81ce1f20b16"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.27/flyctl_0.4.27_Linux_arm64.tar.gz"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-arm64-musl"]
-checksum = "sha256:a04f7cb5d4df70aa812148fcf8affbbc7ffcc04b97f3ef8ac8e1cb0119888c76"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.22/flyctl_0.4.22_Linux_arm64.tar.gz"
+checksum = "sha256:a8ffe7d0a0411774e451a050fdcb032467bd0499c2206df4dde5f81ce1f20b16"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.27/flyctl_0.4.27_Linux_arm64.tar.gz"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-x64"]
-checksum = "sha256:87c2543a85ee7614e60f65fde71cb4b65f931b5c427b0649c6156d509ef08b70"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.22/flyctl_0.4.22_Linux_x86_64.tar.gz"
+checksum = "sha256:15b165afd6c304feb08eaf08f82485c5b939515dc85007c4cfc59c93e6972bf8"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.27/flyctl_0.4.27_Linux_x86_64.tar.gz"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-x64-musl"]
-checksum = "sha256:87c2543a85ee7614e60f65fde71cb4b65f931b5c427b0649c6156d509ef08b70"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.22/flyctl_0.4.22_Linux_x86_64.tar.gz"
+checksum = "sha256:15b165afd6c304feb08eaf08f82485c5b939515dc85007c4cfc59c93e6972bf8"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.27/flyctl_0.4.27_Linux_x86_64.tar.gz"
 
 [tools."aqua:superfly/flyctl"."platforms.macos-arm64"]
-checksum = "sha256:f9988b34605d1d5ea399a666e085a4673a4f913c084a13231f6921000ed39e79"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.22/flyctl_0.4.22_macOS_arm64.tar.gz"
+checksum = "sha256:00affa16de80b0bab30c78877e9f4999272a84daa97fb819c6fc87ece0b898de"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.27/flyctl_0.4.27_macOS_arm64.tar.gz"
 
 [tools."aqua:superfly/flyctl"."platforms.macos-x64"]
-checksum = "sha256:5247d4fdd79daeaef59ac4bbe6f2b74a15de11147e35295f87b2d039a407b203"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.22/flyctl_0.4.22_macOS_x86_64.tar.gz"
+checksum = "sha256:a5a5a722c5645f5f6e7a1a5cdbc1691f65e28ca01b19d62834292e93feb7deed"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.27/flyctl_0.4.27_macOS_x86_64.tar.gz"
 
 [tools."aqua:superfly/flyctl"."platforms.windows-x64"]
-checksum = "sha256:942f3d38ad95196059ed82a7886a73b84bb5e7b66edd9e1f6dadc3cf6f69de5b"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.22/flyctl_0.4.22_Windows_x86_64.zip"
+checksum = "sha256:da5e62c7ba5b69f07eef47d1326b114a66aa02d8082bf5dd2738464011cd5039"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.27/flyctl_0.4.27_Windows_x86_64.zip"
 
 [[tools."aqua:taiki-e/cargo-llvm-cov"]]
 version = "0.8.4"
