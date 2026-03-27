@@ -1704,11 +1704,8 @@ pub async fn run_http(
 
     let cancellation_token = CancellationToken::new();
 
-    let mcp_config = StreamableHttpServerConfig {
-        stateful_mode: true,
-        cancellation_token: cancellation_token.clone(),
-        ..Default::default()
-    };
+    let mcp_config =
+        StreamableHttpServerConfig::default().with_cancellation_token(cancellation_token.clone());
 
     let factory_info = info.clone();
     let factory_config = Arc::clone(&config);
