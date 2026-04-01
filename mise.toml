@@ -24,7 +24,7 @@ cargo-binstall = "latest"
 # (macOS Intel). The lychee project dropped macOS Intel binaries after v0.15.1
 # (April 2024), so the aqua backend cannot cover all CI platforms.
 "cargo:lychee" = "0.23.0"
-"npm:wrangler" = "4.77.0"
+"npm:wrangler" = "4.79.0"
 "aqua:superfly/flyctl" = "0.4.27"
 
 [vars]
