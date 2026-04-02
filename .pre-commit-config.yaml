@@ -9,7 +9,7 @@ repos:
       - id: check-merge-conflict
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.44.0
+    rev: v1.45.0
     hooks:
       - id: typos
 
@@ -18,10 +18,8 @@ repos:
     hooks:
       - id: markdownlint-cli2
 
-  # TODO: switch back to release tag once the shebang fix is released
-  #       https://github.com/lycheeverse/lychee/pull/2002
   - repo: https://github.com/lycheeverse/lychee
-    rev: 7bf09ac8f919719d36dfc50be15cb26e553a816c
+    rev: lychee-v0.23.0
     hooks:
       - id: lychee
         args: ["--no-progress", "--config=.lychee.toml"]
@@ -33,7 +31,7 @@ repos:
       - id: validate-mergify-config
 
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.11
+    rev: v1.7.12
     hooks:
       - id: actionlint
         args: [-verbose]
