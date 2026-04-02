@@ -308,12 +308,12 @@ It is generated in the `github-release` job on every CI run (validating the gene
 | Secret | Used by | Purpose |
 | ------ | ------- | ------- |
 | `NPM_TOKEN` | npm publish (fallback) + cleanup | npm publish (fork PRs), npm unpublish (cleanup) |
-| `CARGO_REGISTRY_TOKEN` | `ci.yml` cargo-publish job | crates.io publish (not needed for `cargo package`) |
 | `GITHUB_TOKEN` | `ci.yml` github-release job | GitHub release (automatic, not a manual secret) |
 
 | Permission | Job | Purpose |
 | ---------- | --- | ------- |
 | `id-token: write` | `release-npm` | npm OIDC trusted publishing, provenance |
+| `id-token: write` | `cargo-publish` | crates.io OIDC trusted publishing |
 | `contents: write` | `github-release` | GitHub release creation |
 
 ### npm Authentication Strategy
@@ -345,7 +345,7 @@ Items requiring further discussion before or during implementation.
 
 - [x] Scope: ~~publish all crates vs just the binary~~ Resolved: publish all workspace crates. The binary crate depends on the library crates, so `cargo install onshape-mcp` requires them on crates.io. See [Crate Naming and Publish Order](#crate-naming-and-publish-order)
 - [x] Grouping: ~~investigate whether crates.io has grouping or organization abilities~~ Resolved: crates.io has no namespace, organization, or grouping mechanism. All crate names share a flat global namespace. Ownership can be shared via GitHub teams (`cargo owner --add github:org:team`), but each crate is managed independently. Grouping is by naming convention only (`onshape-mcp-*` prefix)
-- [x] Auth: ~~traditional token or OIDC~~ Resolved: use `CARGO_REGISTRY_TOKEN` for now. crates.io supports OIDC trusted publishing (fully replaces tokens, no secret to manage) but deferred to keep initial implementation simple
+- [x] Auth: ~~traditional token or OIDC~~ Resolved: OIDC trusted publishing via `rust-lang/crates-io-auth-action`. The workflow filename `ci.yml` is configured as the trusted publisher on crates.io for all workspace crates. No long-lived API tokens required. See [#289](https://github.com/altendky/onshape-mcp/issues/289)
 
 ### npm
 

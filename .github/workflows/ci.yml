@@ -125,6 +125,8 @@ jobs:
     name: Publish crates
     needs: [release-config, checks]
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -137,10 +139,15 @@ jobs:
       - name: Validate crate packaging
         run: cargo package --workspace
 
+      - name: Authenticate with crates.io
+        if: needs.release-config.outputs.publish == 'true'
+        id: crates-auth
+        uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
+
       - name: Publish all workspace crates
         if: needs.release-config.outputs.publish == 'true'
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
         run: .github/scripts/cargo-publish-workspace.sh
 
   github-release:
