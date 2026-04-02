@@ -308,12 +308,12 @@ It is generated in the `github-release` job on every CI run (validating the gene
 | Secret | Used by | Purpose |
 | ------ | ------- | ------- |
 | `NPM_TOKEN` | npm publish (fallback) + cleanup | npm publish (fork PRs), npm unpublish (cleanup) |
-| `CARGO_REGISTRY_TOKEN` | `ci.yml` cargo-publish job | crates.io publish (not needed for `cargo package`) |
 | `GITHUB_TOKEN` | `ci.yml` github-release job | GitHub release (automatic, not a manual secret) |
 
 | Permission | Job | Purpose |
 | ---------- | --- | ------- |
 | `id-token: write` | `release-npm` | npm OIDC trusted publishing, provenance |
+| `id-token: write` | `cargo-publish` | crates.io OIDC trusted publishing |
 | `contents: write` | `github-release` | GitHub release creation |
 
 ### npm Authentication Strategy
