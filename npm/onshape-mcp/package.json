@@ -1,6 +1,6 @@
 {
   "name": "onshape-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server for Onshape CAD integration",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -35,11 +35,11 @@
     "c8": "^11.0.0"
   },
   "optionalDependencies": {
-    "@onshape-mcp/linux-x64": "0.3.0",
-    "@onshape-mcp/linux-arm64": "0.3.0",
-    "@onshape-mcp/darwin-x64": "0.3.0",
-    "@onshape-mcp/darwin-arm64": "0.3.0",
-    "@onshape-mcp/win32-x64": "0.3.0"
+    "@onshape-mcp/linux-x64": "0.4.0",
+    "@onshape-mcp/linux-arm64": "0.4.0",
+    "@onshape-mcp/darwin-x64": "0.4.0",
+    "@onshape-mcp/darwin-arm64": "0.4.0",
+    "@onshape-mcp/win32-x64": "0.4.0"
   },
   "engines": {
     "node": ">=22"
