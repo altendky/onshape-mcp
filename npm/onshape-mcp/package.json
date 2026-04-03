@@ -34,13 +34,6 @@
   "devDependencies": {
     "c8": "^11.0.0"
   },
-  "optionalDependencies": {
-    "@onshape-mcp/linux-x64": "0.4.0",
-    "@onshape-mcp/linux-arm64": "0.4.0",
-    "@onshape-mcp/darwin-x64": "0.4.0",
-    "@onshape-mcp/darwin-arm64": "0.4.0",
-    "@onshape-mcp/win32-x64": "0.4.0"
-  },
   "engines": {
     "node": ">=22"
   }
