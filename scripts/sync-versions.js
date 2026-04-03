@@ -7,7 +7,7 @@
  * Propagates [workspace.package].version to:
  *   - [workspace.dependencies] internal crate version entries (root Cargo.toml)
  *   - Cargo.lock (via `cargo update --workspace`)
- *   - All npm package.json files and package-lock.json
+ *   - All npm package.json version fields and package-lock.json
  *
  * Usage:
  *   node scripts/sync-versions.js          # Update all version references
@@ -193,18 +193,6 @@ function updatePackageVersion(pkgPath, version) {
     changed = true;
   }
 
-  // Update optionalDependencies if present (main package)
-  if (pkg.optionalDependencies) {
-    for (const dep of Object.keys(pkg.optionalDependencies)) {
-      if (dep.startsWith("@onshape-mcp/")) {
-        if (pkg.optionalDependencies[dep] !== version) {
-          pkg.optionalDependencies[dep] = version;
-          changed = true;
-        }
-      }
-    }
-  }
-
   if (changed) {
     writePackageJson(pkgPath, pkg);
   }
@@ -218,14 +206,6 @@ function checkPackageVersion(pkgPath, version) {
 
   if (pkg.version !== version) {
     mismatches.push(`version: ${pkg.version} (expected ${version})`);
-  }
-
-  if (pkg.optionalDependencies) {
-    for (const [dep, depVersion] of Object.entries(pkg.optionalDependencies)) {
-      if (dep.startsWith("@onshape-mcp/") && depVersion !== version) {
-        mismatches.push(`${dep}: ${depVersion} (expected ${version})`);
-      }
-    }
   }
 
   return mismatches;
@@ -254,50 +234,38 @@ function checkLockfileVersion(lockPath, version) {
         `packages[""].version: ${rootPkg.version} (expected ${version})`,
       );
     }
-
-    if (rootPkg.optionalDependencies) {
-      for (const [dep, depVersion] of Object.entries(
-        rootPkg.optionalDependencies,
-      )) {
-        if (dep.startsWith("@onshape-mcp/") && depVersion !== version) {
-          mismatches.push(
-            `packages[""].optionalDependencies["${dep}"]: ${depVersion} (expected ${version})`,
-          );
-        }
-      }
-    }
   }
 
   return mismatches;
 }
 
-function updateNpmLockfile(pkgDir) {
-  const lockRelPath = path.relative(ROOT, path.join(pkgDir, "package-lock.json"));
+function updateNpmLockfile(pkgDir, version) {
+  const lockPath = path.join(pkgDir, "package-lock.json");
+  const lockRelPath = path.relative(ROOT, lockPath);
   console.log(`Updating ${lockRelPath}...`);
-  try {
-    const [cmd, args] =
-      process.platform === "win32"
-        ? ["cmd.exe", ["/c", "npm", "install", "--package-lock-only"]]
-        : ["npm", ["install", "--package-lock-only"]];
-    execFileSync(cmd, args, {
-      cwd: pkgDir,
-      stdio: "pipe",
-    });
-    console.log(`UPDATED: ${lockRelPath}`);
-    return true;
-  } catch (err) {
-    console.error(
-      `WARNING: Failed to update ${lockRelPath}:`,
-      err.message,
-    );
-    if (err.stderr) {
-      console.error("npm output:", err.stderr.toString());
-    }
-    console.error(
-      `  Run 'npm install' in ${path.relative(ROOT, pkgDir)}/ manually to fix.`,
-    );
-    return false;
+
+  const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+  let changed = false;
+
+  if (lock.version !== version) {
+    lock.version = version;
+    changed = true;
   }
+
+  const rootPkg = lock.packages?.[""];
+  if (rootPkg && rootPkg.version !== version) {
+    rootPkg.version = version;
+    changed = true;
+  }
+
+  if (changed) {
+    fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + "\n");
+    console.log(`UPDATED: ${lockRelPath}`);
+  } else {
+    console.log(`OK: ${lockRelPath} (no changes)`);
+  }
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,7 +400,7 @@ function main() {
       }
     }
   } else {
-    if (!updateNpmLockfile(mainPkgDir)) {
+    if (!updateNpmLockfile(mainPkgDir, version)) {
       hasErrors = true;
     }
   }
