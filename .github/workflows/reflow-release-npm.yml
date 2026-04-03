@@ -85,11 +85,21 @@ jobs:
             echo "Updating $pkg_json to $VERSION"
             # Update version field
             jq --arg v "$VERSION" '.version = $v' "$pkg_json" > tmp.json && mv tmp.json "$pkg_json"
-            # Update optionalDependencies versions if present
-            if jq -e '.optionalDependencies' "$pkg_json" > /dev/null 2>&1; then
-              jq --arg v "$VERSION" '.optionalDependencies |= with_entries(if .key | startswith("@onshape-mcp/") then .value = $v else . end)' "$pkg_json" > tmp.json && mv tmp.json "$pkg_json"
-            fi
           done
+
+          # Inject optionalDependencies into the main package.
+          # Source package.json has no optionalDependencies — they are
+          # injected here at publish time so the lockfile stays accurate
+          # during development (platform packages may not be published at
+          # the in-repo version).
+          main_json="npm/onshape-mcp/package.json"
+          opt_deps="{}"
+          for platform_dir in $PLATFORM_DIRS; do
+            platform_name=$(basename "$platform_dir")
+            opt_deps=$(echo "$opt_deps" | jq --arg k "@onshape-mcp/${platform_name}" --arg v "$VERSION" '. + {($k): $v}')
+          done
+          echo "Injecting optionalDependencies into $main_json: $opt_deps"
+          jq --argjson deps "$opt_deps" '.optionalDependencies = $deps' "$main_json" > tmp.json && mv tmp.json "$main_json"
 
       - name: Pack npm tarballs
         shell: bash

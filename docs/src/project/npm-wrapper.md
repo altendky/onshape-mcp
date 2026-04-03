@@ -62,7 +62,16 @@ npm/
 
 ### Optional Dependencies
 
-The main `onshape-mcp` package declares all platform packages as `optionalDependencies` (example showing illustrative version 0.1.0):
+The published `onshape-mcp` package declares all platform packages as `optionalDependencies`.
+npm only installs the optional dependency matching the current platform, keeping installation fast and lightweight.
+
+**Publish-time injection:** The source `package.json` does **not** contain `optionalDependencies`.
+They are injected by the CI publish workflow (`reflow-release-npm.yml`) at packaging time using `jq`.
+This avoids lockfile degradation during version bumps — since unpublished platform packages
+at the new version can't be resolved by `npm install`, keeping them out of the source
+`package.json` means the lockfile is always accurate.
+
+The published package looks like (example showing illustrative version 0.1.0):
 
 ```json
 {
@@ -76,8 +85,6 @@ The main `onshape-mcp` package declares all platform packages as `optionalDepend
   }
 }
 ```
-
-npm only installs the optional dependency matching the current platform, keeping installation fast and lightweight.
 
 ### JavaScript Shim
 
@@ -181,8 +188,9 @@ The npm packages are published as part of the release process:
 2. **Build binaries** — CI builds release binaries for all supported platforms
 3. **Validate versions** — CI job verifies all `package.json` versions match `Cargo.toml`
 4. **Prepare packages** — Copy binaries into their respective `npm/` platform directories
-5. **Publish platform packages** — Publish each `@onshape-mcp/*` package to npm
-6. **Publish main package** — Publish the main `onshape-mcp` package last
+5. **Inject optionalDependencies** — CI injects the `optionalDependencies` block into the main `package.json` with `jq`
+6. **Publish platform packages** — Publish each `@onshape-mcp/*` package to npm
+7. **Publish main package** — Publish the main `onshape-mcp` package last
 
 The main package must be published last to ensure all platform dependencies are available when users install it.
 
