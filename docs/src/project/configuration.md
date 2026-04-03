@@ -48,10 +48,11 @@ check_interval = "5m"
 [api]
 timeout = "30s"
 
-[mode]
-max = "read"
-initial = "read"
-allow_escalation = false
+# Planned — not yet implemented. See the implementation roadmap.
+# [mode]
+# max = "read"
+# initial = "read"
+# allow_escalation = false
 ```
 
 ## Environment Variables
@@ -66,12 +67,12 @@ All environment variables use the `ONSHAPE_MCP_` prefix.
 | Secret Key | `string` | — | `ONSHAPE_MCP_AUTH__SECRET_KEY` | `auth.secret_key` | `--secret-key` | Onshape API secret key |
 | Client ID | `string` | — | `ONSHAPE_MCP_AUTH__CLIENT_ID` | `auth.client_id` | `--client-id` | OAuth 2.0 client ID |
 | Client Secret | `string` | — | `ONSHAPE_MCP_AUTH__CLIENT_SECRET` | `auth.client_secret` | `--client-secret` | OAuth 2.0 client secret |
-| Auth Method | `string` | `basic` | `ONSHAPE_MCP_AUTH__METHOD` | `auth.method` | `--auth-method` | Authentication method (`basic`, `oauth`; HMAC planned) |
+| Auth Method | `string` | `auto` | `ONSHAPE_MCP_AUTH__METHOD` | `auth.method` | `--auth-method` | Authentication method (`auto`, `basic`, `oauth`; HMAC planned) |
 | Auth Check Interval | `duration` | `5m` | `ONSHAPE_MCP_AUTH__CHECK_INTERVAL` | `auth.check_interval` | — | Periodic credential validation interval (minimum: 15s) |
 | API Timeout | `duration` | `30s` | `ONSHAPE_MCP_API__TIMEOUT` | `api.timeout` | — | Request timeout for Onshape API calls |
-| Max Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_MAX_MODE` | `mode.max` | — | Upper limit for permission mode |
-| Initial Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_INITIAL_MODE` | `mode.initial` | — | Starting permission mode (must be ≤ max_mode) |
-| Allow Mode Escalation | `bool` | `false` | `ONSHAPE_MCP_ALLOW_ESCALATION` | `mode.allow_escalation` | — | Can AI change mode at runtime? |
+| Max Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_MAX_MODE` | `mode.max` | — | *Planned, not yet implemented.* Upper limit for permission mode |
+| Initial Mode | `read`/`modify`/`destroy` | `read` | `ONSHAPE_MCP_INITIAL_MODE` | `mode.initial` | — | *Planned, not yet implemented.* Starting permission mode (must be ≤ max_mode) |
+| Allow Mode Escalation | `bool` | `false` | `ONSHAPE_MCP_ALLOW_ESCALATION` | `mode.allow_escalation` | — | *Planned, not yet implemented.* Can AI change mode at runtime? |
 
 ### Token File Location
 

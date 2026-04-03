@@ -128,7 +128,9 @@ OAuth provides scoped, revocable access and is the better choice for ongoing use
 
 **With OpenCode (recommended):** Add the `@onshape-mcp/opencode-auth` plugin to your `opencode.json` (see the [OpenCode config example](#opencode) above), then run `opencode auth login`. The plugin will prompt for your client ID and secret, open a browser for authorization, and handle the rest.
 
-**With other MCP clients:** Pass the client credentials as environment variables and complete the OAuth flow manually:
+**With the CLI directly:** If you have the binary installed, run `onshape-mcp auth login` to complete the OAuth flow. By default this uses the [OAuth proxy](docs/src/project/oauth-proxy.md) so you don't need to provide a client secret. For direct mode (you supply your own client credentials), use `onshape-mcp auth login --direct`.
+
+**With other MCP clients:** Pass the client credentials as environment variables. The MCP server's `onshape_auth_login` tool can then initiate the OAuth flow from within the session.
 
 | Variable | Description |
 | -------- | ----------- |
@@ -237,6 +239,20 @@ cargo install onshape-mcp
 # Pre-built binaries
 # Download from https://github.com/altendky/onshape-mcp/releases
 ```
+
+## HTTP Transport
+
+For multi-user or remote deployments, the server also supports [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) transport with per-user OAuth authentication:
+
+```sh
+onshape-mcp http --host 0.0.0.0 --port 8080 \
+  --public-url https://your-domain.example \
+  --onshape-client-id <id> \
+  --onshape-client-secret <secret> \
+  --allowed-users user@example.com
+```
+
+This starts an MCP server at `/mcp` with a full OAuth 2.0 Authorization Server (RFC 8414, Dynamic Client Registration). A Dockerfile and Fly.io configuration are included for deployment. See the [Architecture docs](docs/src/project/architecture.md) for details.
 
 ## Documentation
 
