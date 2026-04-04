@@ -107,8 +107,8 @@ is either `npx --yes onshape-mcp` or the path to the downloaded binary.
 **Step 3: Try it**
 
 Ask your AI assistant to create a new Onshape document with a simple shape. If
-you haven't authenticated yet, it will open a browser window for you to log into
-Onshape and approve access.
+you haven't authenticated yet, it will give you a URL to open in your browser to
+log into Onshape and approve access.
 
 ### Web Setup (Claude.ai or other web MCP clients)
 
