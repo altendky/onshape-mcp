@@ -1,6 +1,6 @@
 {
   "name": "onshape-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server for Onshape CAD integration",
   "license": "MIT OR Apache-2.0",
   "repository": {
