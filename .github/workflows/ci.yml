@@ -67,6 +67,13 @@ jobs:
         with:
           jobs: ${{ toJSON(needs) }}
 
+  tag-release:
+    name: Tag release
+    if: github.ref == 'refs/heads/main'
+    needs: [checks]
+    uses: ./.github/workflows/reflow-tag-release.yml
+    secrets: inherit
+
   release-config:
     name: Release config
     needs: [version]

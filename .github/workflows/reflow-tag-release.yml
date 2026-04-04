@@ -1,18 +1,11 @@
-name: Release
+name: Tag release
 
 on:
-  push:
-    branches: [main]
-
-concurrency:
-  group: release
-  cancel-in-progress: false
-
-permissions: {}
+  workflow_call:
 
 jobs:
-  release:
-    name: Release
+  tag-release:
+    name: Tag & post-release PR
     runs-on: ubuntu-latest
     steps:
       - name: Generate App token
@@ -27,11 +20,8 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Set up tools
-        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
-
-      - name: Read version
-        id: version
+      - name: Check if release commit
+        id: check
         run: |
           version=$(
             cargo metadata --no-deps --format-version=1 \
@@ -44,52 +34,45 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
           if [[ "$version" == *-* ]]; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Version $version is a pre-release — skipping"
-          else
-            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      - name: Check for existing tag
-        if: steps.version.outputs.release == 'true'
-        id: tag
-        run: |
-          version="${{ steps.version.outputs.version }}"
           if git ls-remote --tags origin "refs/tags/v${version}" | grep -q .; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Tag v${version} already exists — skipping"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Create and push tag
-        if: steps.version.outputs.release == 'true' && steps.tag.outputs.exists == 'false'
+        if: steps.check.outputs.skip != 'true'
         run: |
-          version="${{ steps.version.outputs.version }}"
+          version="${{ steps.check.outputs.version }}"
           git tag "v${version}"
           git push origin "v${version}"
 
-      - name: Configure Git identity
-        if: steps.version.outputs.release == 'true' && steps.tag.outputs.exists == 'false'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          app_slug="${{ steps.app-token.outputs.app-slug }}"
-          user_id=$(gh api "/users/${app_slug}[bot]" --jq '.id')
-          git config user.name "${app_slug}[bot]"
-          git config user.email "${user_id}+${app_slug}[bot]@users.noreply.github.com"
+      - name: Set up tools
+        if: steps.check.outputs.skip != 'true'
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
 
       - name: Create post-release PR
-        if: steps.version.outputs.release == 'true' && steps.tag.outputs.exists == 'false'
+        if: steps.check.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          version="${{ steps.version.outputs.version }}"
+          version="${{ steps.check.outputs.version }}"
 
           # Compute next patch dev version (e.g., 0.5.0 -> 0.5.1-dev.0)
           IFS='.' read -r major minor patch <<< "$version"
           next_patch=$((patch + 1))
           dev_version="${major}.${minor}.${next_patch}-dev.0"
+
+          # Configure git identity
+          git config user.name "altendky-release[bot]"
+          git config user.email "${{ vars.RELEASE_APP_ID }}+altendky-release[bot]@users.noreply.github.com"
 
           git checkout -b "post-release/v${version}"
 
