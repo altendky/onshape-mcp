@@ -37,3 +37,62 @@ run = [
   "mise install --yes node python",
   "mise lock --yes --platform {{vars.all_platforms}} -- ${usage_tool?}"
 ]
+
+[tasks.release]
+description = "Create a release-prep PR for the given version"
+usage = 'arg "<version>" help="Target release version (e.g., 0.5.0)"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+version="${usage_version?}"
+
+# Validate: semver release format (X.Y.Z, no pre-release suffix)
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: version must be in X.Y.Z format (got: $version)" >&2
+  exit 1
+fi
+
+# Ensure clean working tree
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "Error: working tree is not clean — commit or stash changes first" >&2
+  exit 1
+fi
+
+# Ensure we're on main
+branch=$(git branch --show-current)
+if [[ "$branch" != "main" ]]; then
+  echo "Error: must be on main branch (currently on: $branch)" >&2
+  exit 1
+fi
+
+# Pull latest
+git pull --ff-only
+
+# Check tag doesn't already exist
+git fetch --tags
+if git rev-parse "v${version}" >/dev/null 2>&1; then
+  echo "Error: tag v${version} already exists" >&2
+  exit 1
+fi
+
+# Create release branch
+git checkout -b "release/v${version}"
+
+# Update workspace version in root Cargo.toml
+sed -i "s/^version = \".*\"/version = \"${version}\"/" Cargo.toml
+
+# Propagate to all workspace deps, Cargo.lock, npm packages
+node scripts/sync-versions.js
+
+# Commit and push
+git add -A
+git commit -m "Release v${version}"
+git push -u origin "release/v${version}"
+
+# Open PR with enqueue label for auto-merge after approval
+gh pr create \
+  --title "Release v${version}" \
+  --body "Release prep for v${version}." \
+  --label enqueue
+'''

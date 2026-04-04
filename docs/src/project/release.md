@@ -167,9 +167,93 @@ Staging versions (e.g., `0.2.0-staging-main-abc1234-12345678`) are computed on n
 They are **not published** to the npm registry — only tag pushes trigger real npm publishes.
 The staging version format provides traceability in CI artifacts (branch, commit, run ID) without generating external notifications.
 
+## Release Automation
+
+The release process is PR-driven: a human runs a mise task to create a release-prep PR, and after merge, automation handles tagging, publishing, and the post-release version bump.
+
+### Version Scheme
+
+| State | Version | Example |
+| ----- | ------- | ------- |
+| Release | `X.Y.Z` | `0.5.0` |
+| Between releases | `X.Y.(Z+1)-dev.0` | `0.5.1-dev.0` |
+
+Semver pre-release format, valid for Cargo.toml, crates.io, and npm. The `-` in the version is the detection mechanism for `release.yml` (contains `-` = not a release commit). Post-release bump is always patch. If the next release is minor or major, the `release` mise task specifies the target version explicitly.
+
+### Release Task (`mise run release`)
+
+Creates a release-prep PR:
+
+```bash
+mise run release 0.5.0
+```
+
+Steps:
+
+1. Validates version format (`X.Y.Z`, no pre-release suffix)
+2. Verifies clean working tree on `main`
+3. Pulls latest and checks tag doesn't already exist
+4. Creates branch `release/v{version}`
+5. Updates `[workspace.package].version` in root `Cargo.toml`
+6. Runs `node scripts/sync-versions.js` (propagates to workspace deps, Cargo.lock, all npm packages)
+7. Commits, pushes, opens PR with `enqueue` label
+
+### Auto-Tag Workflow (`release.yml`)
+
+Triggers on every push to `main`. Uses the `altendky-release` GitHub App token (via `actions/create-github-app-token`) so that tag pushes trigger `ci.yml` (pushes with `GITHUB_TOKEN` do not trigger workflows).
+
+Concurrency group: `release` with `cancel-in-progress: false` (never cancel a release in progress).
+
+Steps:
+
+1. Read version from `Cargo.toml` (via `cargo metadata`)
+2. If version contains `-` → exit (pre-release / dev version, not a release commit)
+3. If tag `v{version}` already exists → exit (idempotent)
+4. Create and push tag `v{version}` (triggers `ci.yml` publish pipeline)
+5. Compute next patch dev version (e.g., `0.5.0` → `0.5.1-dev.0`)
+6. Create branch `post-release/v{version}`, update version, run `sync-versions.js`
+7. Open post-release PR with `enqueue` label
+
+### Mergify Auto-Approve
+
+Post-release PRs from `altendky-release[bot]` on `post-release/*` branches are automatically approved. The existing merge queue handles merge (requires `enqueue` label + 1 approval).
+
+### Release Flow
+
+```text
+mise run release 0.5.0
+        │
+        ▼
+  release/v0.5.0 PR ──merge──► push to main
+                                    │
+                             release.yml triggers
+                                    │
+                             ┌──────┴──────┐
+                             │  create tag  │
+                             │  v0.5.0      │
+                             └──────┬──────┘
+                                    │
+                       ┌────────────┴────────────┐
+                       │                         │
+                       ▼                         ▼
+                ci.yml (tag)              post-release/
+                publishes to:             v0.5.0 PR
+                - crates.io              (0.5.1-dev.0)
+                - npm                         │
+                - GitHub Release              ▼
+                                        auto-approve
+                                        + merge
+                                              │
+                                       push to main
+                                              │
+                                       release.yml triggers
+                                       version has `-`
+                                       → exit (no-op)
+```
+
 ## Release Pipeline
 
-Releases are triggered by pushing a `v*` tag to the repository. This triggers the same `ci.yml` workflow that runs on PRs, but the `release-config` job detects the tag push and switches all downstream jobs to publish mode.
+The publish pipeline lives in `ci.yml` and is triggered by pushing a `v*` tag. The `release.yml` workflow automates tag creation after a release-prep PR merges (see [Release Automation](#release-automation)). The `release-config` job detects the tag push and switches all downstream jobs to publish mode.
 
 ### Release Job Flow
 
@@ -292,6 +376,7 @@ It is generated in the `github-release` job on every CI run (validating the gene
 | `.github/workflows/reflow-release-version.yml` | Reusable: extract and validate version |
 | `.github/workflows/reflow-release-build.yml` | Reusable: build release binaries on 5 platforms |
 | `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
+| `.github/workflows/release.yml` | Auto-tag on release merge, create post-release version bump PR |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
 | `.github/scripts/cargo-publish-workspace.sh` | Publishes all workspace crates to crates.io in dependency order |
@@ -301,12 +386,16 @@ It is generated in the `github-release` job on every CI run (validating the gene
 | File | Change |
 | ---- | ------ |
 | `.github/workflows/ci.yml` | Unified CI and release entry point: version, build, release-config, release-npm, cargo-publish, github-release jobs; `all` gate covers everything |
+| `mise.toml` | Add `release` task for creating release-prep PRs |
+| `.mergify.yml` | Auto-approve post-release PRs from `altendky-release[bot]` |
 | `docs/src/project/ci.md` | Document unified pipeline and updated job counts |
 
 ## Secrets and Permissions
 
-| Secret | Used by | Purpose |
-| ------ | ------- | ------- |
+| Secret / Variable | Used by | Purpose |
+| ----------------- | ------- | ------- |
+| `vars.RELEASE_APP_ID` | `release.yml` | GitHub App ID for `altendky-release` (repository variable) |
+| `secrets.RELEASE_APP_PRIVATE_KEY` | `release.yml` | GitHub App private key for `altendky-release` |
 | `NPM_TOKEN` | npm publish (fallback) + cleanup | npm publish (fork PRs), npm unpublish (cleanup) |
 | `GITHUB_TOKEN` | `ci.yml` github-release job | GitHub release (automatic, not a manual secret) |
 
