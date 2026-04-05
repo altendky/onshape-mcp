@@ -259,9 +259,10 @@ jobs:
   all:
     name: all
     if: ${{ !cancelled() }}
-    needs: [checks, release-npm, cargo-publish, github-release]
+    needs: [checks, tag-release, release-npm, cargo-publish, github-release]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
+          allowed-skips: tag-release
           jobs: ${{ toJSON(needs) }}
