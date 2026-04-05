@@ -92,7 +92,7 @@ jobs:
       - name: Create GitHub Release
         if: inputs.publish
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ inputs.version }}
         shell: bash
