@@ -14,15 +14,15 @@ Users can install the server via:
 
 CI and release share a single unified pipeline in `ci.yml`. A `release-config` job inspects the trigger (tag push vs PR/branch push) and centralizes all mode-dependent decisions. Downstream jobs consume named outputs and have no conditional logic of their own.
 
-The pipeline is composed of three reusable workflows plus two inline jobs:
+The pipeline is composed of four reusable workflows plus one inline job:
 
 | Component | Purpose |
 | --------- | ------- |
 | `reflow-release-version.yml` | Extract version from Cargo.toml, verify tag match |
 | `reflow-release-build.yml` | Build release binaries on 5 platforms |
 | `reflow-release-npm.yml` | Package, publish, and test npm packages (parameterized by version and dist-tag) |
+| `reflow-publish-release.yml` | Package archives, generate SHA256SUMS, create GitHub Release |
 | `cargo-publish` job | Publish workspace crates to crates.io (or `cargo package` validation) |
-| `github-release` job | Package archives, generate SHA256SUMS, create GitHub Release |
 
 ### Trigger Behavior
 
@@ -293,7 +293,9 @@ The `release-config` job is the single point where `github.ref_type == 'tag'` is
 - On tag push: publishes all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
 - Gated by `checks` — no crate is published unless all quality checks pass
 
-**github-release** (ubuntu-latest, needs: release-config + version + build + release-npm + cargo-publish)
+### Publish Release Workflow (`reflow-publish-release.yml`)
+
+Packages release archives and creates a GitHub Release. Parameterized by `publish` (boolean) and `version` (string).
 
 - Download binary artifacts from the build workflow
 - Package release archives (tar.gz for Unix, zip for Windows) with license files
@@ -314,7 +316,7 @@ Artifacts are shared across workflow runs via GitHub Actions upload/download.
 
 | Artifact | Created by | Consumed by |
 | -------- | ---------- | ----------- |
-| `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `github-release` job |
+| `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `reflow-publish-release.yml` |
 | `npm-tarballs` (7) | `reflow-release-npm.yml` package job | npm test-tarballs, npm publish, npm test-published |
 
 ## Crate Naming and Publish Order
@@ -367,7 +369,7 @@ e5f6a7b8...  onshape-mcp-0.2.0-aarch64-unknown-linux-musl.tar.gz
 ```
 
 The `SHA256SUMS` file covers all assets uploaded to the GitHub release (platform archives).
-It is generated in the `github-release` job on every CI run (validating the generation logic) and included in the GitHub Release on tag pushes.
+It is generated in `reflow-publish-release.yml` on every CI run (validating the generation logic) and included in the GitHub Release on tag pushes.
 
 ## New Files
 
@@ -376,6 +378,7 @@ It is generated in the `github-release` job on every CI run (validating the gene
 | `.github/workflows/reflow-release-version.yml` | Reusable: extract and validate version |
 | `.github/workflows/reflow-release-build.yml` | Reusable: build release binaries on 5 platforms |
 | `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
+| `.github/workflows/reflow-publish-release.yml` | Reusable: package archives, generate SHA256SUMS, create GitHub Release |
 | `.github/workflows/reflow-tag-release.yml` | Reusable: auto-tag on release merge, create post-release version bump PR |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
@@ -397,13 +400,13 @@ It is generated in the `github-release` job on every CI run (validating the gene
 | `vars.RELEASE_APP_ID` | `reflow-tag-release.yml` | GitHub App ID for `altendky-release` (repository variable) |
 | `secrets.RELEASE_APP_PRIVATE_KEY` | `reflow-tag-release.yml` | GitHub App private key for `altendky-release` |
 | `NPM_TOKEN` | npm publish (fallback) + cleanup | npm publish (fork PRs), npm unpublish (cleanup) |
-| `GITHUB_TOKEN` | `ci.yml` github-release job | GitHub release (automatic, not a manual secret) |
+| `GITHUB_TOKEN` | `reflow-publish-release.yml` | GitHub release (automatic, not a manual secret) |
 
 | Permission | Job | Purpose |
 | ---------- | --- | ------- |
 | `id-token: write` | `release-npm` | npm OIDC trusted publishing, provenance |
 | `id-token: write` | `cargo-publish` | crates.io OIDC trusted publishing |
-| `contents: write` | `github-release` | GitHub release creation |
+| `contents: write` | `reflow-publish-release.yml` | GitHub release creation |
 
 ### npm Authentication Strategy
 

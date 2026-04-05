@@ -1,0 +1,111 @@
+name: Publish release
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: "Whether to create the GitHub Release (false = package and validate only)"
+        type: boolean
+        required: true
+      version:
+        description: "Release version (e.g., 0.5.0)"
+        type: string
+        required: true
+
+jobs:
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Generate library matrix
+        id: library
+        uses: ./.github/actions/library
+
+      - name: Download binary artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: binary-*
+          path: binaries
+
+      - name: Package release archives
+        shell: bash
+        env:
+          PLATFORMS: ${{ steps.library.outputs.matrix }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+
+          while read -r entry; do
+            npm_platform=$(echo "$entry" | jq -r '.["npm-platform"]')
+            rust_target=$(echo "$entry" | jq -r '.["rust-target"]')
+            binary_name=$(echo "$entry" | jq -r '.["binary-name"]')
+            archive_format=$(echo "$entry" | jq -r '.["archive-format"]')
+            archive_name="onshape-mcp-${VERSION}-${rust_target}"
+
+            echo "Packaging ${archive_name}..."
+
+            # Create staging directory with binary and license files
+            staging_dir="dist/staging/${archive_name}"
+            mkdir -p "$staging_dir"
+            cp "binaries/binary-${npm_platform}/${binary_name}" "$staging_dir/"
+            chmod +x "$staging_dir/${binary_name}"
+            cp LICENSE-MIT LICENSE-APACHE "$staging_dir/"
+
+            # Create archive
+            if [[ "$archive_format" == "tar.gz" ]]; then
+              tar -czf "dist/release/${archive_name}.tar.gz" -C dist/staging "$archive_name"
+            elif [[ "$archive_format" == "zip" ]]; then
+              (cd dist/staging && zip -r "../release/${archive_name}.zip" "$archive_name")
+            else
+              echo "ERROR: Unknown archive format '${archive_format}' for ${rust_target}" >&2
+              exit 1
+            fi
+          done < <(echo "$PLATFORMS" | jq -c '.release[]')
+
+          echo "Release archives:"
+          ls -la dist/release/
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          truncate -s 0 dist/SHA256SUMS
+
+          for f in dist/release/*; do
+            hash=$(sha256sum "$f" | cut -d' ' -f1)
+            name=$(basename "$f")
+            echo "$hash  $name" >> dist/SHA256SUMS
+          done
+
+          echo "SHA256SUMS:"
+          cat dist/SHA256SUMS
+
+          if [[ ! -s dist/SHA256SUMS ]]; then
+            echo "ERROR: SHA256SUMS is empty — no release archives found" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          # Collect all release assets
+          assets=()
+          for f in dist/release/*; do
+            assets+=("$f")
+          done
+          assets+=("dist/SHA256SUMS")
+
+          echo "Creating release ${TAG} with ${#assets[@]} assets..."
+          gh release create "$TAG" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            "${assets[@]}"
