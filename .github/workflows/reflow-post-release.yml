@@ -1,0 +1,137 @@
+name: Post-release PR
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  post-release:
+    name: Post-release PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(
+            cargo metadata --no-deps --format-version=1 \
+              | jq -r '
+                  .packages[]
+                  | select(.name == "onshape-mcp")
+                  | .version
+                '
+          )
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check if post-release needed
+        id: check
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if [[ "$version" == *-* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version $version is a pre-release — skipping post-release"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create post-release PR
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          tag="v${version}"
+          branch="post-release/${tag}"
+
+          # Compute next patch dev version (e.g., 0.5.0 -> 0.5.1-dev.0)
+          IFS='.' read -r major minor patch <<< "$version"
+          next_patch=$((patch + 1))
+          dev_version="${major}.${minor}.${next_patch}-dev.0"
+
+          # Delete existing post-release branch if present (auto-closes any open PR)
+          if gh api "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch" &>/dev/null; then
+            echo "::notice::Deleting existing branch $branch"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch"
+          fi
+
+          # Update workspace version in root Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"${dev_version}\"/" Cargo.toml
+
+          # Propagate to all workspace deps, Cargo.lock, npm packages
+          node scripts/sync-versions.js
+
+          # Get current HEAD
+          base_sha=$(git rev-parse HEAD)
+
+          # Create branch (pointing at current main HEAD)
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/heads/$branch" \
+            -f sha="$base_sha"
+
+          # Base64-encode modified files to temp files (avoids ARG_MAX)
+          additions="[]"
+          while IFS= read -r file; do
+            base64 -w0 < "$file" > "$RUNNER_TEMP/file.b64"
+            additions=$(jq \
+              --arg path "$file" \
+              --rawfile contents "$RUNNER_TEMP/file.b64" \
+              '. + [{path: $path, contents: $contents}]' <<< "$additions")
+          done < <(git diff --name-only)
+
+          # Create commit via GraphQL (GitHub signs commits created through this mutation)
+          response=$(jq -n \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg branch "$branch" \
+            --arg msg "Start ${dev_version} development" \
+            --arg head "$base_sha" \
+            --argjson additions "$additions" \
+            '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+              variables: {
+                input: {
+                  branch: {
+                    repositoryNameWithOwner: $repo,
+                    branchName: $branch
+                  },
+                  message: { headline: $msg },
+                  fileChanges: {
+                    additions: $additions
+                  },
+                  expectedHeadOid: $head
+                }
+              }
+            }' | gh api graphql --input -)
+
+          commit_sha=$(echo "$response" | jq -r '.data.createCommitOnBranch.commit.oid // empty')
+
+          if [[ -z "$commit_sha" ]]; then
+            echo "::error::GraphQL createCommitOnBranch failed"
+            echo "$response" | jq '.errors // .data'
+            exit 1
+          fi
+
+          # Verify the commit is signed
+          verified=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$commit_sha" --jq '.verification.verified')
+          if [[ "$verified" != "true" ]]; then
+            echo "::error::Commit $commit_sha is not verified — aborting"
+            gh api "repos/$GITHUB_REPOSITORY/git/commits/$commit_sha" --jq '.verification'
+            exit 1
+          fi
+
+          # Create PR
+          gh pr create \
+            --head "$branch" \
+            --title "Post-release: start ${dev_version}" \
+            --body "Automated post-release version bump after v${version}." \
+            --label enqueue

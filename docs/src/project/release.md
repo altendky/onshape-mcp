@@ -14,15 +14,15 @@ Users can install the server via:
 
 CI and release share a single unified pipeline in `ci.yml`. A `release-config` job inspects the trigger (tag push vs PR/branch push) and centralizes all mode-dependent decisions. Downstream jobs consume named outputs and have no conditional logic of their own.
 
-The pipeline is composed of three reusable workflows plus two inline jobs:
+The pipeline is composed of four reusable workflows plus one inline job:
 
 | Component | Purpose |
 | --------- | ------- |
 | `reflow-release-version.yml` | Extract version from Cargo.toml, verify tag match |
 | `reflow-release-build.yml` | Build release binaries on 5 platforms |
 | `reflow-release-npm.yml` | Package, publish, and test npm packages (parameterized by version and dist-tag) |
+| `reflow-publish-release.yml` | Package archives, generate SHA256SUMS, create GitHub Release |
 | `cargo-publish` job | Publish workspace crates to crates.io (or `cargo package` validation) |
-| `github-release` job | Package archives, generate SHA256SUMS, create GitHub Release |
 
 ### Trigger Behavior
 
@@ -167,9 +167,107 @@ Staging versions (e.g., `0.2.0-staging-main-abc1234-12345678`) are computed on n
 They are **not published** to the npm registry — only tag pushes trigger real npm publishes.
 The staging version format provides traceability in CI artifacts (branch, commit, run ID) without generating external notifications.
 
+## Release Automation
+
+The release process is PR-driven: a human runs a mise task to create a release-prep PR, and after merge, automation handles tagging, publishing, and the post-release version bump.
+
+### Version Scheme
+
+| State | Version | Example |
+| ----- | ------- | ------- |
+| Release | `X.Y.Z` | `0.5.0` |
+| Between releases | `X.Y.(Z+1)-dev.0` | `0.5.1-dev.0` |
+
+Semver pre-release format, valid for Cargo.toml, crates.io, and npm. The `-` in the version is the detection mechanism for `reflow-tag-release.yml` (contains `-` = not a release commit). Post-release bump is always patch. If the next release is minor or major, the `release` mise task specifies the target version explicitly.
+
+### Release Task (`mise run release`)
+
+Creates a release-prep PR:
+
+```bash
+mise run release 0.5.0
+```
+
+Steps:
+
+1. Validates version format (`X.Y.Z`, no pre-release suffix)
+2. Verifies clean working tree on `main`
+3. Pulls latest and checks tag doesn't already exist
+4. Creates branch `release/v{version}`
+5. Updates `[workspace.package].version` in root `Cargo.toml`
+6. Runs `node scripts/sync-versions.js` (propagates to workspace deps, Cargo.lock, all npm packages)
+7. Commits, pushes, opens PR with `enqueue` label
+
+### Auto-Tag Workflow (`reflow-tag-release.yml`)
+
+A reusable workflow called from `ci.yml` as the `tag-release` job, gated on `needs: [checks]`. This ensures the merge commit passes all quality checks before a tag is created. Uses the `altendky-release` GitHub App token (via `actions/create-github-app-token`) so that tag pushes trigger `ci.yml` (pushes with `GITHUB_TOKEN` do not trigger workflows).
+
+The `tag-release` job only runs on pushes to `main` (`if: github.ref == 'refs/heads/main'`). Outputs a `tagged` boolean so downstream jobs know whether a tag was created.
+
+Steps:
+
+1. Read version from `Cargo.toml` (via `cargo metadata`)
+2. If version contains `-` → exit (pre-release / dev version, not a release commit)
+3. If tag `v{version}` already exists → exit (idempotent)
+4. Create and push tag `v{version}` (triggers `ci.yml` publish pipeline)
+
+### Post-Release Workflow (`reflow-post-release.yml`)
+
+A reusable workflow called from `ci.yml` as the `post-release` job, only when `tag-release` created a new tag (`needs.tag-release.outputs.tagged == 'true'`). Also supports `workflow_dispatch` for manual re-creation.
+
+Commits are created through the GitHub REST API (blobs → trees → commits) instead of local `git commit`. When authenticated with a GitHub App token, GitHub attaches its own GPG signature, satisfying `required_signatures` ruleset rules. The bot user ID is queried dynamically to ensure correct commit attribution.
+
+Steps:
+
+1. Read version from `Cargo.toml` (via `cargo metadata`)
+2. If version contains `-` → exit (already a dev version)
+3. Compute next patch dev version (e.g., `0.5.0` → `0.5.1-dev.0`)
+4. Update version in `Cargo.toml`, run `sync-versions.js`
+5. Create blobs and tree via GitHub API for all modified files
+6. Create signed commit via GitHub API
+7. Create branch `post-release/v{version}` via API
+8. Open post-release PR with `enqueue` label
+
+### Mergify Auto-Approve
+
+Post-release PRs from `altendky-release[bot]` on `post-release/*` branches are automatically approved. The existing merge queue handles merge (requires `enqueue` label + 1 approval).
+
+### Release Flow
+
+```text
+mise run release 0.5.0
+        │
+        ▼
+  release/v0.5.0 PR ──merge──► push to main
+                                    │
+                             ci.yml / tag-release
+                                    │
+                             ┌──────┴──────┐
+                             │  create tag  │
+                             │  v0.5.0      │
+                             └──────┬──────┘
+                                    │
+                       ┌────────────┴────────────┐
+                       │                         │
+                       ▼                         ▼
+                ci.yml (tag)              post-release/
+                publishes to:             v0.5.0 PR
+                - crates.io              (0.5.1-dev.0)
+                - npm                         │
+                - GitHub Release              ▼
+                                        auto-approve
+                                        + merge
+                                              │
+                                       push to main
+                                              │
+                                       ci.yml / tag-release
+                                       version has `-`
+                                       → exit (no-op)
+```
+
 ## Release Pipeline
 
-Releases are triggered by pushing a `v*` tag to the repository. This triggers the same `ci.yml` workflow that runs on PRs, but the `release-config` job detects the tag push and switches all downstream jobs to publish mode.
+The publish pipeline lives in `ci.yml` and is triggered by pushing a `v*` tag. The `tag-release` job (calling `reflow-tag-release.yml`) automates tag creation after a release-prep PR merges, and the `post-release` job (calling `reflow-post-release.yml`) creates the version bump PR — both gated on quality checks passing (see [Release Automation](#release-automation)). The `release-config` job detects the tag push and switches all downstream jobs to publish mode.
 
 ### Release Job Flow
 
@@ -184,12 +282,12 @@ version ──► release-config ──┤  │
                       │      │  │
 build ────────────────┼──► release-npm
                       │         │
-                      └──► github-release
+                      └──► publish-release
                            (needs: release-config, version,
                             build, release-npm, cargo-publish)
 ```
 
-All quality jobs (`pre-commit`, `rust`, `coverage`, `npm`) must pass the `checks` gate before any publishing can begin. `build` and `version` start immediately in parallel. `release-config` depends on `version` and makes a single mode decision. `cargo-publish` and `release-npm` both depend on `release-config` and `checks`; `release-npm` also depends on `build`. `github-release` waits for everything.
+All quality jobs (`pre-commit`, `rust`, `coverage`, `npm`) must pass the `checks` gate before any publishing can begin. `build` and `version` start immediately in parallel. `release-config` depends on `version` and makes a single mode decision. `cargo-publish` and `release-npm` both depend on `release-config` and `checks`; `release-npm` also depends on `build`. `publish-release` waits for everything.
 
 ### Release-Config Job
 
@@ -209,7 +307,9 @@ The `release-config` job is the single point where `github.ref_type == 'tag'` is
 - On tag push: publishes all workspace crates in dependency order (see [Crate Naming and Publish Order](#crate-naming-and-publish-order))
 - Gated by `checks` — no crate is published unless all quality checks pass
 
-**github-release** (ubuntu-latest, needs: release-config + version + build + release-npm + cargo-publish)
+### Publish Release Workflow (`reflow-publish-release.yml`)
+
+Packages release archives and creates a GitHub Release. Parameterized by `publish` (boolean) and `version` (string).
 
 - Download binary artifacts from the build workflow
 - Package release archives (tar.gz for Unix, zip for Windows) with license files
@@ -230,7 +330,7 @@ Artifacts are shared across workflow runs via GitHub Actions upload/download.
 
 | Artifact | Created by | Consumed by |
 | -------- | ---------- | ----------- |
-| `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `github-release` job |
+| `binary-{platform}` (5) | `reflow-release-build.yml` | `reflow-release-npm.yml`, `reflow-publish-release.yml` |
 | `npm-tarballs` (7) | `reflow-release-npm.yml` package job | npm test-tarballs, npm publish, npm test-published |
 
 ## Crate Naming and Publish Order
@@ -283,7 +383,7 @@ e5f6a7b8...  onshape-mcp-0.2.0-aarch64-unknown-linux-musl.tar.gz
 ```
 
 The `SHA256SUMS` file covers all assets uploaded to the GitHub release (platform archives).
-It is generated in the `github-release` job on every CI run (validating the generation logic) and included in the GitHub Release on tag pushes.
+It is generated in `reflow-publish-release.yml` on every CI run (validating the generation logic) and included in the GitHub Release on tag pushes.
 
 ## New Files
 
@@ -292,6 +392,9 @@ It is generated in the `github-release` job on every CI run (validating the gene
 | `.github/workflows/reflow-release-version.yml` | Reusable: extract and validate version |
 | `.github/workflows/reflow-release-build.yml` | Reusable: build release binaries on 5 platforms |
 | `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
+| `.github/workflows/reflow-publish-release.yml` | Reusable: package archives, generate SHA256SUMS, create GitHub Release |
+| `.github/workflows/reflow-tag-release.yml` | Reusable: auto-tag on release merge |
+| `.github/workflows/reflow-post-release.yml` | Reusable: create signed post-release version bump PR |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
 | `.github/scripts/cargo-publish-workspace.sh` | Publishes all workspace crates to crates.io in dependency order |
@@ -300,21 +403,25 @@ It is generated in the `github-release` job on every CI run (validating the gene
 
 | File | Change |
 | ---- | ------ |
-| `.github/workflows/ci.yml` | Unified CI and release entry point: version, build, release-config, release-npm, cargo-publish, github-release jobs; `all` gate covers everything |
+| `.github/workflows/ci.yml` | Unified CI and release entry point: version, build, release-config, tag-release, post-release, release-npm, cargo-publish, publish-release jobs; `all` gate covers everything |
+| `mise.toml` | Add `release` task for creating release-prep PRs |
+| `.mergify.yml` | Auto-approve post-release PRs from `altendky-release[bot]` |
 | `docs/src/project/ci.md` | Document unified pipeline and updated job counts |
 
 ## Secrets and Permissions
 
-| Secret | Used by | Purpose |
-| ------ | ------- | ------- |
+| Secret / Variable | Used by | Purpose |
+| ----------------- | ------- | ------- |
+| `vars.RELEASE_APP_ID` | `reflow-tag-release.yml`, `reflow-post-release.yml` | GitHub App ID for `altendky-release` (repository variable) |
+| `secrets.RELEASE_APP_PRIVATE_KEY` | `reflow-tag-release.yml`, `reflow-post-release.yml` | GitHub App private key for `altendky-release` |
 | `NPM_TOKEN` | npm publish (fallback) + cleanup | npm publish (fork PRs), npm unpublish (cleanup) |
-| `GITHUB_TOKEN` | `ci.yml` github-release job | GitHub release (automatic, not a manual secret) |
+| `GITHUB_TOKEN` | `reflow-publish-release.yml` | GitHub release (automatic, not a manual secret) |
 
 | Permission | Job | Purpose |
 | ---------- | --- | ------- |
 | `id-token: write` | `release-npm` | npm OIDC trusted publishing, provenance |
 | `id-token: write` | `cargo-publish` | crates.io OIDC trusted publishing |
-| `contents: write` | `github-release` | GitHub release creation |
+| `contents: write` | `reflow-publish-release.yml` | GitHub release creation |
 
 ### npm Authentication Strategy
 
@@ -357,7 +464,7 @@ Items requiring further discussion before or during implementation.
 
 ### CI Integration
 
-- [x] CI gate: ~~blocking or non-blocking~~ Resolved: `release-npm`, `cargo-publish`, and `github-release` are all required by the `all` gate in `ci.yml`, blocking merge if any fail
+- [x] CI gate: ~~blocking or non-blocking~~ Resolved: `release-npm`, `cargo-publish`, and `publish-release` are all required by the `all` gate in `ci.yml`, blocking merge if any fail
 
 ### GitHub Release
 

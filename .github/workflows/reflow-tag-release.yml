@@ -1,0 +1,59 @@
+name: Tag release
+
+on:
+  workflow_call:
+    outputs:
+      tagged:
+        description: Whether a new tag was created
+        value: ${{ jobs.tag-release.outputs.tagged }}
+
+jobs:
+  tag-release:
+    name: Tag release
+    runs-on: ubuntu-latest
+    outputs:
+      tagged: ${{ steps.check.outputs.skip != 'true' }}
+    steps:
+      - uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Check if release commit
+        id: check
+        run: |
+          version=$(
+            cargo metadata --no-deps --format-version=1 \
+              | jq -r '
+                  .packages[]
+                  | select(.name == "onshape-mcp")
+                  | .version
+                '
+          )
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if [[ "$version" == *-* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version $version is a pre-release — skipping"
+            exit 0
+          fi
+
+          if git ls-remote --tags origin "refs/tags/v${version}" | grep -q .; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tag v${version} already exists — skipping"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          version="${{ steps.check.outputs.version }}"
+          git tag "v${version}"
+          git push origin "v${version}"
