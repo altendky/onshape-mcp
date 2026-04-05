@@ -2,11 +2,17 @@ name: Tag release
 
 on:
   workflow_call:
+    outputs:
+      tagged:
+        description: Whether a new tag was created
+        value: ${{ jobs.tag-release.outputs.tagged }}
 
 jobs:
   tag-release:
-    name: Tag & post-release PR
+    name: Tag release
     runs-on: ubuntu-latest
+    outputs:
+      tagged: ${{ steps.check.outputs.skip != 'true' }}
     steps:
       - uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3
         id: app-token
@@ -51,39 +57,3 @@ jobs:
           version="${{ steps.check.outputs.version }}"
           git tag "v${version}"
           git push origin "v${version}"
-
-      - if: steps.check.outputs.skip != 'true'
-        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
-
-      - name: Create post-release PR
-        if: steps.check.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          version="${{ steps.check.outputs.version }}"
-
-          # Compute next patch dev version (e.g., 0.5.0 -> 0.5.1-dev.0)
-          IFS='.' read -r major minor patch <<< "$version"
-          next_patch=$((patch + 1))
-          dev_version="${major}.${minor}.${next_patch}-dev.0"
-
-          # Configure git identity
-          git config user.name "altendky-release[bot]"
-          git config user.email "${{ vars.RELEASE_APP_ID }}+altendky-release[bot]@users.noreply.github.com"
-
-          git checkout -b "post-release/v${version}"
-
-          # Update workspace version in root Cargo.toml
-          sed -i "s/^version = \".*\"/version = \"${dev_version}\"/" Cargo.toml
-
-          # Propagate to all workspace deps, Cargo.lock, npm packages
-          node scripts/sync-versions.js
-
-          git add -A
-          git commit -m "Start ${dev_version} development"
-          git push -u origin "post-release/v${version}"
-
-          gh pr create \
-            --title "Post-release: start ${dev_version}" \
-            --body "Automated post-release version bump after v${version}." \
-            --label enqueue

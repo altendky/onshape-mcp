@@ -202,7 +202,7 @@ Steps:
 
 A reusable workflow called from `ci.yml` as the `tag-release` job, gated on `needs: [checks]`. This ensures the merge commit passes all quality checks before a tag is created. Uses the `altendky-release` GitHub App token (via `actions/create-github-app-token`) so that tag pushes trigger `ci.yml` (pushes with `GITHUB_TOKEN` do not trigger workflows).
 
-The `tag-release` job only runs on pushes to `main` (`if: github.ref == 'refs/heads/main'`).
+The `tag-release` job only runs on pushes to `main` (`if: github.ref == 'refs/heads/main'`). Outputs a `tagged` boolean so downstream jobs know whether a tag was created.
 
 Steps:
 
@@ -210,9 +210,23 @@ Steps:
 2. If version contains `-` → exit (pre-release / dev version, not a release commit)
 3. If tag `v{version}` already exists → exit (idempotent)
 4. Create and push tag `v{version}` (triggers `ci.yml` publish pipeline)
-5. Compute next patch dev version (e.g., `0.5.0` → `0.5.1-dev.0`)
-6. Create branch `post-release/v{version}`, update version, run `sync-versions.js`
-7. Open post-release PR with `enqueue` label
+
+### Post-Release Workflow (`reflow-post-release.yml`)
+
+A reusable workflow called from `ci.yml` as the `post-release` job, only when `tag-release` created a new tag (`needs.tag-release.outputs.tagged == 'true'`). Also supports `workflow_dispatch` for manual re-creation.
+
+Commits are created through the GitHub REST API (blobs → trees → commits) instead of local `git commit`. When authenticated with a GitHub App token, GitHub attaches its own GPG signature, satisfying `required_signatures` ruleset rules. The bot user ID is queried dynamically to ensure correct commit attribution.
+
+Steps:
+
+1. Read version from `Cargo.toml` (via `cargo metadata`)
+2. If version contains `-` → exit (already a dev version)
+3. Compute next patch dev version (e.g., `0.5.0` → `0.5.1-dev.0`)
+4. Update version in `Cargo.toml`, run `sync-versions.js`
+5. Create blobs and tree via GitHub API for all modified files
+6. Create signed commit via GitHub API
+7. Create branch `post-release/v{version}` via API
+8. Open post-release PR with `enqueue` label
 
 ### Mergify Auto-Approve
 
@@ -253,7 +267,7 @@ mise run release 0.5.0
 
 ## Release Pipeline
 
-The publish pipeline lives in `ci.yml` and is triggered by pushing a `v*` tag. The `tag-release` job in `ci.yml` (calling `reflow-tag-release.yml`) automates tag creation after a release-prep PR merges, gated on all quality checks passing (see [Release Automation](#release-automation)). The `release-config` job detects the tag push and switches all downstream jobs to publish mode.
+The publish pipeline lives in `ci.yml` and is triggered by pushing a `v*` tag. The `tag-release` job (calling `reflow-tag-release.yml`) automates tag creation after a release-prep PR merges, and the `post-release` job (calling `reflow-post-release.yml`) creates the version bump PR — both gated on quality checks passing (see [Release Automation](#release-automation)). The `release-config` job detects the tag push and switches all downstream jobs to publish mode.
 
 ### Release Job Flow
 
@@ -379,7 +393,8 @@ It is generated in `reflow-publish-release.yml` on every CI run (validating the 
 | `.github/workflows/reflow-release-build.yml` | Reusable: build release binaries on 5 platforms |
 | `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
 | `.github/workflows/reflow-publish-release.yml` | Reusable: package archives, generate SHA256SUMS, create GitHub Release |
-| `.github/workflows/reflow-tag-release.yml` | Reusable: auto-tag on release merge, create post-release version bump PR |
+| `.github/workflows/reflow-tag-release.yml` | Reusable: auto-tag on release merge |
+| `.github/workflows/reflow-post-release.yml` | Reusable: create signed post-release version bump PR |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
 | `.github/scripts/cargo-publish-workspace.sh` | Publishes all workspace crates to crates.io in dependency order |
@@ -388,7 +403,7 @@ It is generated in `reflow-publish-release.yml` on every CI run (validating the 
 
 | File | Change |
 | ---- | ------ |
-| `.github/workflows/ci.yml` | Unified CI and release entry point: version, build, release-config, tag-release, release-npm, cargo-publish, publish-release jobs; `all` gate covers everything |
+| `.github/workflows/ci.yml` | Unified CI and release entry point: version, build, release-config, tag-release, post-release, release-npm, cargo-publish, publish-release jobs; `all` gate covers everything |
 | `mise.toml` | Add `release` task for creating release-prep PRs |
 | `.mergify.yml` | Auto-approve post-release PRs from `altendky-release[bot]` |
 | `docs/src/project/ci.md` | Document unified pipeline and updated job counts |
@@ -397,8 +412,8 @@ It is generated in `reflow-publish-release.yml` on every CI run (validating the 
 
 | Secret / Variable | Used by | Purpose |
 | ----------------- | ------- | ------- |
-| `vars.RELEASE_APP_ID` | `reflow-tag-release.yml` | GitHub App ID for `altendky-release` (repository variable) |
-| `secrets.RELEASE_APP_PRIVATE_KEY` | `reflow-tag-release.yml` | GitHub App private key for `altendky-release` |
+| `vars.RELEASE_APP_ID` | `reflow-tag-release.yml`, `reflow-post-release.yml` | GitHub App ID for `altendky-release` (repository variable) |
+| `secrets.RELEASE_APP_PRIVATE_KEY` | `reflow-tag-release.yml`, `reflow-post-release.yml` | GitHub App private key for `altendky-release` |
 | `NPM_TOKEN` | npm publish (fallback) + cleanup | npm publish (fork PRs), npm unpublish (cleanup) |
 | `GITHUB_TOKEN` | `reflow-publish-release.yml` | GitHub release (automatic, not a manual secret) |
 

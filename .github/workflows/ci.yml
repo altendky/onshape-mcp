@@ -74,6 +74,13 @@ jobs:
     uses: ./.github/workflows/reflow-tag-release.yml
     secrets: inherit
 
+  post-release:
+    name: Post-release PR
+    if: github.ref == 'refs/heads/main' && needs.tag-release.outputs.tagged == 'true'
+    needs: [tag-release]
+    uses: ./.github/workflows/reflow-post-release.yml
+    secrets: inherit
+
   release-config:
     name: Release config
     needs: [version]
@@ -170,10 +177,10 @@ jobs:
   all:
     name: all
     if: ${{ !cancelled() }}
-    needs: [checks, tag-release, release-npm, cargo-publish, publish-release]
+    needs: [checks, tag-release, post-release, release-npm, cargo-publish, publish-release]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
-          allowed-skips: tag-release
+          allowed-skips: tag-release, post-release
           jobs: ${{ toJSON(needs) }}
