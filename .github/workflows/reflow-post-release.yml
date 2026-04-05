@@ -84,12 +84,18 @@ jobs:
           base_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$base_sha" --jq '.tree.sha')
 
           # Create blobs and tree entries for all modified files
+          # Uses temp file + jq --rawfile to avoid ARG_MAX limits on large files
+          create_blob() {
+            local file="$1"
+            base64 -w0 < "$file" > "$RUNNER_TEMP/blob.b64"
+            jq -n --rawfile content "$RUNNER_TEMP/blob.b64" \
+              '{content: $content, encoding: "base64"}' \
+              | gh api "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq '.sha'
+          }
+
           tree_entries="[]"
           while IFS= read -r file; do
-            blob_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" \
-              -f content="$(base64 -w0 < "$file")" \
-              -f encoding=base64 \
-              --jq '.sha')
+            blob_sha=$(create_blob "$file")
             tree_entries=$(echo "$tree_entries" | jq \
               --arg path "$file" \
               --arg sha "$blob_sha" \
