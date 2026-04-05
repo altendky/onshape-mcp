@@ -268,12 +268,12 @@ version ──► release-config ──┤  │
                       │      │  │
 build ────────────────┼──► release-npm
                       │         │
-                      └──► github-release
+                      └──► publish-release
                            (needs: release-config, version,
                             build, release-npm, cargo-publish)
 ```
 
-All quality jobs (`pre-commit`, `rust`, `coverage`, `npm`) must pass the `checks` gate before any publishing can begin. `build` and `version` start immediately in parallel. `release-config` depends on `version` and makes a single mode decision. `cargo-publish` and `release-npm` both depend on `release-config` and `checks`; `release-npm` also depends on `build`. `github-release` waits for everything.
+All quality jobs (`pre-commit`, `rust`, `coverage`, `npm`) must pass the `checks` gate before any publishing can begin. `build` and `version` start immediately in parallel. `release-config` depends on `version` and makes a single mode decision. `cargo-publish` and `release-npm` both depend on `release-config` and `checks`; `release-npm` also depends on `build`. `publish-release` waits for everything.
 
 ### Release-Config Job
 
@@ -388,7 +388,7 @@ It is generated in `reflow-publish-release.yml` on every CI run (validating the 
 
 | File | Change |
 | ---- | ------ |
-| `.github/workflows/ci.yml` | Unified CI and release entry point: version, build, release-config, tag-release, release-npm, cargo-publish, github-release jobs; `all` gate covers everything |
+| `.github/workflows/ci.yml` | Unified CI and release entry point: version, build, release-config, tag-release, release-npm, cargo-publish, publish-release jobs; `all` gate covers everything |
 | `mise.toml` | Add `release` task for creating release-prep PRs |
 | `.mergify.yml` | Auto-approve post-release PRs from `altendky-release[bot]` |
 | `docs/src/project/ci.md` | Document unified pipeline and updated job counts |
@@ -449,7 +449,7 @@ Items requiring further discussion before or during implementation.
 
 ### CI Integration
 
-- [x] CI gate: ~~blocking or non-blocking~~ Resolved: `release-npm`, `cargo-publish`, and `github-release` are all required by the `all` gate in `ci.yml`, blocking merge if any fail
+- [x] CI gate: ~~blocking or non-blocking~~ Resolved: `release-npm`, `cargo-publish`, and `publish-release` are all required by the `all` gate in `ci.yml`, blocking merge if any fail
 
 ### GitHub Release
 

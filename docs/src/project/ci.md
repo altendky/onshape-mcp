@@ -183,13 +183,13 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │      cargo package --workspace (always)                           │
 │      cargo publish in dependency order (tag push only)            │
 │                                                                   │
-│    github-release: (needs: release-config, version, build,        │
+│    publish-release: (needs: release-config, version, build,       │
 │                     release-npm, cargo-publish)                    │
 │      Package archives + SHA256SUMS (always)                       │
 │      gh release create (only when publish=true)                   │
 │                                                                   │
 │    all:                                                           │
-│      needs: [checks, release-npm, cargo-publish, github-release] │
+│      needs: [checks, release-npm, cargo-publish, publish-release]│
 │      uses: re-actors/alls-green                                  │
 └──────────────────────────────────────────────────────────────────┘
 
