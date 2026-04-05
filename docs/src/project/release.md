@@ -178,7 +178,7 @@ The release process is PR-driven: a human runs a mise task to create a release-p
 | Release | `X.Y.Z` | `0.5.0` |
 | Between releases | `X.Y.(Z+1)-dev.0` | `0.5.1-dev.0` |
 
-Semver pre-release format, valid for Cargo.toml, crates.io, and npm. The `-` in the version is the detection mechanism for `release.yml` (contains `-` = not a release commit). Post-release bump is always patch. If the next release is minor or major, the `release` mise task specifies the target version explicitly.
+Semver pre-release format, valid for Cargo.toml, crates.io, and npm. The `-` in the version is the detection mechanism for `reflow-tag-release.yml` (contains `-` = not a release commit). Post-release bump is always patch. If the next release is minor or major, the `release` mise task specifies the target version explicitly.
 
 ### Release Task (`mise run release`)
 
@@ -240,7 +240,7 @@ mise run release 0.5.0
         ▼
   release/v0.5.0 PR ──merge──► push to main
                                     │
-                             release.yml triggers
+                             ci.yml / tag-release
                                     │
                              ┌──────┴──────┐
                              │  create tag  │
@@ -260,7 +260,7 @@ mise run release 0.5.0
                                               │
                                        push to main
                                               │
-                                       release.yml triggers
+                                       ci.yml / tag-release
                                        version has `-`
                                        → exit (no-op)
 ```
