@@ -71,6 +71,9 @@ jobs:
     name: Tag release
     if: github.ref == 'refs/heads/main'
     needs: [checks]
+    concurrency:
+      group: release
+      cancel-in-progress: false
     uses: ./.github/workflows/reflow-tag-release.yml
     secrets: inherit
 
