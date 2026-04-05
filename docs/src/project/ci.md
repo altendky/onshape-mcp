@@ -185,11 +185,18 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │                                                                   │
 │    publish-release: (needs: release-config, version, build,       │
 │                     release-npm, cargo-publish)                    │
-│      Package archives + SHA256SUMS (always)                       │
-│      gh release create (only when publish=true)                   │
+│      uses: reflow-publish-release.yml                             │
+│                                                                   │
+│    tag-release: (needs: checks, main only)                        │
+│      uses: reflow-tag-release.yml                                 │
+│                                                                   │
+│    post-release: (needs: tag-release, main only, if tagged)       │
+│      uses: reflow-post-release.yml                                │
 │                                                                   │
 │    all:                                                           │
-│      needs: [checks, release-npm, cargo-publish, publish-release]│
+│      needs: [checks, tag-release, post-release,                  │
+│              release-npm, cargo-publish, publish-release]         │
+│      allowed-skips: tag-release, post-release                     │
 │      uses: re-actors/alls-green                                  │
 └──────────────────────────────────────────────────────────────────┘
 
