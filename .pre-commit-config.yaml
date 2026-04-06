@@ -37,7 +37,7 @@ repos:
         args: [-verbose]
 
   - repo: https://github.com/mpalmer/action-validator
-    rev: v0.8.0
+    rev: v0.9.0
     hooks:
       - id: action-validator
         args: [-v]
