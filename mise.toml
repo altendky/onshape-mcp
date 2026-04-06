@@ -71,7 +71,7 @@ git pull --ff-only
 
 # Check tag doesn't already exist
 git fetch --tags
-if git rev-parse "v${version}" >/dev/null 2>&1; then
+if git show-ref --verify --quiet "refs/tags/v${version}"; then
   echo "Error: tag v${version} already exists" >&2
   exit 1
 fi
