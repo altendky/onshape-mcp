@@ -247,6 +247,8 @@ pub enum IoResult<'a> {
     ApiResponse {
         /// HTTP status code.
         status: u16,
+        /// Response headers as `(name, value)` pairs.
+        headers: &'a [(String, String)],
         /// Response body as a string.
         body: &'a str,
     },
@@ -339,14 +341,23 @@ pub fn process_api_response(status: u16, body: &str) -> Result<CallToolResult, E
 pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, Vec<SideEffect>) {
     match (continuation, result) {
         // --- FormatApiResponse ---
-        (Continuation::FormatApiResponse, IoResult::ApiResponse { status, body }) => {
-            (ToolEffect::Done(process_api_response(status, body)), vec![])
-        }
+        (
+            Continuation::FormatApiResponse,
+            IoResult::ApiResponse {
+                status,
+                headers: _,
+                body,
+            },
+        ) => (ToolEffect::Done(process_api_response(status, body)), vec![]),
 
         // --- ProcessAuthValidation ---
         (
             Continuation::ProcessAuthValidation { resolved_auth },
-            IoResult::ApiResponse { status, body: _ },
+            IoResult::ApiResponse {
+                status,
+                headers: _,
+                body: _,
+            },
         ) => resume_auth_validation(status, &resolved_auth),
 
         // --- ProcessScreenshotResponse ---
@@ -356,7 +367,11 @@ pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, 
                 label,
                 view_matrix,
             },
-            IoResult::ApiResponse { status, body },
+            IoResult::ApiResponse {
+                status,
+                headers: _,
+                body,
+            },
         ) => resume_screenshot_response(status, body, output_path, label, view_matrix),
 
         // --- FormatScreenshotWrite ---
@@ -2839,6 +2854,7 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 200,
+                headers: &[],
                 body: r#"{"id": "user123"}"#,
             },
         );
@@ -2881,6 +2897,7 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 401,
+                headers: &[],
                 body: "Unauthorized",
             },
         );
@@ -2920,6 +2937,7 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 500,
+                headers: &[],
                 body: "Internal Server Error",
             },
         );
@@ -3716,6 +3734,7 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 500,
+                headers: &[],
                 body: "Internal Server Error",
             },
         );
@@ -3750,6 +3769,7 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 200,
+                headers: &[],
                 body: &body,
             },
         );
@@ -3874,6 +3894,7 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 200,
+                headers: &[],
                 body: &body,
             },
         );

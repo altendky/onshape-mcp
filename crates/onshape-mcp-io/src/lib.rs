@@ -520,13 +520,8 @@ async fn dispatch_tool_effect(
                     Ok(raw) => {
                         update_implicit_validation(validation, raw.status).await;
 
-                        let (next_effect, side_effects) = tools::resume(
-                            continuation,
-                            IoResult::ApiResponse {
-                                status: raw.status,
-                                body: &raw.body,
-                            },
-                        );
+                        let (next_effect, side_effects) =
+                            resume_with_raw_response(continuation, &raw)?;
 
                         for effect in side_effects {
                             apply_side_effect(validation, effect).await;
@@ -656,30 +651,47 @@ async fn read_files(reads: &[tools::FileRead]) -> Vec<tools::FileReadResult> {
 // API Request Execution
 // ============================================================================
 
-/// Result of executing a raw API request: HTTP status code and response body text.
+/// Result of executing a raw API request: HTTP status code, headers, and bytes.
 #[derive(Debug)]
 struct RawResponse {
     status: u16,
-    body: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
 }
 
-fn raw_response_from_api_response(response: &ApiResponse) -> Result<RawResponse, McpError> {
-    let body = response
-        .body
-        .text()
-        .map_err(|e| {
+impl RawResponse {
+    fn body_text(&self) -> Result<&str, McpError> {
+        std::str::from_utf8(&self.body).map_err(|e| {
             McpError::new(
                 ErrorCode::INTERNAL_ERROR,
                 format!("API response body is not valid UTF-8: {e}"),
                 None,
             )
-        })?
-        .to_owned();
+        })
+    }
+}
 
-    Ok(RawResponse {
+fn raw_response_from_api_response(response: ApiResponse) -> RawResponse {
+    RawResponse {
         status: response.status,
-        body,
-    })
+        headers: response.headers,
+        body: response.body.bytes,
+    }
+}
+
+fn resume_with_raw_response(
+    continuation: tools::Continuation,
+    raw: &RawResponse,
+) -> Result<(ToolEffect, Vec<SideEffect>), McpError> {
+    let body = raw.body_text()?;
+    Ok(tools::resume(
+        continuation,
+        IoResult::ApiResponse {
+            status: raw.status,
+            headers: &raw.headers,
+            body,
+        },
+    ))
 }
 
 /// Error response when credentials are not configured.
@@ -702,16 +714,15 @@ fn oauth_pending_error() -> CallToolResult {
     )])
 }
 
-/// Execute a raw API request, returning the HTTP status and body.
+/// Execute a raw API request, returning the HTTP status, headers, and body bytes.
 ///
 /// Handles authentication (Basic or OAuth with proactive/reactive refresh)
 /// but does not process the response into a `CallToolResult`.
 /// For OAuth, also handles permanent refresh failures by transitioning to
 /// `OAuthPending` state.
 ///
-/// Returns `None` for states where no API call can be made (`NotConfigured`,
-/// `OAuthPending`). The caller should handle these with [`not_configured_error`]
-/// or [`oauth_pending_error`] before calling this function.
+/// The caller must handle states where no API call can be made (`NotConfigured`,
+/// `OAuthPending`) before calling this function.
 async fn execute_raw_api_request(
     state: &mut ApiState,
     api_req: &onshape_client_core::request::ApiRequest,
@@ -729,13 +740,13 @@ async fn execute_raw_api_request(
     }
 }
 
-/// Execute a raw request with Basic auth — returns status and body.
+/// Execute a raw request with Basic auth.
 async fn execute_basic_raw(
     client: &OnshapeClient,
     api_req: &onshape_client_core::request::ApiRequest,
 ) -> Result<RawResponse, McpError> {
     match client.execute(api_req).await {
-        Ok(response) => raw_response_from_api_response(&response),
+        Ok(response) => Ok(raw_response_from_api_response(response)),
         Err(e) => Err(McpError::new(
             rmcp::model::ErrorCode::INTERNAL_ERROR,
             format!("HTTP request failed: {e}"),
@@ -760,11 +771,8 @@ enum OAuthExecuteResult {
     },
 }
 
-fn oauth_execute_result_from_api_response(response: &ApiResponse) -> OAuthExecuteResult {
-    match raw_response_from_api_response(response) {
-        Ok(raw) => OAuthExecuteResult::Ok(raw),
-        Err(e) => OAuthExecuteResult::Err(e),
-    }
+fn oauth_execute_result_from_api_response(response: ApiResponse) -> OAuthExecuteResult {
+    OAuthExecuteResult::Ok(raw_response_from_api_response(response))
 }
 
 /// Execute a raw request with OAuth, including proactive and reactive refresh.
@@ -808,7 +816,7 @@ async fn execute_oauth_inner(
         }
         let retry = oauth.client.execute(api_req).await;
         return match retry {
-            Ok(response) => oauth_execute_result_from_api_response(&response),
+            Ok(response) => oauth_execute_result_from_api_response(response),
             Err(e) => OAuthExecuteResult::Err(McpError::new(
                 rmcp::model::ErrorCode::INTERNAL_ERROR,
                 format!("HTTP request failed on retry: {e}"),
@@ -818,7 +826,7 @@ async fn execute_oauth_inner(
     }
 
     match result {
-        Ok(response) => oauth_execute_result_from_api_response(&response),
+        Ok(response) => oauth_execute_result_from_api_response(response),
         Err(e) => OAuthExecuteResult::Err(McpError::new(
             rmcp::model::ErrorCode::INTERNAL_ERROR,
             format!("HTTP request failed: {e}"),
@@ -877,7 +885,8 @@ async fn execute_oauth_raw(
             // process it appropriately.
             Ok(RawResponse {
                 status: 401,
-                body: message,
+                headers: vec![],
+                body: message.into_bytes(),
             })
         }
     }
@@ -950,7 +959,7 @@ async fn execute_http_oauth_raw(
                 // Retry the request with the refreshed token.
                 let retry = http_oauth.client.execute(api_req).await;
                 return match retry {
-                    Ok(response) => raw_response_from_api_response(&response),
+                    Ok(response) => Ok(raw_response_from_api_response(response)),
                     Err(e) => Err(McpError::new(
                         rmcp::model::ErrorCode::INTERNAL_ERROR,
                         format!("HTTP request failed on retry: {e}"),
@@ -961,10 +970,12 @@ async fn execute_http_oauth_raw(
             Err(oauth_server::UserTokenRefreshError::PermanentExchange(msg)) => {
                 return Ok(RawResponse {
                     status: 401,
+                    headers: vec![],
                     body: format!(
                         "Onshape token refresh permanently failed ({msg}). \
                          Please re-authenticate by completing the OAuth flow again."
-                    ),
+                    )
+                    .into_bytes(),
                 });
             }
             Err(e) => {
@@ -978,7 +989,7 @@ async fn execute_http_oauth_raw(
     }
 
     match result {
-        Ok(response) => raw_response_from_api_response(&response),
+        Ok(response) => Ok(raw_response_from_api_response(response)),
         Err(e) => Err(McpError::new(
             rmcp::model::ErrorCode::INTERNAL_ERROR,
             format!("HTTP request failed: {e}"),
@@ -1803,28 +1814,55 @@ mod tests {
     // --- raw response conversion tests ---
 
     #[test]
-    fn raw_response_from_api_response_decodes_utf8_text() {
+    fn raw_response_from_api_response_preserves_bytes_and_headers() {
         let response = ApiResponse {
             status: 200,
             headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
             body: ResponseBody::from("ok"),
         };
 
-        let raw = raw_response_from_api_response(&response).expect("should decode response");
+        let raw = raw_response_from_api_response(response);
 
         assert_eq!(raw.status, 200);
-        assert_eq!(raw.body, "ok");
+        assert_eq!(
+            raw.headers,
+            vec![("Content-Type".to_string(), "text/plain".to_string())]
+        );
+        assert_eq!(raw.body, b"ok");
+        assert_eq!(raw.body_text().expect("should decode response"), "ok");
     }
 
     #[test]
-    fn raw_response_from_api_response_rejects_invalid_utf8() {
+    fn raw_response_body_text_rejects_invalid_utf8() {
         let response = ApiResponse {
             status: 200,
             headers: vec![],
             body: ResponseBody::from(vec![0xff]),
         };
 
-        let err = raw_response_from_api_response(&response).expect_err("should reject response");
+        let raw = raw_response_from_api_response(response);
+        let err = raw.body_text().expect_err("should reject response");
+
+        assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+        assert!(
+            err.message.contains("not valid UTF-8"),
+            "unexpected error message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn resume_with_raw_response_rejects_invalid_utf8_before_continuation() {
+        let raw = RawResponse {
+            status: 200,
+            headers: vec![],
+            body: vec![0xff],
+        };
+
+        let Err(err) = resume_with_raw_response(tools::Continuation::FormatApiResponse, &raw)
+        else {
+            panic!("should reject invalid UTF-8 response");
+        };
 
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
         assert!(
