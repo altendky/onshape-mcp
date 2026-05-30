@@ -24,6 +24,7 @@ use onshape_client_io::{ClientAuthConfig, ClientConfig, OnshapeClient};
 
 use onshape_mcp_core::ValidationState;
 
+use crate::oauth::McpOAuthTokenFile;
 use crate::{ApiState, OAuthApiState, OAuthPendingState, REFRESH_MARGIN_SECS};
 
 /// Debounce interval for file change events.
@@ -199,7 +200,7 @@ async fn handle_token_change(
 ) {
     // Try to load the token file. If it fails (e.g., partial write, deleted),
     // just ignore and wait for the next event.
-    let Ok(token_data) = crate::oauth::load_token_file(&ctx.token_path) else {
+    let Ok(token_file) = crate::oauth::load_token_file(&ctx.token_path) else {
         return;
     };
 
@@ -211,7 +212,7 @@ async fn handle_token_change(
     // OpenCode plugin). If we're not configured and the file has credentials,
     // transition directly to OAuth.
     let transition = if matches!(&*state, ApiState::NotConfigured { .. }) {
-        build_oauth_from_token_file(ctx, token_data.clone()).ok()
+        build_oauth_from_token_file(ctx, token_file.clone()).ok()
     } else {
         None
     };
@@ -225,7 +226,7 @@ async fn handle_token_change(
 
     // Case 2: Transition from OAuthPending → OAuth.
     let transition = if let ApiState::OAuthPending(pending) = &*state {
-        build_oauth_from_pending(pending, token_data.clone()).ok()
+        build_oauth_from_pending(pending, token_file.clone()).ok()
     } else {
         None
     };
@@ -241,8 +242,9 @@ async fn handle_token_change(
     if let ApiState::OAuth(oauth) = &mut *state
         && oauth
             .session
-            .apply_external_tokens(token_data, chrono::Utc::now())
+            .apply_external_tokens(token_file.tokens.clone(), chrono::Utc::now())
     {
+        oauth.token_metadata = oauth.refresh_method.token_metadata_from_file(&token_file);
         // Tokens were updated — rebuild the HTTP client.
         let _ = oauth.rebuild_client();
         // Reset validation — external token refresh means credentials changed.
@@ -257,10 +259,14 @@ async fn handle_token_change(
 /// `proxy_url` (proxy mode).
 fn build_oauth_from_token_file(
     ctx: &WatcherContext,
-    token_data: onshape_client_core::oauth::OAuthTokenData,
+    token_file: McpOAuthTokenFile,
 ) -> Result<OAuthApiState, Box<dyn std::error::Error + Send + Sync>> {
-    let refresh_method = refresh_method_from_token_data(&token_data)?;
-    let session = OAuthSession::new(token_data, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
+    let refresh_method = refresh_method_from_token_file(&token_file)?;
+    let token_metadata = refresh_method.token_metadata_from_file(&token_file);
+    let session = OAuthSession::new(
+        token_file.tokens,
+        chrono::Duration::seconds(REFRESH_MARGIN_SECS),
+    );
 
     let client = OnshapeClient::new(ClientConfig {
         base_url: ctx.base_url.clone(),
@@ -277,6 +283,7 @@ fn build_oauth_from_token_file(
 
     Ok(OAuthApiState {
         session,
+        token_metadata,
         refresh_method,
         client,
         refresh_http,
@@ -287,22 +294,22 @@ fn build_oauth_from_token_file(
 }
 
 /// Determine the refresh method from token file data.
-fn refresh_method_from_token_data(
-    token_data: &onshape_client_core::oauth::OAuthTokenData,
+fn refresh_method_from_token_file(
+    token_file: &McpOAuthTokenFile,
 ) -> Result<crate::RefreshMethod, Box<dyn std::error::Error + Send + Sync>> {
     // Proxy mode: token file has proxy_url.
-    if let Some(proxy_url) = &token_data.proxy_url {
+    if let Some(proxy_url) = &token_file.proxy_url {
         return Ok(crate::RefreshMethod::Proxy {
             proxy_url: proxy_url.clone(),
         });
     }
 
     // Direct mode: token file has client_id + client_secret.
-    let client_id = token_data
+    let client_id = token_file
         .client_id
         .clone()
         .ok_or("token file missing client_id and proxy_url")?;
-    let client_secret = token_data
+    let client_secret = token_file
         .client_secret
         .clone()
         .ok_or("token file missing client_secret and proxy_url")?;
@@ -318,7 +325,7 @@ fn refresh_method_from_token_data(
 /// Build a full `OAuthApiState` from a pending state and token data.
 fn build_oauth_from_pending(
     pending: &OAuthPendingState,
-    token_data: onshape_client_core::oauth::OAuthTokenData,
+    token_file: McpOAuthTokenFile,
 ) -> Result<OAuthApiState, Box<dyn std::error::Error + Send + Sync>> {
     let refresh_method = match &pending.refresh_method {
         crate::PendingRefreshMethod::Direct {
@@ -337,7 +344,11 @@ fn build_oauth_from_pending(
         },
     };
 
-    let session = OAuthSession::new(token_data, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
+    let token_metadata = refresh_method.token_metadata_from_file(&token_file);
+    let session = OAuthSession::new(
+        token_file.tokens,
+        chrono::Duration::seconds(REFRESH_MARGIN_SECS),
+    );
 
     let client = OnshapeClient::new(ClientConfig {
         base_url: pending.base_url.clone(),
@@ -354,6 +365,7 @@ fn build_oauth_from_pending(
 
     Ok(OAuthApiState {
         session,
+        token_metadata,
         refresh_method,
         client,
         refresh_http,

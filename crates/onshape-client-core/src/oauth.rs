@@ -1,10 +1,8 @@
 //! OAuth 2.0 types and constants for the Onshape API.
 //!
-//! Provides pure data types for OAuth token storage, Onshape-specific
+//! Provides pure data types for OAuth token material, Onshape-specific
 //! OAuth endpoint constants, and an [`oauth2`] client builder.
 //! No HTTP client or async runtime — all I/O is handled by the I/O layer.
-
-use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use oauth2::basic::{BasicClient, BasicTokenResponse};
@@ -52,11 +50,11 @@ pub fn onshape_token_url() -> TokenUrl {
 // Token Data
 // ============================================================================
 
-/// OAuth 2.0 token data, serializable to/from JSON for file storage.
+/// OAuth 2.0 token material.
 ///
 /// Contains the access token, refresh token, and optional expiration time.
 /// Token values use [`oauth2::AccessToken`] and [`oauth2::RefreshToken`] types,
-/// with custom serde implementations for JSON file persistence.
+/// with custom serde implementations for JSON persistence by callers.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OAuthTokenData {
     /// The OAuth 2.0 access token.
@@ -93,33 +91,6 @@ pub struct OAuthTokenData {
     /// scope tracking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
-    /// OAuth client ID used to obtain these tokens.
-    ///
-    /// Stored alongside tokens so the MCP server can refresh them without
-    /// requiring separate configuration. Written by the `OpenCode` plugin
-    /// during `opencode auth login`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-    /// OAuth client secret used to obtain these tokens.
-    ///
-    /// Stored alongside tokens so the MCP server can refresh them without
-    /// requiring separate configuration. Written by the `OpenCode` plugin
-    /// during `opencode auth login`.
-    ///
-    /// Mutually exclusive with `proxy_url` — tokens use either direct
-    /// (`client_secret`) or proxy-based refresh.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_secret: Option<String>,
-    /// OAuth token exchange proxy URL.
-    ///
-    /// When present, the MCP server refreshes tokens via this proxy
-    /// (which holds the client secret) instead of contacting Onshape
-    /// directly.  Written by the `OpenCode` plugin when the user
-    /// authenticates via the proxy flow.
-    ///
-    /// Mutually exclusive with `client_secret`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proxy_url: Option<String>,
 }
 
 impl OAuthTokenData {
@@ -169,11 +140,6 @@ impl OAuthTokenData {
             expires_at,
             token_type: response.token_type().as_ref().to_string(),
             scopes,
-            // Client credentials and proxy URL are not in the token response —
-            // they are preserved from the previous token data by the caller.
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         }
     }
 }
@@ -181,8 +147,6 @@ impl OAuthTokenData {
 impl OAuthTokenData {
     /// Build token data from raw field values (e.g. parsed from a proxy response).
     ///
-    /// The caller is responsible for preserving `client_id`, `client_secret`,
-    /// and `proxy_url` from the previous token data.
     #[must_use]
     pub fn from_raw(
         access_token: String,
@@ -197,9 +161,6 @@ impl OAuthTokenData {
             expires_at,
             token_type,
             scopes,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         }
     }
 }
@@ -301,34 +262,6 @@ pub fn onshape_oauth_client(client_id: &str, client_secret: &str) -> OnshapeOAut
 }
 
 // ============================================================================
-// Token File Path
-// ============================================================================
-
-/// Returns the default data directory for onshape-mcp on the current platform.
-///
-/// - **Unix:** `~/.local/share/onshape-mcp/`
-/// - **macOS:** `~/Library/Application Support/onshape-mcp/`
-/// - **Windows:** `%LOCALAPPDATA%\onshape-mcp\`
-///
-/// Returns `None` if the platform data directory cannot be determined.
-#[must_use]
-pub fn default_data_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("onshape-mcp"))
-}
-
-/// Returns the default token file path for the current platform.
-///
-/// - **Unix:** `~/.local/share/onshape-mcp/tokens.json`
-/// - **macOS:** `~/Library/Application Support/onshape-mcp/tokens.json`
-/// - **Windows:** `%LOCALAPPDATA%\onshape-mcp\tokens.json`
-///
-/// Returns `None` if the platform data directory cannot be determined.
-#[must_use]
-pub fn default_token_file_path() -> Option<PathBuf> {
-    default_data_dir().map(|dir| dir.join("tokens.json"))
-}
-
-// ============================================================================
 // OAuth Session (Refresh State Machine)
 // ============================================================================
 
@@ -414,12 +347,6 @@ impl OAuthSession {
         if response.refresh_token().is_none() {
             new_tokens.refresh_token = self.tokens.refresh_token.clone();
         }
-        // Client credentials are not in the token response — preserve them
-        // from the previous token data so they are persisted back to disk.
-        new_tokens.client_id.clone_from(&self.tokens.client_id);
-        new_tokens
-            .client_secret
-            .clone_from(&self.tokens.client_secret);
         self.tokens = new_tokens;
     }
 
@@ -646,9 +573,6 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -685,9 +609,6 @@ mod tests {
             expires_at: Some(expires),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let roundtripped: OAuthTokenData = serde_json::from_str(&json).expect("should deserialize");
@@ -705,9 +626,6 @@ mod tests {
             expires_at: Some(expires),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("should parse")
@@ -726,9 +644,6 @@ mod tests {
             expires_at: Some(expires),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         assert!(tokens.is_expired(expires));
     }
@@ -744,9 +659,6 @@ mod tests {
             expires_at: Some(expires),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("should parse")
@@ -762,9 +674,6 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("should parse")
@@ -853,9 +762,6 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: Some(vec!["OAuth2Read".into(), "OAuth2Write".into()]),
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -873,9 +779,6 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let json = serde_json::to_string(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -883,17 +786,6 @@ mod tests {
             value.get("scopes").is_none(),
             "scopes should be omitted from JSON when None"
         );
-    }
-
-    #[test]
-    fn default_token_file_path_returns_some() {
-        // This test may fail in environments without a home directory,
-        // but it should work in typical development environments.
-        let path = default_token_file_path();
-        if let Some(ref p) = path {
-            assert!(p.ends_with("onshape-mcp/tokens.json"));
-        }
-        // Don't assert Some -- CI containers may not have a data dir
     }
 
     #[test]
@@ -996,9 +888,6 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let json = serde_json::to_string_pretty(&tokens).expect("should serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
@@ -1027,9 +916,6 @@ mod tests {
             ),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -1050,9 +936,6 @@ mod tests {
             ),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -1073,9 +956,6 @@ mod tests {
             ),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -1091,9 +971,6 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let now = Utc::now();
         assert!(!tokens.is_expiring_soon(now, chrono::Duration::seconds(60)));
@@ -1111,9 +988,6 @@ mod tests {
             ),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
@@ -1134,9 +1008,6 @@ mod tests {
                 expires_at,
                 token_type: "bearer".into(),
                 scopes: None,
-                client_id: None,
-                client_secret: None,
-                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         )
@@ -1250,9 +1121,6 @@ mod tests {
                 expires_at: Some(now + chrono::Duration::seconds(100)),
                 token_type: "bearer".into(),
                 scopes: None,
-                client_id: None,
-                client_secret: None,
-                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1262,9 +1130,6 @@ mod tests {
             expires_at: Some(now + chrono::Duration::seconds(3600)),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         assert!(session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "new-at");
@@ -1283,9 +1148,6 @@ mod tests {
                 expires_at: Some(now + chrono::Duration::seconds(3600)),
                 token_type: "bearer".into(),
                 scopes: None,
-                client_id: None,
-                client_secret: None,
-                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1295,9 +1157,6 @@ mod tests {
             expires_at: Some(now + chrono::Duration::seconds(3600)),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1315,9 +1174,6 @@ mod tests {
                 expires_at: Some(now - chrono::Duration::seconds(100)),
                 token_type: "bearer".into(),
                 scopes: None,
-                client_id: None,
-                client_secret: None,
-                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1327,9 +1183,6 @@ mod tests {
             expires_at: Some(now - chrono::Duration::seconds(50)),
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1345,9 +1198,6 @@ mod tests {
                 expires_at: None,
                 token_type: "bearer".into(),
                 scopes: None,
-                client_id: None,
-                client_secret: None,
-                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1357,9 +1207,6 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1377,9 +1224,6 @@ mod tests {
                 expires_at: Some(now + chrono::Duration::seconds(100)),
                 token_type: "bearer".into(),
                 scopes: None,
-                client_id: None,
-                client_secret: None,
-                proxy_url: None,
             },
             chrono::Duration::seconds(60),
         );
@@ -1389,9 +1233,6 @@ mod tests {
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         };
         assert!(!session.apply_external_tokens(file_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
@@ -1444,65 +1285,6 @@ mod tests {
         assert!(session.tokens.expires_at.is_none());
     }
 
-    // ====================================================================
-    // Proxy URL serde tests
-    // ====================================================================
-
-    #[test]
-    fn token_data_roundtrips_with_proxy_url() {
-        let tokens = OAuthTokenData {
-            access_token: AccessToken::new("at".to_string()),
-            refresh_token: RefreshToken::new("rt".to_string()),
-            expires_at: None,
-            token_type: "bearer".into(),
-            scopes: None,
-            client_id: Some("cid".into()),
-            client_secret: None,
-            proxy_url: Some("https://proxy.example.com".into()),
-        };
-        let json = serde_json::to_string(&tokens).expect("should serialize");
-        let roundtripped: OAuthTokenData = serde_json::from_str(&json).expect("should deserialize");
-        assert_eq!(
-            roundtripped.proxy_url.as_deref(),
-            Some("https://proxy.example.com")
-        );
-        assert_eq!(roundtripped.client_id.as_deref(), Some("cid"));
-        assert!(roundtripped.client_secret.is_none());
-    }
-
-    #[test]
-    fn token_data_backward_compat_without_proxy_url() {
-        // Old token files don't have proxy_url — should deserialize to None.
-        let json = r#"{
-            "access_token": "at",
-            "refresh_token": "rt",
-            "token_type": "bearer",
-            "client_id": "cid",
-            "client_secret": "cs"
-        }"#;
-        let tokens: OAuthTokenData = serde_json::from_str(json).expect("should deserialize");
-        assert!(tokens.proxy_url.is_none());
-        assert_eq!(tokens.client_id.as_deref(), Some("cid"));
-        assert_eq!(tokens.client_secret.as_deref(), Some("cs"));
-    }
-
-    #[test]
-    fn token_data_proxy_url_omitted_from_json_when_none() {
-        let tokens = OAuthTokenData {
-            access_token: AccessToken::new("at".to_string()),
-            refresh_token: RefreshToken::new("rt".to_string()),
-            expires_at: None,
-            token_type: "bearer".into(),
-            scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
-        };
-        let json = serde_json::to_string(&tokens).expect("should serialize");
-        let value: serde_json::Value = serde_json::from_str(&json).expect("should be valid JSON");
-        assert!(value.get("proxy_url").is_none());
-    }
-
     #[test]
     fn from_raw_creates_token_data() {
         let tokens = OAuthTokenData::from_raw(
@@ -1520,9 +1302,6 @@ mod tests {
             tokens.scopes,
             Some(vec!["OAuth2Read".into(), "OAuth2Write".into()])
         );
-        assert!(tokens.client_id.is_none());
-        assert!(tokens.client_secret.is_none());
-        assert!(tokens.proxy_url.is_none());
     }
 
     // ====================================================================

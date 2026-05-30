@@ -2,11 +2,80 @@
 //!
 //! Handles reading and writing OAuth token files with proper permission checks.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use onshape_client_core::oauth::OAuthTokenData;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{ConfigLoadError, check_file_permissions};
+
+/// Returns the default data directory for onshape-mcp on the current platform.
+///
+/// - **Unix:** `~/.local/share/onshape-mcp/`
+/// - **macOS:** `~/Library/Application Support/onshape-mcp/`
+/// - **Windows:** `%LOCALAPPDATA%\onshape-mcp\`
+///
+/// Returns `None` if the platform data directory cannot be determined.
+#[must_use]
+pub fn default_data_dir() -> Option<PathBuf> {
+    dirs::data_dir().map(|dir| dir.join("onshape-mcp"))
+}
+
+/// Returns the default token file path for the current platform.
+///
+/// - **Unix:** `~/.local/share/onshape-mcp/tokens.json`
+/// - **macOS:** `~/Library/Application Support/onshape-mcp/tokens.json`
+/// - **Windows:** `%LOCALAPPDATA%\onshape-mcp\tokens.json`
+///
+/// Returns `None` if the platform data directory cannot be determined.
+#[must_use]
+pub fn default_token_file_path() -> Option<PathBuf> {
+    default_data_dir().map(|dir| dir.join("tokens.json"))
+}
+
+/// MCP-owned OAuth token-file metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct McpOAuthTokenMetadata {
+    /// OAuth client ID used to obtain these tokens.
+    pub(crate) client_id: Option<String>,
+    /// OAuth client secret used for direct refresh.
+    pub(crate) client_secret: Option<String>,
+    /// OAuth token exchange proxy URL used for proxy refresh.
+    pub(crate) proxy_url: Option<String>,
+}
+
+impl McpOAuthTokenMetadata {
+    /// Combines this metadata with fresh token material for persistence.
+    #[must_use]
+    pub(crate) fn with_tokens(&self, tokens: OAuthTokenData) -> McpOAuthTokenFile {
+        McpOAuthTokenFile {
+            tokens,
+            client_id: self.client_id.clone(),
+            client_secret: self.client_secret.clone(),
+            proxy_url: self.proxy_url.clone(),
+        }
+    }
+}
+
+/// MCP OAuth token-file shape.
+///
+/// The token material is flattened so serialization stays compatible with the
+/// existing persisted `tokens.json` shape.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct McpOAuthTokenFile {
+    /// Common OAuth token material.
+    #[serde(flatten)]
+    pub(crate) tokens: OAuthTokenData,
+    /// OAuth client ID used to obtain these tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) client_id: Option<String>,
+    /// OAuth client secret used for direct refresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) client_secret: Option<String>,
+    /// OAuth token exchange proxy URL used for proxy refresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) proxy_url: Option<String>,
+}
 
 /// Loads OAuth token data from a JSON file.
 ///
@@ -18,7 +87,7 @@ use crate::config::{ConfigLoadError, check_file_permissions};
 /// - The file cannot be read
 /// - The file has insecure permissions (Unix only)
 /// - The JSON content cannot be parsed
-pub fn load_token_file(path: &Path) -> Result<OAuthTokenData, TokenFileError> {
+pub(crate) fn load_token_file(path: &Path) -> Result<McpOAuthTokenFile, TokenFileError> {
     check_file_permissions(path).map_err(|e| match e {
         ConfigLoadError::InsecurePermissions { path, mode } => {
             TokenFileError::InsecurePermissions { path, mode }
@@ -51,7 +120,10 @@ pub fn load_token_file(path: &Path) -> Result<OAuthTokenData, TokenFileError> {
 /// # Errors
 ///
 /// Returns an error if the file cannot be written or permissions cannot be set.
-pub fn save_token_file(path: &Path, tokens: &OAuthTokenData) -> Result<(), TokenFileError> {
+pub(crate) fn save_token_file(
+    path: &Path,
+    token_file: &McpOAuthTokenFile,
+) -> Result<(), TokenFileError> {
     // Create parent directories if needed
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|source| TokenFileError::Write {
@@ -61,7 +133,7 @@ pub fn save_token_file(path: &Path, tokens: &OAuthTokenData) -> Result<(), Token
     }
 
     let content =
-        serde_json::to_string_pretty(tokens).map_err(|source| TokenFileError::Serialize {
+        serde_json::to_string_pretty(token_file).map_err(|source| TokenFileError::Serialize {
             path: path.display().to_string(),
             source,
         })?;
@@ -155,16 +227,28 @@ mod tests {
 
     use super::*;
 
-    fn test_tokens() -> OAuthTokenData {
+    fn test_token_file() -> McpOAuthTokenFile {
+        McpOAuthTokenFile {
+            tokens: OAuthTokenData {
+                access_token: AccessToken::new("test-access-token".to_string()),
+                refresh_token: RefreshToken::new("test-refresh-token".to_string()),
+                expires_at: None,
+                token_type: "bearer".into(),
+                scopes: None,
+            },
+            client_id: None,
+            client_secret: None,
+            proxy_url: None,
+        }
+    }
+
+    fn test_token_material() -> OAuthTokenData {
         OAuthTokenData {
             access_token: AccessToken::new("test-access-token".to_string()),
             refresh_token: RefreshToken::new("test-refresh-token".to_string()),
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
-            client_id: None,
-            client_secret: None,
-            proxy_url: None,
         }
     }
 
@@ -173,13 +257,88 @@ mod tests {
         let dir = TempDir::new().expect("should create temp dir");
         let path = dir.path().join("tokens.json");
 
-        let tokens = test_tokens();
-        save_token_file(&path, &tokens).expect("should save");
+        let token_file = test_token_file();
+        save_token_file(&path, &token_file).expect("should save");
         let loaded = load_token_file(&path).expect("should load");
 
-        assert_eq!(loaded.access_token.secret(), "test-access-token");
-        assert_eq!(loaded.refresh_token.secret(), "test-refresh-token");
-        assert_eq!(loaded.token_type, "bearer");
+        assert_eq!(loaded.tokens.access_token.secret(), "test-access-token");
+        assert_eq!(loaded.tokens.refresh_token.secret(), "test-refresh-token");
+        assert_eq!(loaded.tokens.token_type, "bearer");
+    }
+
+    #[test]
+    fn direct_token_file_serializes_as_flat_json() {
+        let token_file = McpOAuthTokenFile {
+            tokens: test_token_material(),
+            client_id: Some("client-id".to_string()),
+            client_secret: Some("client-secret".to_string()),
+            proxy_url: None,
+        };
+
+        let value = serde_json::to_value(&token_file).expect("should serialize");
+
+        assert_eq!(value["access_token"], "test-access-token");
+        assert_eq!(value["refresh_token"], "test-refresh-token");
+        assert_eq!(value["token_type"], "bearer");
+        assert_eq!(value["client_id"], "client-id");
+        assert_eq!(value["client_secret"], "client-secret");
+        assert!(value.get("tokens").is_none());
+        assert!(value.get("proxy_url").is_none());
+    }
+
+    #[test]
+    fn proxy_token_file_fixture_preserves_flat_json_shape() {
+        let json = r#"{
+            "access_token": "proxy-access",
+            "refresh_token": "proxy-refresh",
+            "token_type": "bearer",
+            "client_id": "proxy-client-id",
+            "proxy_url": "https://proxy.example.com"
+        }"#;
+
+        let token_file: McpOAuthTokenFile = serde_json::from_str(json).expect("should deserialize");
+        assert_eq!(token_file.tokens.access_token.secret(), "proxy-access");
+        assert_eq!(token_file.tokens.refresh_token.secret(), "proxy-refresh");
+        assert_eq!(token_file.client_id.as_deref(), Some("proxy-client-id"));
+        assert_eq!(
+            token_file.proxy_url.as_deref(),
+            Some("https://proxy.example.com")
+        );
+        assert!(token_file.client_secret.is_none());
+
+        let value = serde_json::to_value(&token_file).expect("should serialize");
+        assert_eq!(value["access_token"], "proxy-access");
+        assert_eq!(value["client_id"], "proxy-client-id");
+        assert_eq!(value["proxy_url"], "https://proxy.example.com");
+        assert!(value.get("tokens").is_none());
+        assert!(value.get("client_secret").is_none());
+    }
+
+    #[test]
+    fn metadata_combines_with_fresh_token_material() {
+        let metadata = McpOAuthTokenMetadata {
+            client_id: Some("client-id".to_string()),
+            client_secret: None,
+            proxy_url: Some("https://proxy.example.com".to_string()),
+        };
+
+        let token_file = metadata.with_tokens(test_token_material());
+
+        assert_eq!(token_file.tokens.access_token.secret(), "test-access-token");
+        assert_eq!(token_file.client_id.as_deref(), Some("client-id"));
+        assert_eq!(
+            token_file.proxy_url.as_deref(),
+            Some("https://proxy.example.com")
+        );
+        assert!(token_file.client_secret.is_none());
+    }
+
+    #[test]
+    fn default_token_file_path_returns_mcp_path_when_available() {
+        let path = default_token_file_path();
+        if let Some(ref p) = path {
+            assert!(p.ends_with("onshape-mcp/tokens.json"));
+        }
     }
 
     #[test]
@@ -187,7 +346,7 @@ mod tests {
         let dir = TempDir::new().expect("should create temp dir");
         let path = dir.path().join("nested").join("dir").join("tokens.json");
 
-        save_token_file(&path, &test_tokens()).expect("should save");
+        save_token_file(&path, &test_token_file()).expect("should save");
         assert!(path.exists());
     }
 
@@ -199,7 +358,7 @@ mod tests {
         let dir = TempDir::new().expect("should create temp dir");
         let path = dir.path().join("tokens.json");
 
-        save_token_file(&path, &test_tokens()).expect("should save");
+        save_token_file(&path, &test_token_file()).expect("should save");
 
         let metadata = std::fs::metadata(&path).expect("should read metadata");
         let mode = metadata.permissions().mode() & 0o777;
@@ -215,7 +374,7 @@ mod tests {
         let path = dir.path().join("tokens.json");
 
         // Write token file then set insecure permissions
-        save_token_file(&path, &test_tokens()).expect("should save");
+        save_token_file(&path, &test_token_file()).expect("should save");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
             .expect("should set permissions");
 

@@ -13,7 +13,6 @@ categories = ["api-bindings"]
 [dependencies]
 base64.workspace = true
 chrono.workspace = true
-dirs.workspace = true
 oauth2.workspace = true
 schemars.workspace = true
 secrecy.workspace = true
