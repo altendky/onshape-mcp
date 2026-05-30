@@ -17,7 +17,7 @@ next step. After implementing and verifying that step, mark it complete in this
 section. If a step is blocked, leave it unchecked and add a short note explaining
 what decision or dependency is missing.
 
-- [ ] 1. Add byte/header-capable responses.
+- [x] 1. Add byte/header-capable responses.
 - [ ] 2. Update the reqwest executor.
 - [ ] 3. Adapt MCP at the boundary.
 - [ ] 4. Move MCP defaults and persistence metadata out of common OAuth.

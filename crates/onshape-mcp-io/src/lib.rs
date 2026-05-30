@@ -32,6 +32,7 @@ use onshape_client_core::oauth::{
     OAuthSession, OnshapeOAuthClient, PostExecuteAction, PreExecuteAction, default_token_file_path,
     onshape_oauth_client,
 };
+use onshape_client_core::request::ApiResponse;
 use onshape_client_io::{ClientAuthConfig, ClientConfig, OnshapeClient};
 use onshape_mcp_core::ValidationState;
 use onshape_mcp_core::config::{AppConfig, AuthInventory, ResolvedAuth, TokenStatus, resolve_auth};
@@ -655,10 +656,30 @@ async fn read_files(reads: &[tools::FileRead]) -> Vec<tools::FileReadResult> {
 // API Request Execution
 // ============================================================================
 
-/// Result of executing a raw API request: HTTP status code and response body.
+/// Result of executing a raw API request: HTTP status code and response body text.
+#[derive(Debug)]
 struct RawResponse {
     status: u16,
     body: String,
+}
+
+fn raw_response_from_api_response(response: &ApiResponse) -> Result<RawResponse, McpError> {
+    let body = response
+        .body
+        .text()
+        .map_err(|e| {
+            McpError::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("API response body is not valid UTF-8: {e}"),
+                None,
+            )
+        })?
+        .to_owned();
+
+    Ok(RawResponse {
+        status: response.status,
+        body,
+    })
 }
 
 /// Error response when credentials are not configured.
@@ -714,10 +735,7 @@ async fn execute_basic_raw(
     api_req: &onshape_client_core::request::ApiRequest,
 ) -> Result<RawResponse, McpError> {
     match client.execute(api_req).await {
-        Ok(response) => Ok(RawResponse {
-            status: response.status,
-            body: response.body,
-        }),
+        Ok(response) => raw_response_from_api_response(&response),
         Err(e) => Err(McpError::new(
             rmcp::model::ErrorCode::INTERNAL_ERROR,
             format!("HTTP request failed: {e}"),
@@ -740,6 +758,13 @@ enum OAuthExecuteResult {
         /// Human-readable error message for the user.
         message: String,
     },
+}
+
+fn oauth_execute_result_from_api_response(response: &ApiResponse) -> OAuthExecuteResult {
+    match raw_response_from_api_response(response) {
+        Ok(raw) => OAuthExecuteResult::Ok(raw),
+        Err(e) => OAuthExecuteResult::Err(e),
+    }
 }
 
 /// Execute a raw request with OAuth, including proactive and reactive refresh.
@@ -783,10 +808,7 @@ async fn execute_oauth_inner(
         }
         let retry = oauth.client.execute(api_req).await;
         return match retry {
-            Ok(response) => OAuthExecuteResult::Ok(RawResponse {
-                status: response.status,
-                body: response.body,
-            }),
+            Ok(response) => oauth_execute_result_from_api_response(&response),
             Err(e) => OAuthExecuteResult::Err(McpError::new(
                 rmcp::model::ErrorCode::INTERNAL_ERROR,
                 format!("HTTP request failed on retry: {e}"),
@@ -796,10 +818,7 @@ async fn execute_oauth_inner(
     }
 
     match result {
-        Ok(response) => OAuthExecuteResult::Ok(RawResponse {
-            status: response.status,
-            body: response.body,
-        }),
+        Ok(response) => oauth_execute_result_from_api_response(&response),
         Err(e) => OAuthExecuteResult::Err(McpError::new(
             rmcp::model::ErrorCode::INTERNAL_ERROR,
             format!("HTTP request failed: {e}"),
@@ -931,10 +950,7 @@ async fn execute_http_oauth_raw(
                 // Retry the request with the refreshed token.
                 let retry = http_oauth.client.execute(api_req).await;
                 return match retry {
-                    Ok(response) => Ok(RawResponse {
-                        status: response.status,
-                        body: response.body,
-                    }),
+                    Ok(response) => raw_response_from_api_response(&response),
                     Err(e) => Err(McpError::new(
                         rmcp::model::ErrorCode::INTERNAL_ERROR,
                         format!("HTTP request failed on retry: {e}"),
@@ -962,10 +978,7 @@ async fn execute_http_oauth_raw(
     }
 
     match result {
-        Ok(response) => Ok(RawResponse {
-            status: response.status,
-            body: response.body,
-        }),
+        Ok(response) => raw_response_from_api_response(&response),
         Err(e) => Err(McpError::new(
             rmcp::model::ErrorCode::INTERNAL_ERROR,
             format!("HTTP request failed: {e}"),
@@ -1785,6 +1798,41 @@ pub async fn run_http(
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use onshape_client_core::request::ResponseBody;
+
+    // --- raw response conversion tests ---
+
+    #[test]
+    fn raw_response_from_api_response_decodes_utf8_text() {
+        let response = ApiResponse {
+            status: 200,
+            headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+            body: ResponseBody::from("ok"),
+        };
+
+        let raw = raw_response_from_api_response(&response).expect("should decode response");
+
+        assert_eq!(raw.status, 200);
+        assert_eq!(raw.body, "ok");
+    }
+
+    #[test]
+    fn raw_response_from_api_response_rejects_invalid_utf8() {
+        let response = ApiResponse {
+            status: 200,
+            headers: vec![],
+            body: ResponseBody::from(vec![0xff]),
+        };
+
+        let err = raw_response_from_api_response(&response).expect_err("should reject response");
+
+        assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+        assert!(
+            err.message.contains("not valid UTF-8"),
+            "unexpected error message: {}",
+            err.message
+        );
+    }
 
     // --- is_permanent_refresh_failure tests ---
 

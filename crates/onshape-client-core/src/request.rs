@@ -3,7 +3,8 @@
 //! These types represent API requests as pure data — no I/O is performed here.
 //! The I/O layer (`onshape-client-io`) interprets these to make actual HTTP calls.
 
-use std::str::FromStr;
+use std::borrow::Cow;
+use std::str::{self, FromStr, Utf8Error};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -142,12 +143,85 @@ impl RequestBody {
 ///
 /// This is the minimal data the I/O layer returns after executing an [`ApiRequest`].
 /// Higher layers interpret the status code and body as needed.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApiResponse {
     /// HTTP status code.
     pub status: u16,
-    /// Response body as a string.
-    pub body: String,
+    /// Response headers as `(name, value)` pairs.
+    pub headers: Vec<(String, String)>,
+    /// Response body bytes.
+    pub body: ResponseBody,
+}
+
+impl ApiResponse {
+    /// Return the first response header value matching `name`, case-insensitively.
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// Return the response `Content-Type` header, if present.
+    #[must_use]
+    pub fn content_type(&self) -> Option<&str> {
+        self.header("content-type")
+    }
+}
+
+/// A buffered response body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResponseBody {
+    /// Raw response body bytes.
+    pub bytes: Vec<u8>,
+}
+
+impl ResponseBody {
+    /// Create a buffered response body from raw bytes.
+    #[must_use]
+    pub const fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
+    /// Return the response body as raw bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Decode the response body as strict UTF-8 text.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the response contains invalid UTF-8.
+    pub fn text(&self) -> Result<&str, Utf8Error> {
+        str::from_utf8(&self.bytes)
+    }
+
+    /// Decode the response body as text, replacing invalid UTF-8 sequences.
+    #[must_use]
+    pub fn text_lossy(&self) -> Cow<'_, str> {
+        String::from_utf8_lossy(&self.bytes)
+    }
+}
+
+impl From<Vec<u8>> for ResponseBody {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl From<String> for ResponseBody {
+    fn from(text: String) -> Self {
+        Self::new(text.into_bytes())
+    }
+}
+
+impl From<&str> for ResponseBody {
+    fn from(text: &str) -> Self {
+        Self::new(text.as_bytes().to_vec())
+    }
 }
 
 // ============================================================================
@@ -245,5 +319,33 @@ mod tests {
             binary_fields: vec![],
         });
         assert!(multipart_body.as_json().is_none());
+    }
+
+    #[test]
+    fn response_body_text_decodes_strict_utf8() {
+        let body = ResponseBody::from("plain text");
+        assert_eq!(body.as_bytes(), b"plain text");
+        assert_eq!(body.text().expect("should decode"), "plain text");
+    }
+
+    #[test]
+    fn response_body_text_rejects_invalid_utf8() {
+        let body = ResponseBody::from(vec![0xff]);
+        assert!(body.text().is_err());
+        assert_eq!(body.text_lossy().as_ref(), "\u{fffd}");
+    }
+
+    #[test]
+    fn api_response_header_lookup_is_case_insensitive() {
+        let response = ApiResponse {
+            status: 200,
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: ResponseBody::from("{}"),
+        };
+
+        assert_eq!(response.header("content-type"), Some("application/json"));
+        assert_eq!(response.header("CONTENT-TYPE"), Some("application/json"));
+        assert_eq!(response.content_type(), Some("application/json"));
+        assert_eq!(response.header("x-missing"), None);
     }
 }

@@ -17,7 +17,9 @@ use oauth2::AccessToken;
 use onshape_client_core::auth::{
     Credentials, basic_authorization_header_value, bearer_authorization_header_value,
 };
-use onshape_client_core::request::{ApiRequest, ApiResponse, HttpMethod, RequestBody};
+use onshape_client_core::request::{
+    ApiRequest, ApiResponse, HttpMethod, RequestBody, ResponseBody,
+};
 use reqwest::Client;
 use secrecy::ExposeSecret;
 
@@ -264,7 +266,11 @@ impl OnshapeClient {
                 message: e.to_string(),
             })?;
 
-        Ok(ApiResponse { status, body })
+        Ok(ApiResponse {
+            status,
+            headers: Vec::new(),
+            body: ResponseBody::from(body),
+        })
     }
 }
 
