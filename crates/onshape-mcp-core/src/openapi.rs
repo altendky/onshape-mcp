@@ -441,6 +441,17 @@ impl OpenApiSpec {
             }
         }
 
+        for param in &ep.parameters {
+            if param.location == ParameterLocation::Header && param.required {
+                return Err(OpenApiError::InvalidParams {
+                    reason: format!(
+                        "required header parameter `{}` is unsupported because API requests do not model request headers yet",
+                        param.name
+                    ),
+                });
+            }
+        }
+
         let query_params_vec: Vec<(String, String)> = query_params
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -1559,6 +1570,52 @@ mod tests {
         assert_eq!(request.method, HttpMethod::Get);
         assert_eq!(request.path, "/documents");
         assert_eq!(request.query_params.len(), 2);
+    }
+
+    #[test]
+    fn build_request_rejects_required_header_params() {
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "paths": {
+                "/downloads/{did}": {
+                    "get": {
+                        "operationId": "downloadExternalData",
+                        "parameters": [
+                            {
+                                "name": "did",
+                                "in": "path",
+                                "required": true,
+                                "schema": { "type": "string" }
+                            },
+                            {
+                                "name": "If-Match",
+                                "in": "header",
+                                "required": true,
+                                "schema": { "type": "string" }
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }))
+        .expect("should parse");
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+
+        let err = spec
+            .build_request("downloadExternalData", &path_params, &HashMap::new(), None)
+            .unwrap_err();
+
+        match err {
+            OpenApiError::InvalidParams { reason } => {
+                assert!(
+                    reason.contains("required header parameter `If-Match` is unsupported"),
+                    "error should mention unsupported required header, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
     }
 
     #[test]

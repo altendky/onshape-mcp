@@ -259,8 +259,9 @@ impl OnshapeClient {
             .map_err(|e| ClientError::from_reqwest(&e, self.timeout))?;
 
         let status = response.status().as_u16();
+        let headers = response_headers_to_pairs(response.headers());
         let body = response
-            .text()
+            .bytes()
             .await
             .map_err(|e| ClientError::ResponseBody {
                 message: e.to_string(),
@@ -268,8 +269,8 @@ impl OnshapeClient {
 
         Ok(ApiResponse {
             status,
-            headers: Vec::new(),
-            body: ResponseBody::from(body),
+            headers,
+            body: ResponseBody::from(body.to_vec()),
         })
     }
 }
@@ -289,6 +290,18 @@ const fn to_reqwest_method(method: HttpMethod) -> reqwest::Method {
     }
 }
 
+fn response_headers_to_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            )
+        })
+        .collect()
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -297,6 +310,10 @@ const fn to_reqwest_method(method: HttpMethod) -> reqwest::Method {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
     use secrecy::SecretString;
 
     fn test_credentials() -> Arc<Credentials> {
@@ -386,5 +403,80 @@ mod tests {
             reqwest::Method::DELETE
         );
         assert_eq!(to_reqwest_method(HttpMethod::Patch), reqwest::Method::PATCH);
+    }
+
+    #[test]
+    fn response_headers_to_pairs_preserves_header_values() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "Content-Type",
+            "application/octet-stream".parse().expect("valid header"),
+        );
+        headers.insert("X-Test", "value".parse().expect("valid header"));
+
+        let pairs = response_headers_to_pairs(&headers);
+
+        assert!(pairs.contains(&(
+            "content-type".to_string(),
+            "application/octet-stream".to_string(),
+        )));
+        assert!(pairs.contains(&("x-test".to_string(), "value".to_string())));
+    }
+
+    #[tokio::test]
+    async fn execute_returns_binary_body_and_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("should bind test server");
+        let address = listener
+            .local_addr()
+            .expect("should get test server address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("should accept request");
+            let mut buffer = [0_u8; 4096];
+            let received = stream.read(&mut buffer).expect("should read request");
+            let request = String::from_utf8_lossy(&buffer[..received]).to_lowercase();
+            assert!(
+                request.contains("accept: application/json"),
+                "request should preserve JSON Accept header, got: {request}"
+            );
+
+            let body = [0_u8, 159, 146, 150];
+            let mut response = Vec::new();
+            response.extend_from_slice(b"HTTP/1.1 200 OK\r\n");
+            response.extend_from_slice(b"Content-Type: application/octet-stream\r\n");
+            response.extend_from_slice(b"X-Test: binary\r\n");
+            response.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+            response.extend_from_slice(b"Connection: close\r\n\r\n");
+            response.extend_from_slice(&body);
+            stream.write_all(&response).expect("should write response");
+        });
+
+        let client = OnshapeClient::new(ClientConfig {
+            base_url: format!("http://{address}"),
+            auth: ClientAuthConfig::Basic {
+                credentials: test_credentials(),
+            },
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .expect("should create client");
+        let request = ApiRequest {
+            method: HttpMethod::Get,
+            path: "/binary".to_string(),
+            query_params: Vec::new(),
+            body: None,
+            content_type: None,
+        };
+
+        let response = client
+            .execute(&request)
+            .await
+            .expect("request should succeed");
+        server.join().expect("server thread should finish");
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.content_type(), Some("application/octet-stream"));
+        assert_eq!(response.header("x-test"), Some("binary"));
+        assert_eq!(response.body.as_bytes(), &[0, 159, 146, 150]);
+        assert!(response.body.text().is_err());
     }
 }

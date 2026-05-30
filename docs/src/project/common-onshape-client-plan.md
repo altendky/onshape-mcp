@@ -18,7 +18,7 @@ section. If a step is blocked, leave it unchecked and add a short note explainin
 what decision or dependency is missing.
 
 - [x] 1. Add byte/header-capable responses.
-- [ ] 2. Update the reqwest executor.
+- [x] 2. Update the reqwest executor.
 - [ ] 3. Adapt MCP at the boundary.
 - [ ] 4. Move MCP defaults and persistence metadata out of common OAuth.
 - [ ] 5. Clean common crate documentation and names.
