@@ -162,16 +162,14 @@ fn parse_index(index_path: &Path) -> Vec<ResourceEntry> {
                     }
                 }
             }
-            Event::Code(code) => {
-                if in_list_item {
-                    current_item_text.push('`');
-                    current_item_text.push_str(&code);
-                    current_item_text.push('`');
-                    if in_link {
-                        current_link_title.push('`');
-                        current_link_title.push_str(&code);
-                        current_link_title.push('`');
-                    }
+            Event::Code(code) if in_list_item => {
+                current_item_text.push('`');
+                current_item_text.push_str(&code);
+                current_item_text.push('`');
+                if in_link {
+                    current_link_title.push('`');
+                    current_link_title.push_str(&code);
+                    current_link_title.push('`');
                 }
             }
             _ => {}
