@@ -10,8 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// Re-export types that moved to onshape-client-core.
-pub use onshape_client_core::request::{ApiRequest, ApiResponse, HttpMethod};
+pub use onshape_client_core::request::{ApiRequest, HttpMethod};
 use onshape_client_core::request::{BinaryField, MultipartBody, RequestBody};
 
 // ============================================================================
@@ -215,17 +214,54 @@ impl OpenApiSpec {
         Self::from_value(&root)
     }
 
+    /// Parse an `OpenAPI` specification from a JSON string, using the provided
+    /// server URL if the spec does not contain one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the JSON is malformed or missing required fields.
+    pub fn from_json_with_server_url_fallback(
+        json: &str,
+        server_url_fallback: &str,
+    ) -> Result<Self, OpenApiError> {
+        let root: Value = serde_json::from_str(json)?;
+        Self::from_value_with_server_url_fallback(&root, server_url_fallback)
+    }
+
     /// Parse an `OpenAPI` specification from a `serde_json::Value`.
     ///
     /// # Errors
     ///
     /// Returns an error if the value is missing required fields.
     pub fn from_value(root: &Value) -> Result<Self, OpenApiError> {
+        Self::from_value_inner(root, None)
+    }
+
+    /// Parse an `OpenAPI` specification from a `serde_json::Value`, using the
+    /// provided server URL if the spec does not contain one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is missing required fields.
+    pub fn from_value_with_server_url_fallback(
+        root: &Value,
+        server_url_fallback: &str,
+    ) -> Result<Self, OpenApiError> {
+        Self::from_value_inner(root, Some(server_url_fallback))
+    }
+
+    fn from_value_inner(
+        root: &Value,
+        server_url_fallback: Option<&str>,
+    ) -> Result<Self, OpenApiError> {
         // Extract server URL
         let server_url = root
             .pointer("/servers/0/url")
             .and_then(Value::as_str)
-            .unwrap_or("https://cad.onshape.com/api/v6")
+            .or(server_url_fallback)
+            .ok_or_else(|| OpenApiError::InvalidSpec {
+                reason: "missing 'servers[0].url' string".into(),
+            })?
             .to_string();
 
         // Extract component schemas for $ref resolution
@@ -1440,6 +1476,39 @@ mod tests {
     }
 
     #[test]
+    fn parse_requires_server_url_without_fallback() {
+        let err = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "paths": {}
+        }))
+        .unwrap_err();
+
+        match err {
+            OpenApiError::InvalidSpec { reason } => {
+                assert!(
+                    reason.contains("missing 'servers[0].url' string"),
+                    "error should mention missing server URL, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidSpec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_accepts_explicit_server_url_fallback() {
+        let spec = OpenApiSpec::from_value_with_server_url_fallback(
+            &serde_json::json!({
+                "openapi": "3.0.1",
+                "paths": {}
+            }),
+            "https://fallback.example.com/api/v1",
+        )
+        .expect("should parse");
+
+        assert_eq!(spec.server_url(), "https://fallback.example.com/api/v1");
+    }
+
+    #[test]
     fn search_by_keyword() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let results = spec.search("document", &SearchFilters::default());
@@ -1584,6 +1653,7 @@ mod tests {
     fn build_request_rejects_missing_required_query_param() {
         let spec = OpenApiSpec::from_value(&serde_json::json!({
             "openapi": "3.0.1",
+            "servers": [{ "url": "https://example.com/api/v1" }],
             "paths": {
                 "/search": {
                     "get": {
@@ -1622,6 +1692,7 @@ mod tests {
     fn build_request_rejects_required_header_params() {
         let spec = OpenApiSpec::from_value(&serde_json::json!({
             "openapi": "3.0.1",
+            "servers": [{ "url": "https://example.com/api/v1" }],
             "paths": {
                 "/downloads/{did}": {
                     "get": {
@@ -1697,7 +1768,10 @@ mod tests {
 
     #[test]
     fn missing_paths_returns_error() {
-        let err = OpenApiSpec::from_json(r#"{"openapi": "3.0.1"}"#).unwrap_err();
+        let err = OpenApiSpec::from_json(
+            r#"{"openapi": "3.0.1", "servers": [{ "url": "https://example.com/api/v1" }]}"#,
+        )
+        .unwrap_err();
         assert!(matches!(err, OpenApiError::InvalidSpec { .. }));
     }
 

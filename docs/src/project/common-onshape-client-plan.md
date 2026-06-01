@@ -23,7 +23,7 @@ what decision or dependency is missing.
 - [x] 4. Move MCP defaults and persistence metadata out of common OAuth.
 - [x] 5. Clean common crate documentation and names.
 - [x] 6. Strengthen OpenAPI tests before moving.
-- [ ] 7. Isolate OpenAPI internally.
+- [x] 7. Isolate OpenAPI internally.
 - [ ] 8. Extract `onshape-openapi` only after second use.
 - [ ] 9. Add export-oriented common helpers later.
 - [ ] 10. Move to a common repo last.

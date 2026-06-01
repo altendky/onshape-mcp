@@ -48,6 +48,9 @@ use crate::oauth::{McpOAuthTokenFile, McpOAuthTokenMetadata, default_token_file_
 const OPENAPI_SPEC_JSON: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/onshape-openapi.json"));
 
+/// MCP compatibility fallback for embedded specs that predate an explicit server URL.
+const OPENAPI_SERVER_URL_FALLBACK: &str = "https://cad.onshape.com/api/v6";
+
 /// Default refresh margin: start proactive refresh 60 seconds before expiry.
 pub(crate) const REFRESH_MARGIN_SECS: i64 = 60;
 
@@ -276,7 +279,10 @@ impl OnshapeMcpServer {
         version: &str,
         config: AppConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let spec = OpenApiSpec::from_json(OPENAPI_SPEC_JSON)?;
+        let spec = OpenApiSpec::from_json_with_server_url_fallback(
+            OPENAPI_SPEC_JSON,
+            OPENAPI_SERVER_URL_FALLBACK,
+        )?;
 
         let api_state = build_api_state(&config, spec.server_url())?;
 
@@ -1724,7 +1730,10 @@ pub async fn run_http(
     }
 
     // Build shared state.
-    let spec = OpenApiSpec::from_json(OPENAPI_SPEC_JSON)?;
+    let spec = OpenApiSpec::from_json_with_server_url_fallback(
+        OPENAPI_SPEC_JSON,
+        OPENAPI_SERVER_URL_FALLBACK,
+    )?;
     let info = onshape_mcp_core::server_info(name, version);
     let config = Arc::new(config);
     let spec = Arc::new(spec);
