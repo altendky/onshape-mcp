@@ -77,8 +77,8 @@ pub struct OAuthTokenData {
     /// The token type — must be "bearer" (case-insensitive).
     ///
     /// Validated during deserialization: rejects non-bearer token types to
-    /// catch corrupted or tampered token files early. The value is normalized
-    /// to lowercase on load.
+    /// catch corrupted or tampered persisted token data early. The value is
+    /// normalized to lowercase on load.
     #[serde(
         default = "default_token_type",
         deserialize_with = "deserialize_token_type"
@@ -176,7 +176,7 @@ fn default_token_type() -> String {
 /// Deserializes and validates the `token_type` field.
 ///
 /// Accepts "bearer" (case-insensitive) and normalizes to lowercase.
-/// Rejects any other token type to catch corrupted or tampered token files.
+/// Rejects any other token type to catch corrupted or tampered persisted token data.
 fn deserialize_token_type<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -193,7 +193,7 @@ where
 
 /// Serializes an [`AccessToken`] by exposing its secret value.
 ///
-/// This is intentional: the token file on disk must contain the actual secret.
+/// This is intentional: serialized token material must contain the actual secret.
 fn serialize_access_token<S>(token: &AccessToken, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -265,7 +265,7 @@ pub fn onshape_oauth_client(client_id: &str, client_secret: &str) -> OnshapeOAut
 // OAuth Session (Refresh State Machine)
 // ============================================================================
 
-/// Action the I/O layer should take *before* executing an API request.
+/// Action a caller should take *before* executing an API request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreExecuteAction {
     /// Token is valid — proceed with the current access token.
@@ -274,7 +274,7 @@ pub enum PreExecuteAction {
     RefreshNeeded,
 }
 
-/// Action the I/O layer should take *after* receiving an API response.
+/// Action a caller should take *after* receiving an API response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostExecuteAction {
     /// Response is usable — return it to the caller.
@@ -285,10 +285,10 @@ pub enum PostExecuteAction {
 
 /// Manages OAuth token lifecycle decisions. Pure computation — no I/O.
 ///
-/// The I/O layer owns an `OAuthSession` and consults it before and after
-/// each API request to decide whether a token refresh is needed.
+/// Callers can own an `OAuthSession` and consult it before and after each API
+/// request to decide whether a token refresh is needed.
 pub struct OAuthSession {
-    /// Current token data. Public for persistence by the I/O layer.
+    /// Current token data. Public so callers can persist or inspect it.
     pub tokens: OAuthTokenData,
     refresh_margin: chrono::Duration,
 }
@@ -339,7 +339,7 @@ impl OAuthSession {
     ///
     /// Converts the `expires_in` duration to an absolute `expires_at`
     /// timestamp using the provided `now` value. The caller is responsible
-    /// for persisting to disk and rebuilding the HTTP client.
+    /// for persisting the updated tokens and rebuilding any HTTP client.
     pub fn apply_refresh(&mut self, response: &BasicTokenResponse, now: DateTime<Utc>) {
         let mut new_tokens = OAuthTokenData::from_response(response, now);
         // Per RFC 6749 Section 6: if the server omits refresh_token in the
@@ -350,29 +350,29 @@ impl OAuthSession {
         self.tokens = new_tokens;
     }
 
-    /// Try adopting externally-refreshed tokens (e.g. from a token file
-    /// written by another process).
+    /// Try adopting externally-refreshed tokens, such as tokens refreshed by
+    /// another process.
     ///
-    /// Returns `true` if the file tokens were fresher and were adopted.
+    /// Returns `true` if the external tokens were fresher and were adopted.
     /// Returns `false` (tokens unchanged) if:
-    /// - The file tokens have the same or earlier expiry
+    /// - The external tokens have the same or earlier expiry
     /// - Either side has no expiry set (`None`)
-    /// - The file tokens are already expired
+    /// - The external tokens are already expired
     pub fn apply_external_tokens(
         &mut self,
-        file_tokens: OAuthTokenData,
+        external_tokens: OAuthTokenData,
         now: DateTime<Utc>,
     ) -> bool {
         // Both must have a known expiry to compare.
-        let (Some(file_expires), Some(current_expires)) =
-            (file_tokens.expires_at, self.tokens.expires_at)
+        let (Some(external_expires), Some(current_expires)) =
+            (external_tokens.expires_at, self.tokens.expires_at)
         else {
             return false;
         };
 
-        // File tokens must be fresher and not already expired.
-        if file_expires > current_expires && file_expires > now {
-            self.tokens = file_tokens;
+        // External tokens must be fresher and not already expired.
+        if external_expires > current_expires && external_expires > now {
+            self.tokens = external_tokens;
             true
         } else {
             false
@@ -1124,14 +1124,14 @@ mod tests {
             },
             chrono::Duration::seconds(60),
         );
-        let file_tokens = OAuthTokenData {
+        let external_tokens = OAuthTokenData {
             access_token: AccessToken::new("new-at".into()),
             refresh_token: RefreshToken::new("new-rt".into()),
             expires_at: Some(now + chrono::Duration::seconds(3600)),
             token_type: "bearer".into(),
             scopes: None,
         };
-        assert!(session.apply_external_tokens(file_tokens, now));
+        assert!(session.apply_external_tokens(external_tokens, now));
         assert_eq!(session.access_token().secret(), "new-at");
         assert_eq!(session.refresh_token().secret(), "new-rt");
     }
@@ -1151,19 +1151,19 @@ mod tests {
             },
             chrono::Duration::seconds(60),
         );
-        let file_tokens = OAuthTokenData {
-            access_token: AccessToken::new("file-at".into()),
-            refresh_token: RefreshToken::new("file-rt".into()),
+        let external_tokens = OAuthTokenData {
+            access_token: AccessToken::new("external-at".into()),
+            refresh_token: RefreshToken::new("external-rt".into()),
             expires_at: Some(now + chrono::Duration::seconds(3600)),
             token_type: "bearer".into(),
             scopes: None,
         };
-        assert!(!session.apply_external_tokens(file_tokens, now));
+        assert!(!session.apply_external_tokens(external_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
     }
 
     #[test]
-    fn apply_external_tokens_rejects_expired_file_tokens() {
+    fn apply_external_tokens_rejects_expired_external_tokens() {
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
             .to_utc();
@@ -1177,14 +1177,14 @@ mod tests {
             },
             chrono::Duration::seconds(60),
         );
-        let file_tokens = OAuthTokenData {
-            access_token: AccessToken::new("file-at".into()),
-            refresh_token: RefreshToken::new("file-rt".into()),
+        let external_tokens = OAuthTokenData {
+            access_token: AccessToken::new("external-at".into()),
+            refresh_token: RefreshToken::new("external-rt".into()),
             expires_at: Some(now - chrono::Duration::seconds(50)),
             token_type: "bearer".into(),
             scopes: None,
         };
-        assert!(!session.apply_external_tokens(file_tokens, now));
+        assert!(!session.apply_external_tokens(external_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
     }
 
@@ -1201,19 +1201,19 @@ mod tests {
             },
             chrono::Duration::seconds(60),
         );
-        let file_tokens = OAuthTokenData {
-            access_token: AccessToken::new("file-at".into()),
-            refresh_token: RefreshToken::new("file-rt".into()),
+        let external_tokens = OAuthTokenData {
+            access_token: AccessToken::new("external-at".into()),
+            refresh_token: RefreshToken::new("external-rt".into()),
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
         };
-        assert!(!session.apply_external_tokens(file_tokens, now));
+        assert!(!session.apply_external_tokens(external_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
     }
 
     #[test]
-    fn apply_external_tokens_rejects_when_file_has_none_expiry() {
+    fn apply_external_tokens_rejects_when_external_has_none_expiry() {
         let now = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
             .expect("parse")
             .to_utc();
@@ -1227,14 +1227,14 @@ mod tests {
             },
             chrono::Duration::seconds(60),
         );
-        let file_tokens = OAuthTokenData {
-            access_token: AccessToken::new("file-at".into()),
-            refresh_token: RefreshToken::new("file-rt".into()),
+        let external_tokens = OAuthTokenData {
+            access_token: AccessToken::new("external-at".into()),
+            refresh_token: RefreshToken::new("external-rt".into()),
             expires_at: None,
             token_type: "bearer".into(),
             scopes: None,
         };
-        assert!(!session.apply_external_tokens(file_tokens, now));
+        assert!(!session.apply_external_tokens(external_tokens, now));
         assert_eq!(session.access_token().secret(), "current-at");
     }
 

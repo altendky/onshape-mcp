@@ -21,7 +21,7 @@ what decision or dependency is missing.
 - [x] 2. Update the reqwest executor.
 - [x] 3. Adapt MCP at the boundary.
 - [x] 4. Move MCP defaults and persistence metadata out of common OAuth.
-- [ ] 5. Clean common crate documentation and names.
+- [x] 5. Clean common crate documentation and names.
 - [ ] 6. Strengthen OpenAPI tests before moving.
 - [ ] 7. Isolate OpenAPI internally.
 - [ ] 8. Extract `onshape-openapi` only after second use.
