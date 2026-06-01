@@ -1535,14 +1535,14 @@ mod tests {
     fn build_request_with_path_params() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let mut path_params = HashMap::new();
-        path_params.insert("did".to_string(), "abc123".to_string());
+        path_params.insert("did".to_string(), "abc/123 model".to_string());
 
         let request = spec
             .build_request("getDocument", &path_params, &HashMap::new(), None)
             .expect("should build");
 
         assert_eq!(request.method, HttpMethod::Get);
-        assert_eq!(request.path, "/documents/abc123");
+        assert_eq!(request.path, "/documents/abc%2F123%20model");
         assert!(request.query_params.is_empty());
         assert!(request.body.is_none());
     }
@@ -1560,7 +1560,7 @@ mod tests {
     fn build_request_with_query_params() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let mut query_params = HashMap::new();
-        query_params.insert("q".to_string(), "robot".to_string());
+        query_params.insert("q".to_string(), "robot arm".to_string());
         query_params.insert("limit".to_string(), "10".to_string());
 
         let request = spec
@@ -1570,6 +1570,52 @@ mod tests {
         assert_eq!(request.method, HttpMethod::Get);
         assert_eq!(request.path, "/documents");
         assert_eq!(request.query_params.len(), 2);
+
+        let query_map: HashMap<&str, &str> = request
+            .query_params
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(query_map["q"], "robot arm");
+        assert_eq!(query_map["limit"], "10");
+    }
+
+    #[test]
+    fn build_request_rejects_missing_required_query_param() {
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "paths": {
+                "/search": {
+                    "get": {
+                        "operationId": "searchDocuments",
+                        "parameters": [
+                            {
+                                "name": "q",
+                                "in": "query",
+                                "required": true,
+                                "schema": { "type": "string" }
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }))
+        .expect("should parse");
+
+        let err = spec
+            .build_request("searchDocuments", &HashMap::new(), &HashMap::new(), None)
+            .unwrap_err();
+
+        match err {
+            OpenApiError::InvalidParams { reason } => {
+                assert!(
+                    reason.contains("missing required query parameter: q"),
+                    "error should mention missing required query parameter, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1902,7 +1948,8 @@ mod tests {
             "file": encoded,
             "formatName": "FEATURESCRIPT",
             "translate": true,
-            "encodedFilename": "test.fs"
+            "encodedFilename": "test.fs",
+            "importAppearances": { "faces": true }
         });
 
         let mut path_params = HashMap::new();
@@ -1931,7 +1978,7 @@ mod tests {
         assert_eq!(multipart.binary_fields[0].data, file_content);
 
         // Check text fields.
-        assert_eq!(multipart.text_fields.len(), 3);
+        assert_eq!(multipart.text_fields.len(), 4);
         let text_map: HashMap<&str, &str> = multipart
             .text_fields
             .iter()
@@ -1940,6 +1987,7 @@ mod tests {
         assert_eq!(text_map["formatName"], "FEATURESCRIPT");
         assert_eq!(text_map["translate"], "true");
         assert_eq!(text_map["encodedFilename"], "test.fs");
+        assert_eq!(text_map["importAppearances"], r#"{"faces":true}"#);
     }
 
     #[test]
