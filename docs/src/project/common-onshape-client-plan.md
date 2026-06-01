@@ -25,7 +25,7 @@ what decision or dependency is missing.
 - [x] 6. Strengthen OpenAPI tests before moving.
 - [x] 7. Isolate OpenAPI internally.
 - [x] 8. Extract `onshape-openapi` only after second use.
-- [ ] 9. Add export-oriented common helpers later.
+- [x] 9. Add export-oriented common helpers later.
 - [ ] 10. Move to a common repo last.
 
 ## Constraints
@@ -384,11 +384,23 @@ Implemented extraction:
 Add only pure Onshape request/response helpers that are actually needed by
 `onshape-export`.
 
+Implemented focused first helper set:
+
+- `onshape-client-core::endpoints` contains pure request builders for Part Studio
+  and Assembly translation/export creation, translation status polling,
+  translator-format lookup, and external-data download.
+- Minimal `BTTranslationRequestInfo` parsing covers translation state and result
+  external data IDs needed to download exported artifacts.
+- Request builders cite the `OpenAPI` operation IDs they implement and have
+  golden tests for method, path, body, and content type construction.
+- Download media negotiation remains a separate request-header/`Accept` follow-up;
+  the common request model still does not carry request headers.
+
 Place these initially under `onshape-client-core::endpoints::*`, separate from
 low-level `request`, `response`, `auth`, and `oauth` modules. Helpers must build
 or parse data only; they must not execute HTTP, read clocks, or access storage.
 
-Candidate common additions:
+Further candidate additions should remain need-driven:
 
 - Create translation/export request data.
 - Poll translation status request data.
