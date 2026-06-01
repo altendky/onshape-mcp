@@ -810,7 +810,7 @@ async fn fetch_proxy_client_id(proxy_url: &str) -> Result<String, LoginError> {
                 Ok(ForbiddenBody {
                     source_ip: Some(ip),
                 }) => {
-                    format!("your IP address ({ip}) is not authorized to use this proxy",)
+                    format!("your IP address ({ip}) is not authorized to use this proxy")
                 }
                 _ => format!("HTTP {status}: {body}"),
             }
