@@ -35,8 +35,8 @@ use onshape_client_core::request::ApiResponse;
 use onshape_client_io::{ClientAuthConfig, ClientConfig, OnshapeClient};
 use onshape_mcp_core::ValidationState;
 use onshape_mcp_core::config::{AppConfig, AuthInventory, ResolvedAuth, TokenStatus, resolve_auth};
-use onshape_mcp_core::openapi::OpenApiSpec;
 use onshape_mcp_core::tools::{self, IoResult, SideEffect, ToolEffect};
+use onshape_openapi::OpenApiSpec;
 
 use crate::oauth::{McpOAuthTokenFile, McpOAuthTokenMetadata, default_token_file_path};
 

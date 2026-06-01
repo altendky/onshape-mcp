@@ -27,10 +27,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use onshape_client_core::request::{BinaryField, RequestBody};
+use onshape_client_core::request::{ApiRequest, BinaryField, RequestBody};
+use onshape_openapi::{OpenApiSpec, SearchFilters};
 
 use crate::config::ResolvedAuth;
-use crate::openapi::{ApiRequest, OpenApiSpec, SearchFilters};
 use crate::{AuthStatusResult, ValidationState};
 
 // ============================================================================
@@ -1936,7 +1936,9 @@ fn parse_arguments<T: serde::de::DeserializeOwned>(
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::{ValidationState, openapi::HttpMethod};
+    use onshape_client_core::request::HttpMethod;
+
+    use crate::ValidationState;
 
     fn default_validation() -> ValidationState {
         ValidationState::default()

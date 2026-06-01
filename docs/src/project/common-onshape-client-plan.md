@@ -24,7 +24,7 @@ what decision or dependency is missing.
 - [x] 5. Clean common crate documentation and names.
 - [x] 6. Strengthen OpenAPI tests before moving.
 - [x] 7. Isolate OpenAPI internally.
-- [ ] 8. Extract `onshape-openapi` only after second use.
+- [x] 8. Extract `onshape-openapi` only after second use.
 - [ ] 9. Add export-oriented common helpers later.
 - [ ] 10. Move to a common repo last.
 
@@ -155,21 +155,12 @@ what decision or dependency is missing.
 
 ## OpenAPI Direction
 
-Do not immediately extract `openapi.rs` into a separate repo crate.
+OpenAPI support is extracted to the workspace crate `crates/onshape-openapi`.
+The crate parses caller-provided spec JSON and does not embed the Onshape spec;
+`onshape-mcp-io` owns the embedded-spec compatibility behavior.
 
-Recommended near-term path:
-
-- Keep `openapi.rs` in `onshape-mcp-core` while cleaning its boundary.
-- Ensure it depends only on `onshape-client-core` and general-purpose crates, not
-  MCP result or transport types.
-- Stop re-exporting response types from the OpenAPI module; request building does
-  not need response modeling.
-- Extract to a workspace crate only when `onshape-export` has a real need for the
-  same search/explain/schema/request-building behavior.
-
-If extracted, prefer an Onshape-oriented crate named `onshape-openapi`, not a
-generic OpenAPI crate. The code handles general OpenAPI mechanics, but it is
-currently shaped around Onshape details such as the Onshape default server,
+Keep `onshape-openapi` Onshape-oriented rather than generic. The code handles
+general OpenAPI mechanics, but it is shaped around Onshape details such as
 `BT...` schema conventions, `btType`, and `x-bttype-options` annotations.
 
 ## Eventual Target Structure
@@ -189,7 +180,7 @@ crates/onshape-client-io
   auth header application
   buffered response byte/header capture
 
-crates/onshape-openapi        # optional after second consumer exists
+crates/onshape-openapi
   parse/search/explain/build_request
   Onshape OpenAPI schema helpers
   no required embedded spec; callers provide spec JSON
@@ -203,7 +194,7 @@ crates/onshape-mcp-core
   MCP continuations/effects
   MCP auth status UX
   depends on onshape-client-core
-  eventually depends on onshape-openapi
+  depends on onshape-openapi
 
 crates/onshape-mcp-io
   MCP stdio/http transports
@@ -378,7 +369,7 @@ These tests mostly exist today and should remain the safety rail for later moves
 
 ### 8. Extract `onshape-openapi` Only After Second Use
 
-When `onshape-export` needs the same OpenAPI behavior:
+Implemented extraction:
 
 - Create `crates/onshape-openapi` in the workspace.
 - Move `openapi.rs` with minimal edits.

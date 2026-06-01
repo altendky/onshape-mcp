@@ -1,7 +1,7 @@
 //! `OpenAPI` spec parsing, searching, and request building.
 //!
-//! This module provides pure (sans-IO) operations over an Onshape `OpenAPI` specification.
-//! The spec JSON content is provided externally; this module never performs I/O.
+//! This crate provides pure (sans-IO) operations over an Onshape `OpenAPI` specification.
+//! The spec JSON content is provided externally; this crate never performs I/O.
 
 use std::collections::{HashMap, HashSet};
 

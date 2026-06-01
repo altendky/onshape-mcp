@@ -1361,6 +1361,7 @@ dependencies = [
  "chrono",
  "onshape-client-core",
  "onshape-mcp-resources",
+ "onshape-openapi",
  "rmcp",
  "schemars",
  "secrecy",
@@ -1387,6 +1388,7 @@ dependencies = [
  "onshape-client-io",
  "onshape-mcp-core",
  "onshape-mcp-resources",
+ "onshape-openapi",
  "rand 0.10.0",
  "reqwest",
  "rmcp",
@@ -1412,6 +1414,18 @@ dependencies = [
  "proc-macro2",
  "pulldown-cmark",
  "rmcp",
+]
+
+[[package]]
+name = "onshape-openapi"
+version = "0.4.0"
+dependencies = [
+ "base64",
+ "onshape-client-core",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
