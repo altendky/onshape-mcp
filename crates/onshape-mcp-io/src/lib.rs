@@ -548,7 +548,7 @@ async fn dispatch_tool_effect(
                         update_implicit_validation(validation, raw.status).await;
 
                         let (next_effect, side_effects) =
-                            resume_with_raw_response(continuation, &raw)?;
+                            resume_with_raw_response(continuation, &raw);
 
                         for effect in side_effects {
                             apply_side_effect(validation, effect).await;
@@ -686,18 +686,6 @@ struct RawResponse {
     body: Vec<u8>,
 }
 
-impl RawResponse {
-    fn body_text(&self) -> Result<&str, McpError> {
-        std::str::from_utf8(&self.body).map_err(|e| {
-            McpError::new(
-                ErrorCode::INTERNAL_ERROR,
-                format!("API response body is not valid UTF-8: {e}"),
-                None,
-            )
-        })
-    }
-}
-
 fn raw_response_from_api_response(response: ApiResponse) -> RawResponse {
     RawResponse {
         status: response.status,
@@ -709,16 +697,15 @@ fn raw_response_from_api_response(response: ApiResponse) -> RawResponse {
 fn resume_with_raw_response(
     continuation: tools::Continuation,
     raw: &RawResponse,
-) -> Result<(ToolEffect, Vec<SideEffect>), McpError> {
-    let body = raw.body_text()?;
-    Ok(tools::resume(
+) -> (ToolEffect, Vec<SideEffect>) {
+    tools::resume(
         continuation,
         IoResult::ApiResponse {
             status: raw.status,
             headers: &raw.headers,
-            body,
+            body: &raw.body,
         },
-    ))
+    )
 }
 
 /// Error response when credentials are not configured.
@@ -1860,47 +1847,36 @@ mod tests {
             vec![("Content-Type".to_string(), "text/plain".to_string())]
         );
         assert_eq!(raw.body, b"ok");
-        assert_eq!(raw.body_text().expect("should decode response"), "ok");
     }
 
     #[test]
-    fn raw_response_body_text_rejects_invalid_utf8() {
+    fn resume_with_raw_response_passes_invalid_utf8_to_continuation() {
         let response = ApiResponse {
             status: 200,
-            headers: vec![],
+            headers: vec![(
+                "content-type".to_string(),
+                "application/octet-stream".to_string(),
+            )],
             body: ResponseBody::from(vec![0xff]),
         };
 
         let raw = raw_response_from_api_response(response);
-        let err = raw.body_text().expect_err("should reject response");
+        let (tool_effect, side_effects) =
+            resume_with_raw_response(tools::Continuation::FormatApiResponse, &raw);
 
-        assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
-        assert!(
-            err.message.contains("not valid UTF-8"),
-            "unexpected error message: {}",
-            err.message
-        );
-    }
-
-    #[test]
-    fn resume_with_raw_response_rejects_invalid_utf8_before_continuation() {
-        let raw = RawResponse {
-            status: 200,
-            headers: vec![],
-            body: vec![0xff],
+        assert!(side_effects.is_empty());
+        let tools::ToolEffect::Done(Ok(result)) = tool_effect else {
+            panic!("should produce a done result");
         };
-
-        let Err(err) = resume_with_raw_response(tools::Continuation::FormatApiResponse, &raw)
-        else {
-            panic!("should reject invalid UTF-8 response");
-        };
-
-        assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
-        assert!(
-            err.message.contains("not valid UTF-8"),
-            "unexpected error message: {}",
-            err.message
-        );
+        assert_eq!(result.is_error, Some(false));
+        let text = result.content[0]
+            .raw
+            .as_text()
+            .expect("should be text content");
+        let value: serde_json::Value = serde_json::from_str(&text.text)
+            .expect("binary response metadata should be valid JSON");
+        assert_eq!(value["encoding"], "base64");
+        assert_eq!(value["body"], "/w==");
     }
 
     // --- is_permanent_refresh_failure tests ---
