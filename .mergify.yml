@@ -9,6 +9,14 @@ queue_rules:
     checks_timeout: 90 min
     max_checks_retries: 2
 
+merge_protections:
+  - name: Auto-queue approved enqueue PRs
+    if:
+      - base = main
+      - label = enqueue
+    success_conditions:
+      - "#approved-reviews-by >= 1"
+
 merge_queue:
   max_parallel_checks: 1
 
