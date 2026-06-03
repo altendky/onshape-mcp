@@ -239,16 +239,17 @@ async fn handle_token_change(
     }
 
     // Case 3: Update existing OAuth state with fresher tokens.
-    if let ApiState::OAuth(oauth) = &mut *state
-        && oauth
-            .session
-            .apply_external_tokens(token_file.tokens.clone(), chrono::Utc::now())
-    {
-        oauth.token_metadata = oauth.refresh_method.token_metadata_from_file(&token_file);
-        // Tokens were updated — rebuild the HTTP client.
-        let _ = oauth.rebuild_client();
-        // Reset validation — external token refresh means credentials changed.
-        *validation.lock().await = ValidationState::default();
+    if let ApiState::OAuth(oauth) = &mut *state {
+        match crate::adopt_external_token_file(oauth, &token_file) {
+            Ok(true) => {
+                // Reset validation — external token refresh means credentials changed.
+                *validation.lock().await = ValidationState::default();
+            }
+            Ok(false) => {}
+            Err(e) => {
+                eprintln!("Warning: failed to adopt externally refreshed OAuth tokens: {e}");
+            }
+        }
     }
 }
 
@@ -261,7 +262,8 @@ fn build_oauth_from_token_file(
     ctx: &WatcherContext,
     token_file: McpOAuthTokenFile,
 ) -> Result<OAuthApiState, Box<dyn std::error::Error + Send + Sync>> {
-    let refresh_method = refresh_method_from_token_file(&token_file)?;
+    let refresh_method = crate::refresh_method_from_token_file(&token_file)
+        .ok_or("token file missing refresh metadata")?;
     let token_metadata = refresh_method.token_metadata_from_file(&token_file);
     let session = OAuthSession::new(
         token_file.tokens,
@@ -290,35 +292,6 @@ fn build_oauth_from_token_file(
         token_path: ctx.token_path.clone(),
         base_url: ctx.base_url.clone(),
         timeout: ctx.timeout,
-    })
-}
-
-/// Determine the refresh method from token file data.
-fn refresh_method_from_token_file(
-    token_file: &McpOAuthTokenFile,
-) -> Result<crate::RefreshMethod, Box<dyn std::error::Error + Send + Sync>> {
-    // Proxy mode: token file has proxy_url.
-    if let Some(proxy_url) = &token_file.proxy_url {
-        return Ok(crate::RefreshMethod::Proxy {
-            proxy_url: proxy_url.clone(),
-        });
-    }
-
-    // Direct mode: token file has client_id + client_secret.
-    let client_id = token_file
-        .client_id
-        .clone()
-        .ok_or("token file missing client_id and proxy_url")?;
-    let client_secret = token_file
-        .client_secret
-        .clone()
-        .ok_or("token file missing client_secret and proxy_url")?;
-
-    let oauth_client = onshape_oauth_client(&client_id, &client_secret);
-    Ok(crate::RefreshMethod::Direct {
-        oauth_client: Box::new(oauth_client),
-        client_id,
-        client_secret: secrecy::SecretString::from(client_secret),
     })
 }
 

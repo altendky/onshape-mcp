@@ -125,6 +125,47 @@ impl RefreshMethod {
     }
 }
 
+pub(crate) fn refresh_method_from_token_file(
+    token_file: &McpOAuthTokenFile,
+) -> Option<RefreshMethod> {
+    if let Some(proxy_url) = &token_file.proxy_url {
+        return Some(RefreshMethod::Proxy {
+            proxy_url: proxy_url.clone(),
+        });
+    }
+
+    let (Some(client_id), Some(client_secret)) = (&token_file.client_id, &token_file.client_secret)
+    else {
+        return None;
+    };
+
+    Some(RefreshMethod::Direct {
+        oauth_client: Box::new(onshape_oauth_client(client_id, client_secret)),
+        client_id: client_id.clone(),
+        client_secret: SecretString::from(client_secret.clone()),
+    })
+}
+
+pub(crate) fn adopt_external_token_file(
+    oauth: &mut OAuthApiState,
+    token_file: &McpOAuthTokenFile,
+) -> Result<bool, onshape_client_io::ClientError> {
+    if !oauth
+        .session
+        .apply_external_tokens(token_file.tokens.clone(), chrono::Utc::now())
+    {
+        return Ok(false);
+    }
+
+    if let Some(refresh_method) = refresh_method_from_token_file(token_file) {
+        oauth.refresh_method = refresh_method;
+    }
+
+    oauth.token_metadata = oauth.refresh_method.token_metadata_from_file(token_file);
+    oauth.rebuild_client()?;
+    Ok(true)
+}
+
 /// State for when OAuth client credentials are present but no tokens yet.
 ///
 /// Contains the configuration needed to build a full `OAuthApiState`
@@ -1157,12 +1198,8 @@ pub(crate) fn is_permanent_refresh_failure(error_message: &str) -> bool {
 async fn try_refresh(oauth: &mut OAuthApiState) -> Result<(), RefreshError> {
     // 1. Check if external process already refreshed (token file reload).
     if let Ok(token_file) = crate::oauth::load_token_file(&oauth.token_path)
-        && oauth
-            .session
-            .apply_external_tokens(token_file.tokens.clone(), chrono::Utc::now())
+        && adopt_external_token_file(oauth, &token_file)?
     {
-        oauth.token_metadata = oauth.refresh_method.token_metadata_from_file(&token_file);
-        oauth.rebuild_client()?;
         return Ok(());
     }
 
@@ -1937,6 +1974,65 @@ mod tests {
         }
     }
 
+    fn token_data(
+        access_token: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> onshape_client_core::oauth::OAuthTokenData {
+        onshape_client_core::oauth::OAuthTokenData {
+            access_token: AccessToken::new(access_token.to_string()),
+            refresh_token: RefreshToken::new(format!("refresh-{access_token}")),
+            expires_at: Some(expires_at),
+            token_type: "bearer".to_string(),
+            scopes: None,
+        }
+    }
+
+    fn oauth_state(refresh_method: RefreshMethod) -> OAuthApiState {
+        let tokens = token_data("current", chrono::Utc::now() + chrono::Duration::minutes(1));
+        let session = OAuthSession::new(tokens, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
+        let base_url = "https://cad.onshape.com/api/v6".to_string();
+        let timeout = Duration::from_secs(30);
+        let client = OnshapeClient::new(ClientConfig {
+            base_url: base_url.clone(),
+            auth: ClientAuthConfig::Bearer {
+                access_token: AccessToken::new(session.access_token().secret().clone()),
+            },
+            timeout: Some(timeout),
+        })
+        .expect("should build test client");
+        let refresh_http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("should build refresh client");
+
+        OAuthApiState {
+            session,
+            token_metadata: McpOAuthTokenMetadata {
+                client_id: None,
+                client_secret: None,
+                proxy_url: None,
+            },
+            refresh_method,
+            client,
+            refresh_http,
+            token_path: PathBuf::from("tokens.json"),
+            base_url,
+            timeout,
+        }
+    }
+
+    fn fresher_token_file() -> McpOAuthTokenFile {
+        McpOAuthTokenFile {
+            tokens: token_data(
+                "external",
+                chrono::Utc::now() + chrono::Duration::minutes(2),
+            ),
+            client_id: None,
+            client_secret: None,
+            proxy_url: None,
+        }
+    }
+
     #[test]
     fn direct_refresh_metadata_drops_proxy_url() {
         let method = RefreshMethod::Direct {
@@ -1966,6 +2062,64 @@ mod tests {
             metadata.proxy_url.as_deref(),
             Some("https://proxy.example.com")
         );
+    }
+
+    #[test]
+    fn external_token_adoption_switches_direct_to_proxy() {
+        let mut oauth = oauth_state(RefreshMethod::Direct {
+            oauth_client: Box::new(onshape_oauth_client("old-client", "old-secret")),
+            client_id: "old-client".to_string(),
+            client_secret: SecretString::from("old-secret".to_string()),
+        });
+        let mut token_file = fresher_token_file();
+        token_file.client_id = Some("proxy-client".to_string());
+        token_file.proxy_url = Some("https://proxy.example.com".to_string());
+
+        let adopted =
+            adopt_external_token_file(&mut oauth, &token_file).expect("should adopt token file");
+
+        assert!(adopted);
+        let RefreshMethod::Proxy { proxy_url } = &oauth.refresh_method else {
+            panic!("should switch to proxy refresh");
+        };
+        assert_eq!(proxy_url, "https://proxy.example.com");
+        assert_eq!(
+            oauth.token_metadata.client_id.as_deref(),
+            Some("proxy-client")
+        );
+        assert!(oauth.token_metadata.client_secret.is_none());
+        assert_eq!(
+            oauth.token_metadata.proxy_url.as_deref(),
+            Some("https://proxy.example.com")
+        );
+    }
+
+    #[test]
+    fn external_token_adoption_switches_proxy_to_direct() {
+        let mut oauth = oauth_state(RefreshMethod::Proxy {
+            proxy_url: "https://old-proxy.example.com".to_string(),
+        });
+        let mut token_file = fresher_token_file();
+        token_file.client_id = Some("direct-client".to_string());
+        token_file.client_secret = Some("direct-secret".to_string());
+
+        let adopted =
+            adopt_external_token_file(&mut oauth, &token_file).expect("should adopt token file");
+
+        assert!(adopted);
+        let RefreshMethod::Direct { client_id, .. } = &oauth.refresh_method else {
+            panic!("should switch to direct refresh");
+        };
+        assert_eq!(client_id, "direct-client");
+        assert_eq!(
+            oauth.token_metadata.client_id.as_deref(),
+            Some("direct-client")
+        );
+        assert_eq!(
+            oauth.token_metadata.client_secret.as_deref(),
+            Some("direct-secret")
+        );
+        assert!(oauth.token_metadata.proxy_url.is_none());
     }
 
     // --- build_ipv4_retry_client tests ---
