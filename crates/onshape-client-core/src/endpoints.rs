@@ -16,6 +16,9 @@ pub enum Error {
     /// Request body serialization failed.
     #[error("failed to serialize endpoint request body as JSON: {0}")]
     SerializeBody(#[source] serde_json::Error),
+    /// Request body serialized successfully but was not a JSON object.
+    #[error("endpoint request body must serialize to a JSON object")]
+    InvalidBodyShape,
     /// Response body parsing failed.
     #[error("failed to parse endpoint response body as JSON: {0}")]
     ParseResponse(#[source] serde_json::Error),
@@ -181,7 +184,7 @@ impl<'de> Deserialize<'de> for TranslationRequestState {
 ///
 /// # Errors
 ///
-/// Returns an error if `params` cannot be serialized as JSON.
+/// Returns an error if `params` cannot be serialized as a JSON object.
 pub fn create_part_studio_translation<P: Serialize + ?Sized>(
     target: ElementRef<'_>,
     params: &P,
@@ -195,7 +198,7 @@ pub fn create_part_studio_translation<P: Serialize + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns an error if `params` cannot be serialized as JSON.
+/// Returns an error if `params` cannot be serialized as a JSON object.
 pub fn create_assembly_translation<P: Serialize + ?Sized>(
     target: ElementRef<'_>,
     params: &P,
@@ -209,7 +212,7 @@ pub fn create_assembly_translation<P: Serialize + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns an error if `params` cannot be serialized as JSON.
+/// Returns an error if `params` cannot be serialized as a JSON object.
 pub fn create_part_studio_export_gltf<P: Serialize + ?Sized>(
     target: ElementRef<'_>,
     params: &P,
@@ -223,7 +226,7 @@ pub fn create_part_studio_export_gltf<P: Serialize + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns an error if `params` cannot be serialized as JSON.
+/// Returns an error if `params` cannot be serialized as a JSON object.
 pub fn create_part_studio_export_step<P: Serialize + ?Sized>(
     target: ElementRef<'_>,
     params: &P,
@@ -237,7 +240,7 @@ pub fn create_part_studio_export_step<P: Serialize + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns an error if `params` cannot be serialized as JSON.
+/// Returns an error if `params` cannot be serialized as a JSON object.
 pub fn create_assembly_export_gltf<P: Serialize + ?Sized>(
     target: ElementRef<'_>,
     params: &P,
@@ -251,7 +254,7 @@ pub fn create_assembly_export_gltf<P: Serialize + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns an error if `params` cannot be serialized as JSON.
+/// Returns an error if `params` cannot be serialized as a JSON object.
 pub fn create_assembly_export_step<P: Serialize + ?Sized>(
     target: ElementRef<'_>,
     params: &P,
@@ -328,6 +331,9 @@ pub fn parse_translation_request_info(
 
 fn json_post<P: Serialize + ?Sized>(path: String, params: &P) -> Result<ApiRequest, Error> {
     let body: Value = serde_json::to_value(params).map_err(Error::SerializeBody)?;
+    if !body.is_object() {
+        return Err(Error::InvalidBodyShape);
+    }
 
     Ok(ApiRequest {
         method: HttpMethod::Post,
@@ -526,6 +532,22 @@ mod tests {
             request.path,
             "/partstudios/d/doc/w/workspace/e/element/translations"
         );
+    }
+
+    #[test]
+    fn json_post_rejects_non_object_bodies() {
+        for body in [
+            Value::Null,
+            json!([]),
+            json!("not an object"),
+            json!(42),
+            json!(true),
+        ] {
+            assert!(matches!(
+                json_post("/path".to_string(), &body),
+                Err(Error::InvalidBodyShape)
+            ));
+        }
     }
 
     #[test]
