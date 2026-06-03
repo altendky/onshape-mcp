@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
-use onshape_client_core::oauth::default_token_file_path;
 use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
 use secrecy::SecretString;
+
+use crate::oauth::{McpOAuthTokenFile, default_token_file_path};
 
 /// The environment variable prefix used for all configuration.
 ///
@@ -176,25 +177,24 @@ fn merge_credentials_from_token_file(config: &mut AppConfig) {
         }
     };
 
-    let token_data =
-        match serde_json::from_str::<onshape_client_core::oauth::OAuthTokenData>(&contents) {
-            Ok(d) => d,
-            Err(err) => {
-                // TODO: replace eprintln! with tracing::warn! once tracing is available
-                // See: https://github.com/altendky/onshape-mcp/issues/73
-                eprintln!(
-                    "Warning: could not parse token file {}: {err}",
-                    path.display(),
-                );
-                return;
-            }
-        };
+    let token_file = match serde_json::from_str::<McpOAuthTokenFile>(&contents) {
+        Ok(d) => d,
+        Err(err) => {
+            // TODO: replace eprintln! with tracing::warn! once tracing is available
+            // See: https://github.com/altendky/onshape-mcp/issues/73
+            eprintln!(
+                "Warning: could not parse token file {}: {err}",
+                path.display(),
+            );
+            return;
+        }
+    };
 
     if config.auth.client_id.is_none() {
-        config.auth.client_id = token_data.client_id;
+        config.auth.client_id = token_file.client_id;
     }
     if config.auth.client_secret.is_none()
-        && let Some(secret) = token_data.client_secret
+        && let Some(secret) = token_file.client_secret
     {
         config.auth.client_secret = Some(SecretString::from(secret));
     }

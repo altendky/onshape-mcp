@@ -8,6 +8,8 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 
 - [Principles](principles.md) — Sans-IO philosophy, testability goals, dependencies policy
 - [Architecture](architecture.md) — Layer design, crate structure, workspace layout
+- [Common Onshape Client Extraction Plan](common-onshape-client-plan.md) — Incremental plan for neutral common client crates
+- [HTTP Types Alignment Plan](http-types-plan.md) — Future evaluation of standard `http` crate protocol types
 - [Requirements](requirements.md) — Platform support, technology choices, toolchain
 
 ### Features

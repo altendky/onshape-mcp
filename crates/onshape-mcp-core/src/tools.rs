@@ -27,10 +27,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use onshape_client_core::request::{BinaryField, RequestBody};
+use onshape_client_core::request::{ApiRequest, BinaryField, RequestBody};
+use onshape_openapi::{OpenApiSpec, SearchFilters};
 
 use crate::config::ResolvedAuth;
-use crate::openapi::{ApiRequest, OpenApiSpec, SearchFilters};
 use crate::{AuthStatusResult, ValidationState};
 
 // ============================================================================
@@ -247,8 +247,10 @@ pub enum IoResult<'a> {
     ApiResponse {
         /// HTTP status code.
         status: u16,
-        /// Response body as a string.
-        body: &'a str,
+        /// Response headers as `(name, value)` pairs.
+        headers: &'a [(String, String)],
+        /// Raw response body bytes.
+        body: &'a [u8],
     },
     /// Results of file write operations.
     FileWriteResults(&'a [FileWriteResult]),
@@ -295,17 +297,33 @@ fn validate_file_path(path: &str) -> Result<PathBuf, String> {
 /// # Arguments
 ///
 /// * `status` - HTTP status code
-/// * `body` - Response body as a string
+/// * `headers` - Response headers as `(name, value)` pairs
+/// * `body` - Raw response body bytes
 ///
 /// # Errors
 ///
 /// Returns an error if the response cannot be processed.
-pub fn process_api_response(status: u16, body: &str) -> Result<CallToolResult, ErrorData> {
+pub fn process_api_response(
+    status: u16,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Result<CallToolResult, ErrorData> {
     let is_success = (200..300).contains(&status);
+    let body_text = match std::str::from_utf8(body) {
+        Ok(text) if response_content_type(headers).is_none_or(content_type_is_textual) => text,
+        _ => {
+            let content = binary_api_response_content(status, headers, body, !is_success)?;
+            return Ok(if is_success {
+                CallToolResult::success(vec![content])
+            } else {
+                CallToolResult::error(vec![content])
+            });
+        }
+    };
 
     if is_success {
         // Try to parse as JSON for nice formatting
-        let content = if let Ok(json_val) = serde_json::from_str::<Value>(body) {
+        let content = if let Ok(json_val) = serde_json::from_str::<Value>(body_text) {
             Content::json(&json_val).map_err(|e| {
                 ErrorData::new(
                     ErrorCode::INTERNAL_ERROR,
@@ -314,14 +332,77 @@ pub fn process_api_response(status: u16, body: &str) -> Result<CallToolResult, E
                 )
             })?
         } else {
-            Content::text(body)
+            Content::text(body_text)
         };
 
         Ok(CallToolResult::success(vec![content]))
     } else {
-        let content = Content::text(format!("API error (HTTP {status}): {body}"));
+        let content = Content::text(format!("API error (HTTP {status}): {body_text}"));
         Ok(CallToolResult::error(vec![content]))
     }
+}
+
+fn response_content_type(headers: &[(String, String)]) -> Option<&str> {
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.as_str())
+}
+
+fn content_type_is_textual(content_type: &str) -> bool {
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+
+    media_type.starts_with("text/")
+        || media_type == "application/json"
+        || media_type.ends_with("+json")
+        || media_type == "application/xml"
+        || media_type.ends_with("+xml")
+        || media_type == "application/javascript"
+        || media_type == "application/x-www-form-urlencoded"
+}
+
+fn binary_api_response_content(
+    status: u16,
+    headers: &[(String, String)],
+    body: &[u8],
+    is_error: bool,
+) -> Result<Content, ErrorData> {
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut response = serde_json::json!({
+        "status": status,
+        "encoding": "base64",
+        "byteLength": body.len(),
+        "body": engine.encode(body),
+    });
+
+    if let Some(content_type) = response_content_type(headers)
+        && let Some(response) = response.as_object_mut()
+    {
+        response.insert(
+            "contentType".to_string(),
+            Value::String(content_type.to_string()),
+        );
+    }
+
+    if is_error && let Some(response) = response.as_object_mut() {
+        response.insert(
+            "error".to_string(),
+            Value::String(format!("API error (HTTP {status})")),
+        );
+    }
+
+    Content::json(&response).map_err(|e| {
+        ErrorData::new(
+            ErrorCode::INTERNAL_ERROR,
+            format!("failed to serialize binary API response metadata: {e}"),
+            None,
+        )
+    })
 }
 
 /// Resume a multi-step tool operation after the I/O layer has executed an effect.
@@ -339,14 +420,26 @@ pub fn process_api_response(status: u16, body: &str) -> Result<CallToolResult, E
 pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, Vec<SideEffect>) {
     match (continuation, result) {
         // --- FormatApiResponse ---
-        (Continuation::FormatApiResponse, IoResult::ApiResponse { status, body }) => {
-            (ToolEffect::Done(process_api_response(status, body)), vec![])
-        }
+        (
+            Continuation::FormatApiResponse,
+            IoResult::ApiResponse {
+                status,
+                headers,
+                body,
+            },
+        ) => (
+            ToolEffect::Done(process_api_response(status, headers, body)),
+            vec![],
+        ),
 
         // --- ProcessAuthValidation ---
         (
             Continuation::ProcessAuthValidation { resolved_auth },
-            IoResult::ApiResponse { status, body: _ },
+            IoResult::ApiResponse {
+                status,
+                headers: _,
+                body: _,
+            },
         ) => resume_auth_validation(status, &resolved_auth),
 
         // --- ProcessScreenshotResponse ---
@@ -356,7 +449,11 @@ pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, 
                 label,
                 view_matrix,
             },
-            IoResult::ApiResponse { status, body },
+            IoResult::ApiResponse {
+                status,
+                headers: _,
+                body,
+            },
         ) => resume_screenshot_response(status, body, output_path, label, view_matrix),
 
         // --- FormatScreenshotWrite ---
@@ -612,12 +709,13 @@ fn resume_auth_validation(
 /// Extracted from [`resume()`] for readability.
 fn resume_screenshot_response(
     status: u16,
-    body: &str,
+    body: &[u8],
     output_path: PathBuf,
     label: String,
     view_matrix: String,
 ) -> (ToolEffect, Vec<SideEffect>) {
     if !(200..300).contains(&status) {
+        let body = String::from_utf8_lossy(body);
         return (
             ToolEffect::Done(Ok(CallToolResult::error(vec![Content::text(format!(
                 "Shaded views API error (HTTP {status}): {body}"
@@ -627,7 +725,7 @@ fn resume_screenshot_response(
     }
 
     // Parse the response JSON.
-    let response: Value = match serde_json::from_str(body) {
+    let response: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
         Err(e) => {
             return (
@@ -1921,7 +2019,9 @@ fn parse_arguments<T: serde::de::DeserializeOwned>(
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::{ValidationState, openapi::HttpMethod};
+    use onshape_client_core::request::HttpMethod;
+
+    use crate::ValidationState;
 
     fn default_validation() -> ValidationState {
         ValidationState::default()
@@ -2705,19 +2805,42 @@ mod tests {
     #[test]
     fn process_api_response_success_json() {
         let body = r#"{"id": "abc123", "name": "Test"}"#;
-        let result = process_api_response(200, body).expect("should succeed");
+        let result = process_api_response(200, &[], body.as_bytes()).expect("should succeed");
         assert_eq!(result.is_error, Some(false));
     }
 
     #[test]
     fn process_api_response_success_plain_text() {
-        let result = process_api_response(200, "plain text response").expect("should succeed");
+        let result =
+            process_api_response(200, &[], b"plain text response").expect("should succeed");
         assert_eq!(result.is_error, Some(false));
     }
 
     #[test]
+    fn process_api_response_success_binary() {
+        let headers = [(
+            "content-type".to_string(),
+            "application/octet-stream".to_string(),
+        )];
+
+        let result = process_api_response(200, &headers, &[0xff]).expect("should succeed");
+
+        assert_eq!(result.is_error, Some(false));
+        let text = result.content[0]
+            .raw
+            .as_text()
+            .expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["status"], 200);
+        assert_eq!(value["contentType"], "application/octet-stream");
+        assert_eq!(value["encoding"], "base64");
+        assert_eq!(value["byteLength"], 1);
+        assert_eq!(value["body"], "/w==");
+    }
+
+    #[test]
     fn process_api_response_error() {
-        let result = process_api_response(404, "Not found").expect("should succeed");
+        let result = process_api_response(404, &[], b"Not found").expect("should succeed");
         assert_eq!(result.is_error, Some(true));
     }
 
@@ -2839,7 +2962,8 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 200,
-                body: r#"{"id": "user123"}"#,
+                headers: &[],
+                body: br#"{"id": "user123"}"#,
             },
         );
 
@@ -2881,7 +3005,8 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 401,
-                body: "Unauthorized",
+                headers: &[],
+                body: b"Unauthorized",
             },
         );
 
@@ -2920,7 +3045,8 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 500,
-                body: "Internal Server Error",
+                headers: &[],
+                body: b"Internal Server Error",
             },
         );
 
@@ -3716,7 +3842,8 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 500,
-                body: "Internal Server Error",
+                headers: &[],
+                body: b"Internal Server Error",
             },
         );
         assert!(side_effects.is_empty());
@@ -3750,7 +3877,8 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 200,
-                body: &body,
+                headers: &[],
+                body: body.as_bytes(),
             },
         );
         assert!(side_effects.is_empty());
@@ -3874,7 +4002,8 @@ mod tests {
             continuation,
             IoResult::ApiResponse {
                 status: 200,
-                body: &body,
+                headers: &[],
+                body: body.as_bytes(),
             },
         );
         let (files, _continuation) = assert_write_files(tool_effect);

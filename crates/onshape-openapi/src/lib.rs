@@ -1,7 +1,7 @@
 //! `OpenAPI` spec parsing, searching, and request building.
 //!
-//! This module provides pure (sans-IO) operations over an Onshape `OpenAPI` specification.
-//! The spec JSON content is provided externally; this module never performs I/O.
+//! This crate provides pure (sans-IO) operations over an Onshape `OpenAPI` specification.
+//! The spec JSON content is provided externally; this crate never performs I/O.
 
 use std::collections::{HashMap, HashSet};
 
@@ -10,8 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// Re-export types that moved to onshape-client-core.
-pub use onshape_client_core::request::{ApiRequest, ApiResponse, HttpMethod};
+pub use onshape_client_core::request::{ApiRequest, HttpMethod};
 use onshape_client_core::request::{BinaryField, MultipartBody, RequestBody};
 
 // ============================================================================
@@ -215,17 +214,54 @@ impl OpenApiSpec {
         Self::from_value(&root)
     }
 
+    /// Parse an `OpenAPI` specification from a JSON string, using the provided
+    /// server URL if the spec does not contain one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the JSON is malformed or missing required fields.
+    pub fn from_json_with_server_url_fallback(
+        json: &str,
+        server_url_fallback: &str,
+    ) -> Result<Self, OpenApiError> {
+        let root: Value = serde_json::from_str(json)?;
+        Self::from_value_with_server_url_fallback(&root, server_url_fallback)
+    }
+
     /// Parse an `OpenAPI` specification from a `serde_json::Value`.
     ///
     /// # Errors
     ///
     /// Returns an error if the value is missing required fields.
     pub fn from_value(root: &Value) -> Result<Self, OpenApiError> {
+        Self::from_value_inner(root, None)
+    }
+
+    /// Parse an `OpenAPI` specification from a `serde_json::Value`, using the
+    /// provided server URL if the spec does not contain one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is missing required fields.
+    pub fn from_value_with_server_url_fallback(
+        root: &Value,
+        server_url_fallback: &str,
+    ) -> Result<Self, OpenApiError> {
+        Self::from_value_inner(root, Some(server_url_fallback))
+    }
+
+    fn from_value_inner(
+        root: &Value,
+        server_url_fallback: Option<&str>,
+    ) -> Result<Self, OpenApiError> {
         // Extract server URL
         let server_url = root
             .pointer("/servers/0/url")
             .and_then(Value::as_str)
-            .unwrap_or("https://cad.onshape.com/api/v6")
+            .or(server_url_fallback)
+            .ok_or_else(|| OpenApiError::InvalidSpec {
+                reason: "missing 'servers[0].url' string".into(),
+            })?
             .to_string();
 
         // Extract component schemas for $ref resolution
@@ -437,6 +473,17 @@ impl OpenApiSpec {
             {
                 return Err(OpenApiError::InvalidParams {
                     reason: format!("missing required query parameter: {}", param.name),
+                });
+            }
+        }
+
+        for param in &ep.parameters {
+            if param.location == ParameterLocation::Header && param.required {
+                return Err(OpenApiError::InvalidParams {
+                    reason: format!(
+                        "required header parameter `{}` is unsupported because API requests do not model request headers yet",
+                        param.name
+                    ),
                 });
             }
         }
@@ -1429,6 +1476,39 @@ mod tests {
     }
 
     #[test]
+    fn parse_requires_server_url_without_fallback() {
+        let err = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "paths": {}
+        }))
+        .unwrap_err();
+
+        match err {
+            OpenApiError::InvalidSpec { reason } => {
+                assert!(
+                    reason.contains("missing 'servers[0].url' string"),
+                    "error should mention missing server URL, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidSpec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_accepts_explicit_server_url_fallback() {
+        let spec = OpenApiSpec::from_value_with_server_url_fallback(
+            &serde_json::json!({
+                "openapi": "3.0.1",
+                "paths": {}
+            }),
+            "https://fallback.example.com/api/v1",
+        )
+        .expect("should parse");
+
+        assert_eq!(spec.server_url(), "https://fallback.example.com/api/v1");
+    }
+
+    #[test]
     fn search_by_keyword() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let results = spec.search("document", &SearchFilters::default());
@@ -1524,14 +1604,14 @@ mod tests {
     fn build_request_with_path_params() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let mut path_params = HashMap::new();
-        path_params.insert("did".to_string(), "abc123".to_string());
+        path_params.insert("did".to_string(), "abc/123 model".to_string());
 
         let request = spec
             .build_request("getDocument", &path_params, &HashMap::new(), None)
             .expect("should build");
 
         assert_eq!(request.method, HttpMethod::Get);
-        assert_eq!(request.path, "/documents/abc123");
+        assert_eq!(request.path, "/documents/abc%2F123%20model");
         assert!(request.query_params.is_empty());
         assert!(request.body.is_none());
     }
@@ -1549,7 +1629,7 @@ mod tests {
     fn build_request_with_query_params() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let mut query_params = HashMap::new();
-        query_params.insert("q".to_string(), "robot".to_string());
+        query_params.insert("q".to_string(), "robot arm".to_string());
         query_params.insert("limit".to_string(), "10".to_string());
 
         let request = spec
@@ -1559,6 +1639,100 @@ mod tests {
         assert_eq!(request.method, HttpMethod::Get);
         assert_eq!(request.path, "/documents");
         assert_eq!(request.query_params.len(), 2);
+
+        let query_map: HashMap<&str, &str> = request
+            .query_params
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(query_map["q"], "robot arm");
+        assert_eq!(query_map["limit"], "10");
+    }
+
+    #[test]
+    fn build_request_rejects_missing_required_query_param() {
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "servers": [{ "url": "https://example.com/api/v1" }],
+            "paths": {
+                "/search": {
+                    "get": {
+                        "operationId": "searchDocuments",
+                        "parameters": [
+                            {
+                                "name": "q",
+                                "in": "query",
+                                "required": true,
+                                "schema": { "type": "string" }
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }))
+        .expect("should parse");
+
+        let err = spec
+            .build_request("searchDocuments", &HashMap::new(), &HashMap::new(), None)
+            .unwrap_err();
+
+        match err {
+            OpenApiError::InvalidParams { reason } => {
+                assert!(
+                    reason.contains("missing required query parameter: q"),
+                    "error should mention missing required query parameter, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_request_rejects_required_header_params() {
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "servers": [{ "url": "https://example.com/api/v1" }],
+            "paths": {
+                "/downloads/{did}": {
+                    "get": {
+                        "operationId": "downloadExternalData",
+                        "parameters": [
+                            {
+                                "name": "did",
+                                "in": "path",
+                                "required": true,
+                                "schema": { "type": "string" }
+                            },
+                            {
+                                "name": "If-Match",
+                                "in": "header",
+                                "required": true,
+                                "schema": { "type": "string" }
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }))
+        .expect("should parse");
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+
+        let err = spec
+            .build_request("downloadExternalData", &path_params, &HashMap::new(), None)
+            .unwrap_err();
+
+        match err {
+            OpenApiError::InvalidParams { reason } => {
+                assert!(
+                    reason.contains("required header parameter `If-Match` is unsupported"),
+                    "error should mention unsupported required header, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1594,7 +1768,10 @@ mod tests {
 
     #[test]
     fn missing_paths_returns_error() {
-        let err = OpenApiSpec::from_json(r#"{"openapi": "3.0.1"}"#).unwrap_err();
+        let err = OpenApiSpec::from_json(
+            r#"{"openapi": "3.0.1", "servers": [{ "url": "https://example.com/api/v1" }]}"#,
+        )
+        .unwrap_err();
         assert!(matches!(err, OpenApiError::InvalidSpec { .. }));
     }
 
@@ -1845,7 +2022,8 @@ mod tests {
             "file": encoded,
             "formatName": "FEATURESCRIPT",
             "translate": true,
-            "encodedFilename": "test.fs"
+            "encodedFilename": "test.fs",
+            "importAppearances": { "faces": true }
         });
 
         let mut path_params = HashMap::new();
@@ -1874,7 +2052,7 @@ mod tests {
         assert_eq!(multipart.binary_fields[0].data, file_content);
 
         // Check text fields.
-        assert_eq!(multipart.text_fields.len(), 3);
+        assert_eq!(multipart.text_fields.len(), 4);
         let text_map: HashMap<&str, &str> = multipart
             .text_fields
             .iter()
@@ -1883,6 +2061,7 @@ mod tests {
         assert_eq!(text_map["formatName"], "FEATURESCRIPT");
         assert_eq!(text_map["translate"], "true");
         assert_eq!(text_map["encodedFilename"], "test.fs");
+        assert_eq!(text_map["importAppearances"], r#"{"faces":true}"#);
     }
 
     #[test]
