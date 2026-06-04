@@ -9,8 +9,8 @@ This section documents the manual configuration required in GitHub repository se
 | Setting | Value |
 | --------- | ------- |
 | Require PR before merge | Yes |
-| Required approvals | 0 (increase when contributors join) |
-| Require status checks | Yes — `all` job + `Mergify Merge Protections` |
+| Required approvals | 1 |
+| Require status checks | Yes — `all` job |
 | Require merge queue | No (Mergify handles this) |
 | Require branches up-to-date | No (Mergify merge queue handles this) |
 | Show update branch button | Always |
@@ -26,14 +26,15 @@ the repository root.
 **How it works:**
 
 1. Apply the `enqueue` label to a PR
-2. Once the PR has an approval, Mergify Workflow Automation queues it
+2. Mergify Workflow Automation queues non-draft PRs once GitHub's injected protection requirements pass
 3. Mergify creates a temporary branch merging the PR into `main` and runs CI again
-4. If branch protection passes on the queued merge, Mergify merges the PR
+4. If GitHub protection requirements pass on the queued merge, Mergify merges the PR
 5. If CI fails, the PR is dequeued
 
-This schedules PRs after approval while keeping branch protection checks on the queued merge
-result. Mergify Merge Protections reports the same approval gate as a required status check,
-so `main` is protected without requiring PR branches to stay up to date manually.
+GitHub owns approval and required status checks. Mergify owns queue selection
+(`enqueue` label, `main` base, non-draft) and consumes GitHub branch protection
+injection so queued merges satisfy the same gates without duplicating those gates
+in `.mergify.yml`.
 
 **Flaky failure handling:**
 
@@ -44,10 +45,10 @@ limits) without manual intervention.
 | Setting | Value |
 | ------- | ----- |
 | Configuration | `.mergify.yml` |
-| Queue entry | `enqueue` label + 1 approval |
+| Queue entry | `enqueue` label, `main` base, non-draft, plus injected GitHub protections |
 | Queue action | Mergify Workflow Automation `queue` action |
-| Merge protection | `Mergify Merge Protections` required status check |
-| Merge gate | GitHub branch protection (`all`) injected into queue merge conditions |
+| Merge protection | GitHub ruleset (`1` approval + `all`) |
+| Merge gate | GitHub branch protection injected into queue and merge conditions |
 | Merge method | Merge commits |
 | Checks timeout | 90 minutes |
 | Parallel checks | 1 (no speculative checks) |
@@ -393,7 +394,8 @@ environments, verifying that statically-linked musl binaries work correctly on g
 | [c8](https://github.com/bcoe/c8) | V8 native coverage for Node.js (npm wrapper) |
 | [codecov/codecov-action](https://github.com/codecov/codecov-action) | Upload coverage to Codecov |
 
-**GitHub branch protection:** Only the `all` job is required.
+**GitHub branch protection:** Only the `all` job is required as a status check;
+approval is enforced by the GitHub ruleset.
 
 ## Checks
 
