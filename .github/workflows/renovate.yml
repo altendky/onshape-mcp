@@ -36,7 +36,7 @@ jobs:
             exit 1
           fi
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
-      - uses: renovatebot/github-action@b67590ea780158ccd13192c22a3655a5231f869d # v46.1.8
+      - uses: renovatebot/github-action@693b9ef15eec82123529a37c782242f091365961 # v46.1.14
         with:
           token: ${{ steps.app-token.outputs.token }}
           docker-volumes: /tmp:/tmp;${{ steps.mise-path.outputs.bin }}:/usr/local/bin/mise
