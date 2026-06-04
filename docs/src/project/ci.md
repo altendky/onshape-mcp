@@ -26,13 +26,14 @@ the repository root.
 **How it works:**
 
 1. Apply the `enqueue` label to a PR
-2. Once the PR has an approval, Mergify Merge Protections auto-queues it
+2. Once the PR has an approval, Mergify Workflow Automation queues it
 3. Mergify creates a temporary branch merging the PR into `main` and runs CI again
 4. If branch protection passes on the queued merge, Mergify merges the PR
 5. If CI fails, the PR is dequeued
 
 This schedules PRs after approval while keeping branch protection checks on the queued merge
-result, so `main` is protected without requiring PR branches to stay up to date manually.
+result. Mergify Merge Protections reports the same approval gate as a required status check,
+so `main` is protected without requiring PR branches to stay up to date manually.
 
 **Flaky failure handling:**
 
@@ -44,7 +45,8 @@ limits) without manual intervention.
 | ------- | ----- |
 | Configuration | `.mergify.yml` |
 | Queue entry | `enqueue` label + 1 approval |
-| Autoqueue gate | Mergify Merge Protections |
+| Queue action | Mergify Workflow Automation `queue` action |
+| Merge protection | `Mergify Merge Protections` required status check |
 | Merge gate | GitHub branch protection (`all`) injected into queue merge conditions |
 | Merge method | Merge commits |
 | Checks timeout | 90 minutes |
