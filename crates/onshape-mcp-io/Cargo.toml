@@ -21,6 +21,7 @@ oauth2.workspace = true
 oauth2-reqwest.workspace = true
 onshape-client-core.workspace = true
 onshape-client-io.workspace = true
+onshape-openapi.workspace = true
 onshape-mcp-core.workspace = true
 onshape-mcp-resources.workspace = true
 rand.workspace = true

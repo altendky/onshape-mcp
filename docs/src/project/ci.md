@@ -9,8 +9,8 @@ This section documents the manual configuration required in GitHub repository se
 | Setting | Value |
 | --------- | ------- |
 | Require PR before merge | Yes |
-| Required approvals | 0 (increase when contributors join) |
-| Require status checks | Yes — `all` job only |
+| Required approvals | 1 |
+| Require status checks | Yes — `all` job |
 | Require merge queue | No (Mergify handles this) |
 | Require branches up-to-date | No (Mergify merge queue handles this) |
 | Show update branch button | Always |
@@ -25,30 +25,34 @@ the repository root.
 
 **How it works:**
 
-1. Apply the `queue` label to a PR
-2. Once CI passes on the PR branch (`check-success = all`), Mergify auto-queues it
+1. Apply the `enqueue` label to a PR
+2. Mergify Workflow Automation queues non-draft PRs once GitHub's injected protection requirements pass
 3. Mergify creates a temporary branch merging the PR into `main` and runs CI again
-4. If CI passes on the merged branch, Mergify merges the PR
+4. If GitHub protection requirements pass on the queued merge, Mergify merges the PR
 5. If CI fails, the PR is dequeued
 
-This two-step CI pattern catches real errors on the PR itself (before entering the queue)
-while only infrastructure flakes need to be retried in the queue.
+GitHub owns approval and required status checks. Mergify owns queue selection
+(`enqueue` label, `main` base, non-draft) and consumes GitHub branch protection
+injection so queued merges satisfy the same gates without duplicating those gates
+in `.mergify.yml`.
 
 **Flaky failure handling:**
 
-Mergify CI Insights Auto-Retry is configured (via the Mergify dashboard) to automatically
-retry failed CI jobs up to 2 times. This handles transient infrastructure failures (runner
-provisioning, network timeouts, rate limits) without manual intervention.
+Mergify queue retries are configured to retry failed queued checks up to 2 times. This
+handles transient infrastructure failures (runner provisioning, network timeouts, rate
+limits) without manual intervention.
 
 | Setting | Value |
 | ------- | ----- |
 | Configuration | `.mergify.yml` |
-| Queue entry | `queue` label + CI green |
-| Merge gate | `check-success = all` |
+| Queue entry | `enqueue` label, `main` base, non-draft, plus injected GitHub protections |
+| Queue action | Mergify Workflow Automation `queue` action |
+| Merge protection | GitHub ruleset (`1` approval + `all`) |
+| Merge gate | GitHub branch protection injected into queue and merge conditions |
 | Merge method | Merge commits |
 | Checks timeout | 90 minutes |
 | Parallel checks | 1 (no speculative checks) |
-| Auto-retry | 2 retries (dashboard-configured) |
+| Auto-retry | 2 retries (`max_checks_retries`) |
 
 ### CI Insights
 
@@ -68,7 +72,7 @@ after each test job. Nextest generates JUnit output via the `ci` profile configu
 | Nextest config | `.config/nextest.toml` |
 | Nextest profile | `ci` |
 | JUnit output path | `target/nextest/ci/junit.xml` |
-| Upload action | `mergifyio/gha-mergify-ci@6875ab3991ec1db831576df1cd00a7870603aa9e # v8` |
+| Upload action | `mergifyio/gha-mergify-ci@3cd8c8830f663041802caa183f0f455755646431 # v21` |
 | Secret | `MERGIFY_TOKEN` (application key with `ci` scope) |
 
 ### Merge Strategy
@@ -390,7 +394,8 @@ environments, verifying that statically-linked musl binaries work correctly on g
 | [c8](https://github.com/bcoe/c8) | V8 native coverage for Node.js (npm wrapper) |
 | [codecov/codecov-action](https://github.com/codecov/codecov-action) | Upload coverage to Codecov |
 
-**GitHub branch protection:** Only the `all` job is required.
+**GitHub branch protection:** Only the `all` job is required as a status check;
+approval is enforced by the GitHub ruleset.
 
 ## Checks
 

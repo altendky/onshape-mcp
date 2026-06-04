@@ -29,14 +29,16 @@ use secrecy::{ExposeSecret, SecretString};
 
 use onshape_client_core::auth::{AuthMethod, Credentials};
 use onshape_client_core::oauth::{
-    OAuthSession, OnshapeOAuthClient, PostExecuteAction, PreExecuteAction, default_token_file_path,
-    onshape_oauth_client,
+    OAuthSession, OnshapeOAuthClient, PostExecuteAction, PreExecuteAction, onshape_oauth_client,
 };
+use onshape_client_core::request::ApiResponse;
 use onshape_client_io::{ClientAuthConfig, ClientConfig, OnshapeClient};
 use onshape_mcp_core::ValidationState;
 use onshape_mcp_core::config::{AppConfig, AuthInventory, ResolvedAuth, TokenStatus, resolve_auth};
-use onshape_mcp_core::openapi::OpenApiSpec;
 use onshape_mcp_core::tools::{self, IoResult, SideEffect, ToolEffect};
+use onshape_openapi::OpenApiSpec;
+
+use crate::oauth::{McpOAuthTokenFile, McpOAuthTokenMetadata, default_token_file_path};
 
 /// The embedded Onshape `OpenAPI` specification JSON.
 ///
@@ -45,6 +47,9 @@ use onshape_mcp_core::tools::{self, IoResult, SideEffect, ToolEffect};
 /// distribution (single binary, no external files needed).
 const OPENAPI_SPEC_JSON: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/onshape-openapi.json"));
+
+/// MCP compatibility fallback for embedded specs that predate an explicit server URL.
+const OPENAPI_SERVER_URL_FALLBACK: &str = "https://cad.onshape.com/api/v6";
 
 /// Default refresh margin: start proactive refresh 60 seconds before expiry.
 pub(crate) const REFRESH_MARGIN_SECS: i64 = 60;
@@ -100,6 +105,65 @@ pub(crate) enum RefreshMethod {
         /// Base URL of the OAuth proxy (e.g. `https://onshape-oauth-proxy.fstab.workers.dev`).
         proxy_url: String,
     },
+}
+
+impl RefreshMethod {
+    /// Extract token-file metadata that should be preserved for this refresh mode.
+    fn token_metadata_from_file(&self, token_file: &McpOAuthTokenFile) -> McpOAuthTokenMetadata {
+        match self {
+            Self::Direct { .. } => McpOAuthTokenMetadata {
+                client_id: token_file.client_id.clone(),
+                client_secret: token_file.client_secret.clone(),
+                proxy_url: None,
+            },
+            Self::Proxy { .. } => McpOAuthTokenMetadata {
+                client_id: token_file.client_id.clone(),
+                client_secret: None,
+                proxy_url: token_file.proxy_url.clone(),
+            },
+        }
+    }
+}
+
+pub(crate) fn refresh_method_from_token_file(
+    token_file: &McpOAuthTokenFile,
+) -> Option<RefreshMethod> {
+    if let Some(proxy_url) = &token_file.proxy_url {
+        return Some(RefreshMethod::Proxy {
+            proxy_url: proxy_url.clone(),
+        });
+    }
+
+    let (Some(client_id), Some(client_secret)) = (&token_file.client_id, &token_file.client_secret)
+    else {
+        return None;
+    };
+
+    Some(RefreshMethod::Direct {
+        oauth_client: Box::new(onshape_oauth_client(client_id, client_secret)),
+        client_id: client_id.clone(),
+        client_secret: SecretString::from(client_secret.clone()),
+    })
+}
+
+pub(crate) fn adopt_external_token_file(
+    oauth: &mut OAuthApiState,
+    token_file: &McpOAuthTokenFile,
+) -> Result<bool, onshape_client_io::ClientError> {
+    if !oauth
+        .session
+        .apply_external_tokens(token_file.tokens.clone(), chrono::Utc::now())
+    {
+        return Ok(false);
+    }
+
+    if let Some(refresh_method) = refresh_method_from_token_file(token_file) {
+        oauth.refresh_method = refresh_method;
+    }
+
+    oauth.token_metadata = oauth.refresh_method.token_metadata_from_file(token_file);
+    oauth.rebuild_client()?;
+    Ok(true)
 }
 
 /// State for when OAuth client credentials are present but no tokens yet.
@@ -159,6 +223,8 @@ impl ApiState {
 pub(crate) struct OAuthApiState {
     /// Core: pure decision logic for token lifecycle.
     pub(crate) session: OAuthSession,
+    /// MCP-owned persistence metadata for the token file.
+    pub(crate) token_metadata: McpOAuthTokenMetadata,
     /// How to refresh tokens (direct or via proxy).
     pub(crate) refresh_method: RefreshMethod,
     /// I/O: HTTP client for Onshape API calls (carries the bearer token).
@@ -254,7 +320,10 @@ impl OnshapeMcpServer {
         version: &str,
         config: AppConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let spec = OpenApiSpec::from_json(OPENAPI_SPEC_JSON)?;
+        let spec = OpenApiSpec::from_json_with_server_url_fallback(
+            OPENAPI_SPEC_JSON,
+            OPENAPI_SERVER_URL_FALLBACK,
+        )?;
 
         let api_state = build_api_state(&config, spec.server_url())?;
 
@@ -519,13 +588,8 @@ async fn dispatch_tool_effect(
                     Ok(raw) => {
                         update_implicit_validation(validation, raw.status).await;
 
-                        let (next_effect, side_effects) = tools::resume(
-                            continuation,
-                            IoResult::ApiResponse {
-                                status: raw.status,
-                                body: &raw.body,
-                            },
-                        );
+                        let (next_effect, side_effects) =
+                            resume_with_raw_response(continuation, &raw);
 
                         for effect in side_effects {
                             apply_side_effect(validation, effect).await;
@@ -655,10 +719,34 @@ async fn read_files(reads: &[tools::FileRead]) -> Vec<tools::FileReadResult> {
 // API Request Execution
 // ============================================================================
 
-/// Result of executing a raw API request: HTTP status code and response body.
+/// Result of executing a raw API request: HTTP status code, headers, and bytes.
+#[derive(Debug)]
 struct RawResponse {
     status: u16,
-    body: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+fn raw_response_from_api_response(response: ApiResponse) -> RawResponse {
+    RawResponse {
+        status: response.status,
+        headers: response.headers,
+        body: response.body.bytes,
+    }
+}
+
+fn resume_with_raw_response(
+    continuation: tools::Continuation,
+    raw: &RawResponse,
+) -> (ToolEffect, Vec<SideEffect>) {
+    tools::resume(
+        continuation,
+        IoResult::ApiResponse {
+            status: raw.status,
+            headers: &raw.headers,
+            body: &raw.body,
+        },
+    )
 }
 
 /// Error response when credentials are not configured.
@@ -681,16 +769,15 @@ fn oauth_pending_error() -> CallToolResult {
     )])
 }
 
-/// Execute a raw API request, returning the HTTP status and body.
+/// Execute a raw API request, returning the HTTP status, headers, and body bytes.
 ///
 /// Handles authentication (Basic or OAuth with proactive/reactive refresh)
 /// but does not process the response into a `CallToolResult`.
 /// For OAuth, also handles permanent refresh failures by transitioning to
 /// `OAuthPending` state.
 ///
-/// Returns `None` for states where no API call can be made (`NotConfigured`,
-/// `OAuthPending`). The caller should handle these with [`not_configured_error`]
-/// or [`oauth_pending_error`] before calling this function.
+/// The caller must handle states where no API call can be made (`NotConfigured`,
+/// `OAuthPending`) before calling this function.
 async fn execute_raw_api_request(
     state: &mut ApiState,
     api_req: &onshape_client_core::request::ApiRequest,
@@ -708,16 +795,13 @@ async fn execute_raw_api_request(
     }
 }
 
-/// Execute a raw request with Basic auth — returns status and body.
+/// Execute a raw request with Basic auth.
 async fn execute_basic_raw(
     client: &OnshapeClient,
     api_req: &onshape_client_core::request::ApiRequest,
 ) -> Result<RawResponse, McpError> {
     match client.execute(api_req).await {
-        Ok(response) => Ok(RawResponse {
-            status: response.status,
-            body: response.body,
-        }),
+        Ok(response) => Ok(raw_response_from_api_response(response)),
         Err(e) => Err(McpError::new(
             rmcp::model::ErrorCode::INTERNAL_ERROR,
             format!("HTTP request failed: {e}"),
@@ -740,6 +824,10 @@ enum OAuthExecuteResult {
         /// Human-readable error message for the user.
         message: String,
     },
+}
+
+fn oauth_execute_result_from_api_response(response: ApiResponse) -> OAuthExecuteResult {
+    OAuthExecuteResult::Ok(raw_response_from_api_response(response))
 }
 
 /// Execute a raw request with OAuth, including proactive and reactive refresh.
@@ -783,10 +871,7 @@ async fn execute_oauth_inner(
         }
         let retry = oauth.client.execute(api_req).await;
         return match retry {
-            Ok(response) => OAuthExecuteResult::Ok(RawResponse {
-                status: response.status,
-                body: response.body,
-            }),
+            Ok(response) => oauth_execute_result_from_api_response(response),
             Err(e) => OAuthExecuteResult::Err(McpError::new(
                 rmcp::model::ErrorCode::INTERNAL_ERROR,
                 format!("HTTP request failed on retry: {e}"),
@@ -796,10 +881,7 @@ async fn execute_oauth_inner(
     }
 
     match result {
-        Ok(response) => OAuthExecuteResult::Ok(RawResponse {
-            status: response.status,
-            body: response.body,
-        }),
+        Ok(response) => oauth_execute_result_from_api_response(response),
         Err(e) => OAuthExecuteResult::Err(McpError::new(
             rmcp::model::ErrorCode::INTERNAL_ERROR,
             format!("HTTP request failed: {e}"),
@@ -858,7 +940,8 @@ async fn execute_oauth_raw(
             // process it appropriately.
             Ok(RawResponse {
                 status: 401,
-                body: message,
+                headers: vec![],
+                body: message.into_bytes(),
             })
         }
     }
@@ -931,10 +1014,7 @@ async fn execute_http_oauth_raw(
                 // Retry the request with the refreshed token.
                 let retry = http_oauth.client.execute(api_req).await;
                 return match retry {
-                    Ok(response) => Ok(RawResponse {
-                        status: response.status,
-                        body: response.body,
-                    }),
+                    Ok(response) => Ok(raw_response_from_api_response(response)),
                     Err(e) => Err(McpError::new(
                         rmcp::model::ErrorCode::INTERNAL_ERROR,
                         format!("HTTP request failed on retry: {e}"),
@@ -945,10 +1025,12 @@ async fn execute_http_oauth_raw(
             Err(oauth_server::UserTokenRefreshError::PermanentExchange(msg)) => {
                 return Ok(RawResponse {
                     status: 401,
+                    headers: vec![],
                     body: format!(
                         "Onshape token refresh permanently failed ({msg}). \
                          Please re-authenticate by completing the OAuth flow again."
-                    ),
+                    )
+                    .into_bytes(),
                 });
             }
             Err(e) => {
@@ -962,10 +1044,7 @@ async fn execute_http_oauth_raw(
     }
 
     match result {
-        Ok(response) => Ok(RawResponse {
-            status: response.status,
-            body: response.body,
-        }),
+        Ok(response) => Ok(raw_response_from_api_response(response)),
         Err(e) => Err(McpError::new(
             rmcp::model::ErrorCode::INTERNAL_ERROR,
             format!("HTTP request failed: {e}"),
@@ -1118,12 +1197,9 @@ pub(crate) fn is_permanent_refresh_failure(error_message: &str) -> bool {
 /// 3. Apply the response, persist to disk, rebuild the API client.
 async fn try_refresh(oauth: &mut OAuthApiState) -> Result<(), RefreshError> {
     // 1. Check if external process already refreshed (token file reload).
-    if let Ok(file_tokens) = crate::oauth::load_token_file(&oauth.token_path)
-        && oauth
-            .session
-            .apply_external_tokens(file_tokens, chrono::Utc::now())
+    if let Ok(token_file) = crate::oauth::load_token_file(&oauth.token_path)
+        && adopt_external_token_file(oauth, &token_file)?
     {
-        oauth.rebuild_client()?;
         return Ok(());
     }
 
@@ -1144,7 +1220,10 @@ async fn try_refresh(oauth: &mut OAuthApiState) -> Result<(), RefreshError> {
     }
 
     // 3. Persist to disk.
-    crate::oauth::save_token_file(&oauth.token_path, &oauth.session.tokens)?;
+    let token_file = oauth
+        .token_metadata
+        .with_tokens(oauth.session.tokens.clone());
+    crate::oauth::save_token_file(&oauth.token_path, &token_file)?;
 
     // 4. Rebuild API client with new access token.
     oauth.rebuild_client()?;
@@ -1226,8 +1305,7 @@ async fn try_refresh_proxy(oauth: &mut OAuthApiState, proxy_url: &str) -> Result
         .and_then(chrono::Duration::try_seconds)
         .map(|d| now + d);
 
-    // Update session with new token data (preserving proxy_url in the token file).
-    let mut new_tokens = onshape_client_core::oauth::OAuthTokenData::from_raw(
+    let new_tokens = onshape_client_core::oauth::OAuthTokenData::from_raw(
         token_response.access_token,
         token_response.refresh_token.unwrap_or_default(),
         expires_at,
@@ -1236,14 +1314,6 @@ async fn try_refresh_proxy(oauth: &mut OAuthApiState, proxy_url: &str) -> Result
             .scope
             .map(|s| s.split(' ').map(String::from).collect()),
     );
-    // Preserve proxy_url and client_id from the existing token data.
-    new_tokens
-        .proxy_url
-        .clone_from(&oauth.session.tokens.proxy_url);
-    new_tokens
-        .client_id
-        .clone_from(&oauth.session.tokens.client_id);
-
     oauth.session.tokens = new_tokens;
     Ok(())
 }
@@ -1324,7 +1394,7 @@ fn probe_token_status(token_path: Option<&std::path::Path>) -> TokenStatus {
     };
     match crate::oauth::load_token_file(path) {
         Ok(data) => TokenStatus::Present {
-            expires_at: data.expires_at,
+            expires_at: data.tokens.expires_at,
             proxy_url: data.proxy_url,
         },
         Err(_) => TokenStatus::Absent,
@@ -1390,14 +1460,14 @@ fn build_api_state(
 /// 3. Config `client_id` + `client_secret` (direct mode)
 fn determine_refresh_method(
     config: &AppConfig,
-    token_data: Option<&onshape_client_core::oauth::OAuthTokenData>,
+    token_file: Option<&crate::oauth::McpOAuthTokenFile>,
 ) -> Option<RefreshMethod> {
     // Proxy mode: config takes precedence, then token file.
     let proxy_url = config
         .auth
         .proxy_url
         .as_deref()
-        .or_else(|| token_data.and_then(|t| t.proxy_url.as_deref()));
+        .or_else(|| token_file.and_then(|t| t.proxy_url.as_deref()));
 
     if let Some(url) = proxy_url {
         return Some(RefreshMethod::Proxy {
@@ -1455,13 +1525,17 @@ fn build_oauth_ready_state(
         unreachable!("OAuthReady but token path is None");
     };
 
-    let token_data = crate::oauth::load_token_file(token_path)
+    let token_file = crate::oauth::load_token_file(token_path)
         .map_err(|e| format!("failed to load token file: {e}"))?;
 
-    let refresh_method = determine_refresh_method(config, Some(&token_data))
+    let refresh_method = determine_refresh_method(config, Some(&token_file))
         .ok_or("OAuthReady but no refresh method available")?;
 
-    let session = OAuthSession::new(token_data, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
+    let token_metadata = refresh_method.token_metadata_from_file(&token_file);
+    let session = OAuthSession::new(
+        token_file.tokens,
+        chrono::Duration::seconds(REFRESH_MARGIN_SECS),
+    );
 
     let timeout = config.api.timeout;
     let base_url = server_url.to_string();
@@ -1480,6 +1554,7 @@ fn build_oauth_ready_state(
 
     Ok(ApiState::OAuth(Box::new(OAuthApiState {
         session,
+        token_metadata,
         refresh_method,
         client,
         refresh_http,
@@ -1679,7 +1754,10 @@ pub async fn run_http(
     }
 
     // Build shared state.
-    let spec = OpenApiSpec::from_json(OPENAPI_SPEC_JSON)?;
+    let spec = OpenApiSpec::from_json_with_server_url_fallback(
+        OPENAPI_SPEC_JSON,
+        OPENAPI_SERVER_URL_FALLBACK,
+    )?;
     let info = onshape_mcp_core::server_info(name, version);
     let config = Arc::new(config);
     let spec = Arc::new(spec);
@@ -1785,6 +1863,58 @@ pub async fn run_http(
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use oauth2::{AccessToken, RefreshToken};
+    use onshape_client_core::request::ResponseBody;
+
+    // --- raw response conversion tests ---
+
+    #[test]
+    fn raw_response_from_api_response_preserves_bytes_and_headers() {
+        let response = ApiResponse {
+            status: 200,
+            headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+            body: ResponseBody::from("ok"),
+        };
+
+        let raw = raw_response_from_api_response(response);
+
+        assert_eq!(raw.status, 200);
+        assert_eq!(
+            raw.headers,
+            vec![("Content-Type".to_string(), "text/plain".to_string())]
+        );
+        assert_eq!(raw.body, b"ok");
+    }
+
+    #[test]
+    fn resume_with_raw_response_passes_invalid_utf8_to_continuation() {
+        let response = ApiResponse {
+            status: 200,
+            headers: vec![(
+                "content-type".to_string(),
+                "application/octet-stream".to_string(),
+            )],
+            body: ResponseBody::from(vec![0xff]),
+        };
+
+        let raw = raw_response_from_api_response(response);
+        let (tool_effect, side_effects) =
+            resume_with_raw_response(tools::Continuation::FormatApiResponse, &raw);
+
+        assert!(side_effects.is_empty());
+        let tools::ToolEffect::Done(Ok(result)) = tool_effect else {
+            panic!("should produce a done result");
+        };
+        assert_eq!(result.is_error, Some(false));
+        let text = result.content[0]
+            .raw
+            .as_text()
+            .expect("should be text content");
+        let value: serde_json::Value = serde_json::from_str(&text.text)
+            .expect("binary response metadata should be valid JSON");
+        assert_eq!(value["encoding"], "base64");
+        assert_eq!(value["body"], "/w==");
+    }
 
     // --- is_permanent_refresh_failure tests ---
 
@@ -1827,6 +1957,169 @@ mod tests {
     #[test]
     fn transient_refresh_generic_error() {
         assert!(!is_permanent_refresh_failure("something went wrong"));
+    }
+
+    fn token_file_with_all_metadata() -> McpOAuthTokenFile {
+        McpOAuthTokenFile {
+            tokens: onshape_client_core::oauth::OAuthTokenData {
+                access_token: AccessToken::new("access".to_string()),
+                refresh_token: RefreshToken::new("refresh".to_string()),
+                expires_at: None,
+                token_type: "bearer".to_string(),
+                scopes: None,
+            },
+            client_id: Some("client-id".to_string()),
+            client_secret: Some("client-secret".to_string()),
+            proxy_url: Some("https://proxy.example.com".to_string()),
+        }
+    }
+
+    fn token_data(
+        access_token: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> onshape_client_core::oauth::OAuthTokenData {
+        onshape_client_core::oauth::OAuthTokenData {
+            access_token: AccessToken::new(access_token.to_string()),
+            refresh_token: RefreshToken::new(format!("refresh-{access_token}")),
+            expires_at: Some(expires_at),
+            token_type: "bearer".to_string(),
+            scopes: None,
+        }
+    }
+
+    fn oauth_state(refresh_method: RefreshMethod) -> OAuthApiState {
+        let tokens = token_data("current", chrono::Utc::now() + chrono::Duration::minutes(1));
+        let session = OAuthSession::new(tokens, chrono::Duration::seconds(REFRESH_MARGIN_SECS));
+        let base_url = "https://cad.onshape.com/api/v6".to_string();
+        let timeout = Duration::from_secs(30);
+        let client = OnshapeClient::new(ClientConfig {
+            base_url: base_url.clone(),
+            auth: ClientAuthConfig::Bearer {
+                access_token: AccessToken::new(session.access_token().secret().clone()),
+            },
+            timeout: Some(timeout),
+        })
+        .expect("should build test client");
+        let refresh_http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("should build refresh client");
+
+        OAuthApiState {
+            session,
+            token_metadata: McpOAuthTokenMetadata {
+                client_id: None,
+                client_secret: None,
+                proxy_url: None,
+            },
+            refresh_method,
+            client,
+            refresh_http,
+            token_path: PathBuf::from("tokens.json"),
+            base_url,
+            timeout,
+        }
+    }
+
+    fn fresher_token_file() -> McpOAuthTokenFile {
+        McpOAuthTokenFile {
+            tokens: token_data(
+                "external",
+                chrono::Utc::now() + chrono::Duration::minutes(2),
+            ),
+            client_id: None,
+            client_secret: None,
+            proxy_url: None,
+        }
+    }
+
+    #[test]
+    fn direct_refresh_metadata_drops_proxy_url() {
+        let method = RefreshMethod::Direct {
+            oauth_client: Box::new(onshape_oauth_client("client-id", "client-secret")),
+            client_id: "client-id".to_string(),
+            client_secret: SecretString::from("client-secret".to_string()),
+        };
+
+        let metadata = method.token_metadata_from_file(&token_file_with_all_metadata());
+
+        assert_eq!(metadata.client_id.as_deref(), Some("client-id"));
+        assert_eq!(metadata.client_secret.as_deref(), Some("client-secret"));
+        assert!(metadata.proxy_url.is_none());
+    }
+
+    #[test]
+    fn proxy_refresh_metadata_drops_client_secret() {
+        let method = RefreshMethod::Proxy {
+            proxy_url: "https://proxy.example.com".to_string(),
+        };
+
+        let metadata = method.token_metadata_from_file(&token_file_with_all_metadata());
+
+        assert_eq!(metadata.client_id.as_deref(), Some("client-id"));
+        assert!(metadata.client_secret.is_none());
+        assert_eq!(
+            metadata.proxy_url.as_deref(),
+            Some("https://proxy.example.com")
+        );
+    }
+
+    #[test]
+    fn external_token_adoption_switches_direct_to_proxy() {
+        let mut oauth = oauth_state(RefreshMethod::Direct {
+            oauth_client: Box::new(onshape_oauth_client("old-client", "old-secret")),
+            client_id: "old-client".to_string(),
+            client_secret: SecretString::from("old-secret".to_string()),
+        });
+        let mut token_file = fresher_token_file();
+        token_file.client_id = Some("proxy-client".to_string());
+        token_file.proxy_url = Some("https://proxy.example.com".to_string());
+
+        let adopted =
+            adopt_external_token_file(&mut oauth, &token_file).expect("should adopt token file");
+
+        assert!(adopted);
+        let RefreshMethod::Proxy { proxy_url } = &oauth.refresh_method else {
+            panic!("should switch to proxy refresh");
+        };
+        assert_eq!(proxy_url, "https://proxy.example.com");
+        assert_eq!(
+            oauth.token_metadata.client_id.as_deref(),
+            Some("proxy-client")
+        );
+        assert!(oauth.token_metadata.client_secret.is_none());
+        assert_eq!(
+            oauth.token_metadata.proxy_url.as_deref(),
+            Some("https://proxy.example.com")
+        );
+    }
+
+    #[test]
+    fn external_token_adoption_switches_proxy_to_direct() {
+        let mut oauth = oauth_state(RefreshMethod::Proxy {
+            proxy_url: "https://old-proxy.example.com".to_string(),
+        });
+        let mut token_file = fresher_token_file();
+        token_file.client_id = Some("direct-client".to_string());
+        token_file.client_secret = Some("direct-secret".to_string());
+
+        let adopted =
+            adopt_external_token_file(&mut oauth, &token_file).expect("should adopt token file");
+
+        assert!(adopted);
+        let RefreshMethod::Direct { client_id, .. } = &oauth.refresh_method else {
+            panic!("should switch to direct refresh");
+        };
+        assert_eq!(client_id, "direct-client");
+        assert_eq!(
+            oauth.token_metadata.client_id.as_deref(),
+            Some("direct-client")
+        );
+        assert_eq!(
+            oauth.token_metadata.client_secret.as_deref(),
+            Some("direct-secret")
+        );
+        assert!(oauth.token_metadata.proxy_url.is_none());
     }
 
     // --- build_ipv4_retry_client tests ---
