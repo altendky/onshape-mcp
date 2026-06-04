@@ -10,7 +10,7 @@ This section documents the manual configuration required in GitHub repository se
 | --------- | ------- |
 | Require PR before merge | Yes |
 | Required approvals | 0 (increase when contributors join) |
-| Require status checks | Yes — `all` job only |
+| Require status checks | Yes — `all` job + `Mergify Merge Protections` |
 | Require merge queue | No (Mergify handles this) |
 | Require branches up-to-date | No (Mergify merge queue handles this) |
 | Show update branch button | Always |
