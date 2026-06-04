@@ -1,25 +1,22 @@
 [package]
-name = "onshape-client-core"
+name = "onshape-openapi"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Pure Onshape API logic and types (sans-IO)"
+description = "Pure Onshape OpenAPI parsing and request-building helpers"
 keywords = ["onshape", "cad", "api"]
 categories = ["api-bindings"]
 
 [dependencies]
 base64.workspace = true
-chrono.workspace = true
-oauth2.workspace = true
+onshape-client-core.workspace = true
 schemars.workspace = true
-secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-url.workspace = true
 
 [lints]
 workspace = true

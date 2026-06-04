@@ -25,9 +25,9 @@ pub enum AuthMethod {
     /// Automatic detection: try available credentials in priority order.
     ///
     /// Resolution order:
-    /// 1. OAuth with tokens (client credentials + token file present)
+    /// 1. OAuth with available token material
     /// 2. Basic auth (API key pair present)
-    /// 3. OAuth pending (client credentials but no tokens yet)
+    /// 3. OAuth pending (configured but token material unavailable)
     /// 4. Not configured
     Auto,
     /// HTTP Basic authentication: base64-encoded `access_key:secret_key`.
@@ -38,7 +38,7 @@ pub enum AuthMethod {
     /// OAuth 2.0 bearer token authentication.
     ///
     /// Uses access tokens obtained through the OAuth 2.0 authorization code flow.
-    /// Tokens are stored in a local file and refreshed when expired.
+    /// Applications are responsible for storing and refreshing tokens.
     /// Suitable for multi-user apps and team access.
     #[serde(rename = "oauth")]
     OAuth,

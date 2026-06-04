@@ -27,10 +27,12 @@ use oauth2_reqwest::ReqwestClient;
 use tokio::sync::oneshot;
 
 use onshape_client_core::oauth::{
-    OAuthLoginConfig, OAuthLoginSession, OAuthTokenData, build_authorize_url,
-    default_token_file_path, onshape_oauth_client, validate_callback,
+    OAuthLoginConfig, OAuthLoginSession, OAuthTokenData, build_authorize_url, onshape_oauth_client,
+    validate_callback,
 };
 use onshape_mcp_core::tools::LoginMode;
+
+use crate::oauth::{McpOAuthTokenFile, default_token_file_path};
 
 /// The port used for the local OAuth callback server.
 pub const CALLBACK_PORT: u16 = 18338;
@@ -456,10 +458,10 @@ async fn complete_login_flow(
     let auth_code = validate_callback(&callback_url, &session.csrf_state)?;
 
     // Exchange the code for tokens.
-    let token_data = exchange_code(auth_code, session.pkce_verifier, &exchange_config).await?;
+    let token_file = exchange_code(auth_code, session.pkce_verifier, &exchange_config).await?;
 
     // Save tokens to disk.
-    crate::oauth::save_token_file(&token_path, &token_data)?;
+    crate::oauth::save_token_file(&token_path, &token_file)?;
 
     Ok(())
 }
@@ -562,7 +564,7 @@ async fn exchange_code(
     code: AuthorizationCode,
     pkce_verifier: PkceCodeVerifier,
     config: &ExchangeConfig,
-) -> Result<OAuthTokenData, LoginError> {
+) -> Result<McpOAuthTokenFile, LoginError> {
     match config {
         ExchangeConfig::Direct {
             client_id,
@@ -581,7 +583,7 @@ async fn exchange_code_direct(
     pkce_verifier: PkceCodeVerifier,
     client_id: &str,
     client_secret: &str,
-) -> Result<OAuthTokenData, LoginError> {
+) -> Result<McpOAuthTokenFile, LoginError> {
     let oauth_client = onshape_oauth_client(client_id, client_secret).set_redirect_uri(
         oauth2::RedirectUrl::new(REDIRECT_URI.to_string())
             .map_err(|e| LoginError::TokenExchange(format!("invalid redirect URI: {e}")))?,
@@ -614,12 +616,14 @@ async fn exchange_code_direct(
     }
 
     let now = chrono::Utc::now();
-    let mut token_data = OAuthTokenData::from_response(&response, now);
-    // Store client credentials in the token file so the server can refresh.
-    token_data.client_id = Some(client_id.to_string());
-    token_data.client_secret = Some(client_secret.to_string());
+    let token_data = OAuthTokenData::from_response(&response, now);
 
-    Ok(token_data)
+    Ok(McpOAuthTokenFile {
+        tokens: token_data,
+        client_id: Some(client_id.to_string()),
+        client_secret: Some(client_secret.to_string()),
+        proxy_url: None,
+    })
 }
 
 /// Proxy token exchange — POST to the proxy's `/token/exchange` endpoint.
@@ -631,7 +635,7 @@ async fn exchange_code_proxy(
     pkce_verifier: PkceCodeVerifier,
     client_id: &str,
     proxy_url: &str,
-) -> Result<OAuthTokenData, LoginError> {
+) -> Result<McpOAuthTokenFile, LoginError> {
     let url = format!("{}/token/exchange", proxy_url.trim_end_matches('/'));
 
     let body = serde_json::json!({
@@ -683,7 +687,7 @@ async fn exchange_code_proxy(
             LoginError::TokenExchange("proxy response missing or empty refresh_token".to_string())
         })?;
 
-    let mut token_data = OAuthTokenData::from_raw(
+    let token_data = OAuthTokenData::from_raw(
         token_response.access_token,
         refresh_token,
         expires_at,
@@ -692,12 +696,13 @@ async fn exchange_code_proxy(
             .scope
             .map(|s| s.split(' ').map(String::from).collect()),
     );
-    // Store proxy URL and client_id in the token file so the server
-    // knows to use proxy-based refresh.
-    token_data.proxy_url = Some(proxy_url.to_string());
-    token_data.client_id = Some(client_id.to_string());
 
-    Ok(token_data)
+    Ok(McpOAuthTokenFile {
+        tokens: token_data,
+        client_id: Some(client_id.to_string()),
+        client_secret: None,
+        proxy_url: Some(proxy_url.to_string()),
+    })
 }
 
 /// Send a POST request to the proxy exchange endpoint.
@@ -809,9 +814,7 @@ async fn fetch_proxy_client_id(proxy_url: &str) -> Result<String, LoginError> {
             match serde_json::from_str::<ForbiddenBody>(&body) {
                 Ok(ForbiddenBody {
                     source_ip: Some(ip),
-                }) => {
-                    format!("your IP address ({ip}) is not authorized to use this proxy")
-                }
+                }) => format!("your IP address ({ip}) is not authorized to use this proxy"),
                 _ => format!("HTTP {status}: {body}"),
             }
         } else {

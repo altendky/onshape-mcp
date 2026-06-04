@@ -10,7 +10,7 @@ This section documents the manual configuration required in GitHub repository se
 | --------- | ------- |
 | Require PR before merge | Yes |
 | Required approvals | 0 (increase when contributors join) |
-| Require status checks | Yes — `all` job only |
+| Require status checks | Yes — `all` job + `Mergify Merge Protections` |
 | Require merge queue | No (Mergify handles this) |
 | Require branches up-to-date | No (Mergify merge queue handles this) |
 | Show update branch button | Always |
@@ -25,30 +25,33 @@ the repository root.
 
 **How it works:**
 
-1. Apply the `queue` label to a PR
-2. Once CI passes on the PR branch (`check-success = all`), Mergify auto-queues it
+1. Apply the `enqueue` label to a PR
+2. Once the PR has an approval, Mergify Workflow Automation queues it
 3. Mergify creates a temporary branch merging the PR into `main` and runs CI again
-4. If CI passes on the merged branch, Mergify merges the PR
+4. If branch protection passes on the queued merge, Mergify merges the PR
 5. If CI fails, the PR is dequeued
 
-This two-step CI pattern catches real errors on the PR itself (before entering the queue)
-while only infrastructure flakes need to be retried in the queue.
+This schedules PRs after approval while keeping branch protection checks on the queued merge
+result. Mergify Merge Protections reports the same approval gate as a required status check,
+so `main` is protected without requiring PR branches to stay up to date manually.
 
 **Flaky failure handling:**
 
-Mergify CI Insights Auto-Retry is configured (via the Mergify dashboard) to automatically
-retry failed CI jobs up to 2 times. This handles transient infrastructure failures (runner
-provisioning, network timeouts, rate limits) without manual intervention.
+Mergify queue retries are configured to retry failed queued checks up to 2 times. This
+handles transient infrastructure failures (runner provisioning, network timeouts, rate
+limits) without manual intervention.
 
 | Setting | Value |
 | ------- | ----- |
 | Configuration | `.mergify.yml` |
-| Queue entry | `queue` label + CI green |
-| Merge gate | `check-success = all` |
+| Queue entry | `enqueue` label + 1 approval |
+| Queue action | Mergify Workflow Automation `queue` action |
+| Merge protection | `Mergify Merge Protections` required status check |
+| Merge gate | GitHub branch protection (`all`) injected into queue merge conditions |
 | Merge method | Merge commits |
 | Checks timeout | 90 minutes |
 | Parallel checks | 1 (no speculative checks) |
-| Auto-retry | 2 retries (dashboard-configured) |
+| Auto-retry | 2 retries (`max_checks_retries`) |
 
 ### CI Insights
 
@@ -68,7 +71,7 @@ after each test job. Nextest generates JUnit output via the `ci` profile configu
 | Nextest config | `.config/nextest.toml` |
 | Nextest profile | `ci` |
 | JUnit output path | `target/nextest/ci/junit.xml` |
-| Upload action | `mergifyio/gha-mergify-ci@6875ab3991ec1db831576df1cd00a7870603aa9e # v8` |
+| Upload action | `mergifyio/gha-mergify-ci@3cd8c8830f663041802caa183f0f455755646431 # v21` |
 | Secret | `MERGIFY_TOKEN` (application key with `ci` scope) |
 
 ### Merge Strategy
