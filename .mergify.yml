@@ -1,31 +1,23 @@
 queue_rules:
   - name: default
-    branch_protection_injection_mode: merge
+    branch_protection_injection_mode: queue
     queue_conditions:
       - label = enqueue
       - base = main
-      - "#approved-reviews-by >= 1"
+      - -draft
     merge_method: merge
     checks_timeout: 90 min
     max_checks_retries: 2
-
-merge_protections:
-  - name: Auto-queue approved enqueue PRs
-    if:
-      - base = main
-      - label = enqueue
-    success_conditions:
-      - "#approved-reviews-by >= 1"
 
 merge_queue:
   max_parallel_checks: 1
 
 pull_request_rules:
-  - name: Queue approved enqueue PRs
+  - name: Queue enqueue PRs
     conditions:
       - base = main
       - label = enqueue
-      - "#approved-reviews-by >= 1"
+      - -draft
     actions:
       queue:
         name: default
@@ -44,5 +36,3 @@ pull_request_rules:
     actions:
       review:
         type: APPROVE
-merge_protections_settings:
-  reporting_method: check-runs
