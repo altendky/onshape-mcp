@@ -21,7 +21,7 @@ jobs:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         id: app-token
         with:
-          app-id: ${{ vars.RENOVATE_APP_ID }}
+          client-id: ${{ vars.RENOVATE_APP_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
 
       - uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925 # v4
@@ -40,6 +40,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
           docker-volumes: /tmp:/tmp;${{ steps.mise-path.outputs.bin }}:/usr/local/bin/mise
+          docker-user: 12021:0
         env:
           RENOVATE_REPOSITORIES: '["${{ github.repository }}"]'
           RENOVATE_ALLOWED_COMMANDS: '[".*"]'
