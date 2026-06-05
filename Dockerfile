@@ -1,5 +1,5 @@
 # Stage 1: Build the binary
-FROM rust:1.94-slim AS builder
+FROM rust:1.96-slim AS builder
 
 WORKDIR /build
 
