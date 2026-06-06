@@ -141,6 +141,7 @@ pub enum LoginMode {
 ///
 /// All variants are plain data — no closures — so `ToolEffect` is
 /// inspectable, `Debug`-printable, and testable.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum ToolEffect {
     /// Tool completed — no further I/O needed.
@@ -151,7 +152,7 @@ pub enum ToolEffect {
     /// the continuation and an [`IoResult::ApiResponse`].
     ApiRequest {
         /// The HTTP request to execute.
-        request: Box<ApiRequest>,
+        request: ApiRequest,
         /// What to do with the response.
         continuation: Continuation,
     },
@@ -557,7 +558,7 @@ fn resume_inject_files(
     }
 
     ToolEffect::ApiRequest {
-        request: Box::new(request),
+        request,
         continuation: Continuation::FormatApiResponse,
     }
 }
@@ -1381,7 +1382,7 @@ fn call_auth_status(
     };
 
     ToolEffect::ApiRequest {
-        request: Box::new(request),
+        request,
         continuation: Continuation::ProcessAuthValidation {
             resolved_auth: resolved_auth.clone(),
         },
@@ -1554,7 +1555,7 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
     // the request as an ApiRequest effect.
     if input.file_refs.is_empty() {
         ToolEffect::ApiRequest {
-            request: Box::new(request),
+            request,
             continuation: Continuation::FormatApiResponse,
         }
     } else {
@@ -1934,7 +1935,7 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
     // --- Return the two-phase effect: API call, then file writes ---
 
     ToolEffect::ApiRequest {
-        request: Box::new(request),
+        request,
         continuation: Continuation::ProcessScreenshotResponse {
             output_path,
             label,
@@ -2163,7 +2164,7 @@ mod tests {
             ToolEffect::ApiRequest {
                 request,
                 continuation,
-            } => (*request, continuation),
+            } => (request, continuation),
             other => panic!("expected ApiRequest, got {other:?}"),
         }
     }
