@@ -283,6 +283,7 @@ impl OpenApiSpec {
             let Some(methods) = methods_val.as_object() else {
                 continue;
             };
+            let path_parameters = Self::parse_parameters(methods_val);
             for (method_str, detail) in methods {
                 let Ok(method) = Method::from_bytes(method_str.to_ascii_uppercase().as_bytes())
                 else {
@@ -292,8 +293,14 @@ impl OpenApiSpec {
                     continue;
                 };
 
-                let endpoint =
-                    Self::parse_endpoint(operation_id, method, path, detail, &components);
+                let endpoint = Self::parse_endpoint(
+                    operation_id,
+                    method,
+                    path,
+                    detail,
+                    &path_parameters,
+                    &components,
+                );
                 if endpoints
                     .insert(operation_id.to_string(), endpoint)
                     .is_none()
@@ -867,6 +874,7 @@ impl OpenApiSpec {
         method: Method,
         path: &str,
         detail: &Value,
+        path_parameters: &[ParsedParameter],
         components: &HashMap<String, Value>,
     ) -> ParsedEndpoint {
         let summary = detail
@@ -892,7 +900,7 @@ impl OpenApiSpec {
             })
             .unwrap_or_default();
 
-        let parameters = Self::parse_parameters(detail);
+        let parameters = Self::merge_parameters(path_parameters, Self::parse_parameters(detail));
         let (has_request_body, request_body_schema, request_body_content_type) =
             Self::parse_request_body(detail, components);
         let response_schema = Self::parse_response_schema(detail, components);
@@ -970,6 +978,26 @@ impl OpenApiSpec {
                 })
             })
             .collect()
+    }
+
+    fn merge_parameters(
+        path_parameters: &[ParsedParameter],
+        operation_parameters: Vec<ParsedParameter>,
+    ) -> Vec<ParsedParameter> {
+        let mut parameters = path_parameters.to_vec();
+
+        for operation_parameter in operation_parameters {
+            if let Some(existing) = parameters.iter_mut().find(|parameter| {
+                parameter.name == operation_parameter.name
+                    && parameter.location == operation_parameter.location
+            }) {
+                *existing = operation_parameter;
+            } else {
+                parameters.push(operation_parameter);
+            }
+        }
+
+        parameters
     }
 
     fn parse_request_body(
@@ -1816,6 +1844,106 @@ mod tests {
             }
             other => panic!("expected InvalidParams, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn path_item_parameters_are_merged_with_operation_parameters() {
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "servers": [{ "url": "https://example.com/api/v1" }],
+            "paths": {
+                "/downloads/{did}": {
+                    "parameters": [
+                        {
+                            "name": "did",
+                            "in": "path",
+                            "required": true,
+                            "schema": { "type": "string" }
+                        },
+                        {
+                            "name": "If-Match",
+                            "in": "header",
+                            "required": true,
+                            "description": "path-level required header",
+                            "schema": { "type": "string" }
+                        },
+                        {
+                            "name": "X-Override",
+                            "in": "header",
+                            "required": true,
+                            "description": "path-level header",
+                            "schema": { "type": "string" }
+                        }
+                    ],
+                    "get": {
+                        "operationId": "downloadExternalData",
+                        "parameters": [
+                            {
+                                "name": "X-Override",
+                                "in": "header",
+                                "required": false,
+                                "description": "operation-level header",
+                                "schema": { "type": "string" }
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }))
+        .expect("should parse");
+
+        let detail = spec
+            .explain("downloadExternalData")
+            .expect("should explain endpoint");
+        let if_match = detail
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "If-Match")
+            .expect("should inherit path-item header parameter");
+        assert_eq!(if_match.location, ParameterLocation::Header);
+        assert!(if_match.required);
+
+        let override_header = detail
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "X-Override")
+            .expect("should keep overridden header parameter");
+        assert_eq!(override_header.location, ParameterLocation::Header);
+        assert!(!override_header.required);
+        assert_eq!(override_header.description, "operation-level header");
+
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+        let missing_header_err = spec
+            .build_request(
+                "downloadExternalData",
+                &path_params,
+                &HashMap::new(),
+                &HeaderMap::new(),
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&missing_header_err, OpenApiError::InvalidParams { reason } if reason.contains("missing required header parameter: If-Match")),
+            "expected missing inherited required header error, got: {missing_header_err:?}"
+        );
+
+        let mut header_params = HeaderMap::new();
+        header_params.insert("If-Match", "revision-1".parse().expect("valid header"));
+        let request = spec
+            .build_request(
+                "downloadExternalData",
+                &path_params,
+                &HashMap::new(),
+                &header_params,
+                None,
+            )
+            .expect("should build with inherited required header");
+
+        assert_eq!(request.path, "/downloads/doc1");
+        assert_eq!(request.headers["If-Match"], "revision-1");
+        assert!(!request.headers.contains_key("X-Override"));
     }
 
     #[test]
