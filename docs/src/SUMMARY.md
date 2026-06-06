@@ -10,7 +10,7 @@
 - [Architecture](project/architecture.md)
 - [Data Flow](project/data-flow.md)
 - [Common Onshape Client Extraction Plan](project/common-onshape-client-plan.md)
-- [HTTP Types Alignment Plan](project/http-types-plan.md)
+- [HTTP Types Alignment Decision](project/http-types-plan.md)
 - [Requirements](project/requirements.md)
 
 # Features

@@ -13,13 +13,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use http::header::{ACCEPT, AUTHORIZATION};
 use oauth2::AccessToken;
 use onshape_client_core::auth::{
     Credentials, basic_authorization_header_value, bearer_authorization_header_value,
 };
-use onshape_client_core::request::{
-    ApiRequest, ApiResponse, HttpMethod, RequestBody, ResponseBody,
-};
+use onshape_client_core::request::{ApiRequest, ApiResponse, RequestBody, ResponseBody};
 use reqwest::Client;
 use secrecy::ExposeSecret;
 
@@ -195,13 +194,19 @@ impl OnshapeClient {
             }
         };
 
-        let method = to_reqwest_method(request.method);
+        let mut headers = request.headers.clone();
+        headers.remove(AUTHORIZATION);
+        let has_accept = headers.contains_key(ACCEPT);
 
         let mut builder = self
             .http
-            .request(method, &url)
-            .header("Authorization", auth_header.expose_secret())
-            .header("Accept", "application/json");
+            .request(request.method.clone(), &url)
+            .headers(headers)
+            .header(AUTHORIZATION, auth_header.expose_secret());
+
+        if !has_accept {
+            builder = builder.header(ACCEPT, "application/json");
+        }
 
         // Add query parameters.
         if !request.query_params.is_empty() {
@@ -258,8 +263,8 @@ impl OnshapeClient {
             .await
             .map_err(|e| ClientError::from_reqwest(&e, self.timeout))?;
 
-        let status = response.status().as_u16();
-        let headers = response_headers_to_pairs(response.headers());
+        let status = response.status();
+        let headers = response.headers().clone();
         let body = response
             .bytes()
             .await
@@ -273,33 +278,6 @@ impl OnshapeClient {
             body: ResponseBody::from(body.to_vec()),
         })
     }
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// Convert our sans-IO `HttpMethod` to a `reqwest::Method`.
-const fn to_reqwest_method(method: HttpMethod) -> reqwest::Method {
-    match method {
-        HttpMethod::Get => reqwest::Method::GET,
-        HttpMethod::Post => reqwest::Method::POST,
-        HttpMethod::Put => reqwest::Method::PUT,
-        HttpMethod::Delete => reqwest::Method::DELETE,
-        HttpMethod::Patch => reqwest::Method::PATCH,
-    }
-}
-
-fn response_headers_to_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String)> {
-    headers
-        .iter()
-        .map(|(name, value)| {
-            (
-                name.as_str().to_string(),
-                String::from_utf8_lossy(value.as_bytes()).into_owned(),
-            )
-        })
-        .collect()
 }
 
 // ============================================================================
@@ -393,36 +371,6 @@ mod tests {
         let _cloned = client.clone();
     }
 
-    #[test]
-    fn to_reqwest_method_maps_correctly() {
-        assert_eq!(to_reqwest_method(HttpMethod::Get), reqwest::Method::GET);
-        assert_eq!(to_reqwest_method(HttpMethod::Post), reqwest::Method::POST);
-        assert_eq!(to_reqwest_method(HttpMethod::Put), reqwest::Method::PUT);
-        assert_eq!(
-            to_reqwest_method(HttpMethod::Delete),
-            reqwest::Method::DELETE
-        );
-        assert_eq!(to_reqwest_method(HttpMethod::Patch), reqwest::Method::PATCH);
-    }
-
-    #[test]
-    fn response_headers_to_pairs_preserves_header_values() {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            "Content-Type",
-            "application/octet-stream".parse().expect("valid header"),
-        );
-        headers.insert("X-Test", "value".parse().expect("valid header"));
-
-        let pairs = response_headers_to_pairs(&headers);
-
-        assert!(pairs.contains(&(
-            "content-type".to_string(),
-            "application/octet-stream".to_string(),
-        )));
-        assert!(pairs.contains(&("x-test".to_string(), "value".to_string())));
-    }
-
     #[tokio::test]
     async fn execute_returns_binary_body_and_headers() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("should bind test server");
@@ -460,9 +408,10 @@ mod tests {
         })
         .expect("should create client");
         let request = ApiRequest {
-            method: HttpMethod::Get,
+            method: http::Method::GET,
             path: "/binary".to_string(),
             query_params: Vec::new(),
+            headers: http::HeaderMap::new(),
             body: None,
             content_type: None,
         };
@@ -473,10 +422,128 @@ mod tests {
             .expect("request should succeed");
         server.join().expect("server thread should finish");
 
-        assert_eq!(response.status, 200);
+        assert_eq!(response.status, http::StatusCode::OK);
         assert_eq!(response.content_type(), Some("application/octet-stream"));
         assert_eq!(response.header("x-test"), Some("binary"));
         assert_eq!(response.body.as_bytes(), &[0, 159, 146, 150]);
         assert!(response.body.text().is_err());
+    }
+
+    #[tokio::test]
+    async fn execute_preserves_explicit_accept_header() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("should bind test server");
+        let address = listener
+            .local_addr()
+            .expect("should get test server address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("should accept request");
+            let mut buffer = [0_u8; 4096];
+            let received = stream.read(&mut buffer).expect("should read request");
+            let request = String::from_utf8_lossy(&buffer[..received]).to_lowercase();
+            assert!(
+                request.contains("accept: application/octet-stream"),
+                "request should preserve explicit Accept header, got: {request}"
+            );
+            assert!(
+                !request.contains("accept: application/json"),
+                "request should not add default JSON Accept header, got: {request}"
+            );
+
+            stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("should write response");
+        });
+
+        let client = OnshapeClient::new(ClientConfig {
+            base_url: format!("http://{address}"),
+            auth: ClientAuthConfig::Basic {
+                credentials: test_credentials(),
+            },
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .expect("should create client");
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            ACCEPT,
+            http::HeaderValue::from_static("application/octet-stream"),
+        );
+        let request = ApiRequest {
+            method: http::Method::GET,
+            path: "/binary".to_string(),
+            query_params: Vec::new(),
+            headers,
+            body: None,
+            content_type: None,
+        };
+
+        let response = client
+            .execute(&request)
+            .await
+            .expect("request should succeed");
+        server.join().expect("server thread should finish");
+
+        assert_eq!(response.status, http::StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn execute_ignores_caller_authorization_header() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("should bind test server");
+        let address = listener
+            .local_addr()
+            .expect("should get test server address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("should accept request");
+            let mut buffer = [0_u8; 4096];
+            let received = stream.read(&mut buffer).expect("should read request");
+            let request = String::from_utf8_lossy(&buffer[..received]).to_lowercase();
+            assert!(
+                request.contains("authorization: basic"),
+                "request should include executor-owned auth, got: {request}"
+            );
+            assert!(
+                !request.contains("authorization: bearer caller-token"),
+                "request should ignore caller auth header, got: {request}"
+            );
+
+            stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("should write response");
+        });
+
+        let client = OnshapeClient::new(ClientConfig {
+            base_url: format!("http://{address}"),
+            auth: ClientAuthConfig::Basic {
+                credentials: test_credentials(),
+            },
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .expect("should create client");
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            http::HeaderValue::from_static("Bearer caller-token"),
+        );
+        let request = ApiRequest {
+            method: http::Method::GET,
+            path: "/auth".to_string(),
+            query_params: Vec::new(),
+            headers,
+            body: None,
+            content_type: None,
+        };
+
+        let response = client
+            .execute(&request)
+            .await
+            .expect("request should succeed");
+        server.join().expect("server thread should finish");
+
+        assert_eq!(response.status, http::StatusCode::NO_CONTENT);
     }
 }

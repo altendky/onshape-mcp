@@ -6,7 +6,8 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::request::{ApiRequest, ApiResponse, HttpMethod, RequestBody};
+use crate::request::{ApiRequest, ApiResponse, RequestBody};
+use http::{HeaderMap, Method};
 
 const JSON_CONTENT_TYPE: &str = "application/json;charset=UTF-8; qs=0.09";
 
@@ -268,9 +269,10 @@ pub fn create_assembly_export_step<P: Serialize + ?Sized>(
 #[must_use]
 pub fn get_translation(translation_id: &str) -> ApiRequest {
     ApiRequest {
-        method: HttpMethod::Get,
+        method: Method::GET,
         path: format!("/translations/{}", encode_path_segment(translation_id)),
         query_params: Vec::new(),
+        headers: HeaderMap::new(),
         body: None,
         content_type: None,
     }
@@ -282,9 +284,10 @@ pub fn get_translation(translation_id: &str) -> ApiRequest {
 #[must_use]
 pub fn get_all_translator_formats() -> ApiRequest {
     ApiRequest {
-        method: HttpMethod::Get,
+        method: Method::GET,
         path: "/translations/translationformats".to_string(),
         query_params: Vec::new(),
+        headers: HeaderMap::new(),
         body: None,
         content_type: None,
     }
@@ -294,22 +297,20 @@ pub fn get_all_translator_formats() -> ApiRequest {
 ///
 /// `OpenAPI` operation ID: `downloadExternalData`.
 ///
-/// The optional `If-None-Match` header is intentionally not modeled because
-/// [`ApiRequest`] does not support request headers yet.
-///
-/// This also means callers cannot request a specific response media type through
-/// this helper yet; verify executor `Accept` behavior before relying on it for
-/// binary artifact downloads.
+/// This helper does not set `If-None-Match` or `Accept` yet. Callers that need
+/// cache validation or media negotiation can add request headers before
+/// executing the returned request.
 #[must_use]
 pub fn download_external_data(document_id: &str, foreign_id: &str) -> ApiRequest {
     ApiRequest {
-        method: HttpMethod::Get,
+        method: Method::GET,
         path: format!(
             "/documents/d/{}/externaldata/{}",
             encode_path_segment(document_id),
             encode_path_segment(foreign_id)
         ),
         query_params: Vec::new(),
+        headers: HeaderMap::new(),
         body: None,
         content_type: None,
     }
@@ -336,9 +337,10 @@ fn json_post<P: Serialize + ?Sized>(path: String, params: &P) -> Result<ApiReque
     }
 
     Ok(ApiRequest {
-        method: HttpMethod::Post,
+        method: Method::POST,
         path,
         query_params: Vec::new(),
+        headers: HeaderMap::new(),
         body: Some(RequestBody::Json(body)),
         content_type: Some(JSON_CONTENT_TYPE.to_string()),
     })
@@ -389,7 +391,7 @@ mod tests {
     }
 
     fn assert_json_post(request: &ApiRequest, path: &str, format_name: &str) {
-        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.method, Method::POST);
         assert_eq!(request.path, path);
         assert!(request.query_params.is_empty());
         assert_eq!(request.content_type.as_deref(), Some(JSON_CONTENT_TYPE));
@@ -489,7 +491,7 @@ mod tests {
     fn get_translation_builds_golden_request() {
         let request = get_translation("translation/1");
 
-        assert_eq!(request.method, HttpMethod::Get);
+        assert_eq!(request.method, Method::GET);
         assert_eq!(request.path, "/translations/translation%2F1");
         assert!(request.query_params.is_empty());
         assert!(request.body.is_none());
@@ -500,7 +502,7 @@ mod tests {
     fn get_all_translator_formats_builds_golden_request() {
         let request = get_all_translator_formats();
 
-        assert_eq!(request.method, HttpMethod::Get);
+        assert_eq!(request.method, Method::GET);
         assert_eq!(request.path, "/translations/translationformats");
         assert!(request.query_params.is_empty());
         assert!(request.body.is_none());
@@ -511,7 +513,7 @@ mod tests {
     fn download_external_data_builds_golden_request() {
         let request = download_external_data("doc/1", "file name.step");
 
-        assert_eq!(request.method, HttpMethod::Get);
+        assert_eq!(request.method, Method::GET);
         assert_eq!(
             request.path,
             "/documents/d/doc%2F1/externaldata/file%20name.step"
@@ -553,8 +555,11 @@ mod tests {
     #[test]
     fn parse_translation_request_info_reads_export_result() {
         let response = ApiResponse {
-            status: 200,
-            headers: vec![("content-type".to_string(), JSON_CONTENT_TYPE.to_string())],
+            status: http::StatusCode::OK,
+            headers: HeaderMap::from_iter([(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static(JSON_CONTENT_TYPE),
+            )]),
             body: ResponseBody::from(
                 json!({
                     "documentId": "doc",
@@ -579,8 +584,8 @@ mod tests {
     #[test]
     fn parse_translation_request_info_rejects_invalid_json() {
         let response = ApiResponse {
-            status: 200,
-            headers: Vec::new(),
+            status: http::StatusCode::OK,
+            headers: HeaderMap::new(),
             body: ResponseBody::from("not json"),
         };
 
@@ -593,8 +598,8 @@ mod tests {
     #[test]
     fn parse_translation_request_info_preserves_unknown_state() {
         let response = ApiResponse {
-            status: 200,
-            headers: Vec::new(),
+            status: http::StatusCode::OK,
+            headers: HeaderMap::new(),
             body: ResponseBody::from(json!({ "requestState": "QUEUED" }).to_string()),
         };
 

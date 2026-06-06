@@ -141,6 +141,7 @@ pub enum LoginMode {
 ///
 /// All variants are plain data — no closures — so `ToolEffect` is
 /// inspectable, `Debug`-printable, and testable.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum ToolEffect {
     /// Tool completed — no further I/O needed.
@@ -2019,7 +2020,6 @@ fn parse_arguments<T: serde::de::DeserializeOwned>(
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use onshape_client_core::request::HttpMethod;
 
     use crate::ValidationState;
 
@@ -2788,7 +2788,7 @@ mod tests {
             Some(&spec),
         );
         let (request, _continuation) = assert_api_request(result);
-        assert_eq!(request.method, HttpMethod::Get);
+        assert_eq!(request.method, http::Method::GET);
         assert_eq!(request.path, "/documents");
         assert!(
             request.body.is_some(),
@@ -4467,11 +4467,12 @@ mod tests {
 
     /// Build a minimal `ApiRequest` with a JSON body for injection tests.
     fn json_request_for_injection(body: Value) -> ApiRequest {
-        use onshape_client_core::request::{HttpMethod, RequestBody};
+        use onshape_client_core::request::RequestBody;
         ApiRequest {
-            method: HttpMethod::Post,
+            method: http::Method::POST,
             path: "/test".to_string(),
             query_params: vec![],
+            headers: http::HeaderMap::default(),
             body: Some(RequestBody::Json(body)),
             content_type: Some("application/json".to_string()),
         }
@@ -4581,11 +4582,12 @@ mod tests {
 
     /// Build a minimal `ApiRequest` with a multipart body for injection tests.
     fn multipart_request_for_injection(text_fields: Vec<(String, String)>) -> ApiRequest {
-        use onshape_client_core::request::{HttpMethod, MultipartBody, RequestBody};
+        use onshape_client_core::request::{MultipartBody, RequestBody};
         ApiRequest {
-            method: HttpMethod::Post,
+            method: http::Method::POST,
             path: "/upload".to_string(),
             query_params: vec![],
+            headers: http::HeaderMap::default(),
             body: Some(RequestBody::Multipart(MultipartBody {
                 text_fields,
                 binary_fields: vec![],
@@ -4726,11 +4728,11 @@ mod tests {
 
     #[test]
     fn resume_inject_no_body_returns_error() {
-        use onshape_client_core::request::HttpMethod;
         let request = ApiRequest {
-            method: HttpMethod::Get,
+            method: http::Method::GET,
             path: "/test".to_string(),
             query_params: vec![],
+            headers: http::HeaderMap::default(),
             body: None,
             content_type: None,
         };

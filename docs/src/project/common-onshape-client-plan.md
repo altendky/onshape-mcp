@@ -46,15 +46,13 @@ what decision or dependency is missing.
 - Keep `ApiRequest` relative to an application-provided Onshape API base URL.
   Do not allow arbitrary absolute URLs in the normal authenticated API request
   type.
-- Do not add request header or `accept` fields in the first response refactor.
-  Preserve the existing JSON-oriented request behavior until a concrete need is
-  proven.
-- Until request headers are intentionally modeled, OpenAPI request building must
+- Request headers are modeled with `http::HeaderMap`; preserve the existing
+  JSON-oriented default `Accept` behavior until a request explicitly overrides it.
+- Until dynamic OpenAPI request building accepts header parameter inputs, it must
   not silently drop header parameters. Required header parameters should make
   request construction fail with a clear unsupported-parameter error.
-- Represent response headers as plain `Vec<(String, String)>` for the first
-  response refactor, with helper methods for common lookups. Revisit standard
-  `http` crate protocol types as a separate planned effort.
+- Represent response headers as `http::HeaderMap` so common callers can inspect
+  standard HTTP metadata without coupling to a network framework.
 - Convert buffered response bytes to text only at the MCP boundary. Existing MCP
   text/JSON continuations should use strict UTF-8 decoding; invalid UTF-8 should
   become an explicit error instead of lossy text.
@@ -235,8 +233,8 @@ Target shape:
 
 ```rust
 pub struct ApiResponse {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
+    pub status: http::StatusCode,
+    pub headers: http::HeaderMap,
     pub body: ResponseBody,
 }
 
@@ -246,25 +244,20 @@ pub struct ResponseBody {
 ```
 
 Add convenience helpers such as `as_bytes()`, `text()`, `text_lossy()`, and
-`content_type()` as needed. Use plain `Vec<(String, String)>` response headers
-for this step; defer possible `http::HeaderMap` adoption to the separate HTTP
-types alignment effort. Keep HTTP error statuses as successful transport
+`content_type()` as needed. Keep HTTP error statuses as successful transport
 responses; callers decide how to interpret them.
 
 ### 2. Update the Reqwest Executor
 
 - Change response reading from `.text().await` to `.bytes().await`.
-- Capture response headers as neutral `(String, String)` pairs, not
-  `reqwest::HeaderMap`.
-- Preserve existing request behavior, including the current JSON-oriented
-  `Accept` header.
-- Do not add generic request headers or an `accept` field in this first response
-  refactor.
+- Capture response headers as `http::HeaderMap`.
+- Preserve existing JSON-oriented `Accept` behavior unless the request includes
+  an explicit `Accept` header.
+- Model request headers as `http::HeaderMap` while keeping authentication
+  executor-owned.
 - Dynamic OpenAPI request building should reject endpoints with required header
-  parameters for now, because the common request type cannot represent them yet.
-  Do not silently omit required headers.
-- If future export artifact downloads require different `Accept` behavior, add
-  that as a focused follow-up once the concrete endpoint behavior is known.
+  parameters for now, because its public input shape cannot accept separate
+  header parameter values yet. Do not silently omit required headers.
 
 ### 3. Adapt MCP at the Boundary
 
@@ -347,7 +340,8 @@ in shared decisions such as proactive refresh margins and retry-on-401 behavior.
 Ensure coverage exists for:
 
 - path and query parameter substitution.
-- required header parameters are rejected while request headers are unsupported.
+- required header parameters are rejected until dynamic OpenAPI request building
+  has a header-parameter input map.
 - JSON body request building.
 - multipart binary and text body building.
 - schema lookup with `allOf`.
@@ -393,8 +387,8 @@ Implemented focused first helper set:
   external data IDs needed to download exported artifacts.
 - Request builders cite the `OpenAPI` operation IDs they implement and have
   golden tests for method, path, body, and content type construction.
-- Download media negotiation remains a separate request-header/`Accept` follow-up;
-  the common request model still does not carry request headers.
+- Endpoint-specific download media negotiation remains a separate `Accept`
+  follow-up; the common request model can now carry request headers.
 
 Place these initially under `onshape-client-core::endpoints::*`, separate from
 low-level `request`, `response`, `auth`, and `oauth` modules. Helpers must build

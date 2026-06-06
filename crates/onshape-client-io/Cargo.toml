@@ -13,6 +13,7 @@ categories = ["api-bindings"]
 [dependencies]
 oauth2.workspace = true
 onshape-client-core.workspace = true
+http.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
 serde_json.workspace = true
