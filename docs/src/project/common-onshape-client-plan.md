@@ -389,7 +389,8 @@ Implemented focused first helper set:
   golden tests for method, path, body, and content type construction.
 - Endpoint-specific download media negotiation remains a separate `Accept`
   follow-up; the common request model and dynamic OpenAPI builder can now carry
-  request headers.
+  request headers. External-data downloads have since been verified for exported
+  artifacts; see [External Data Downloads](external-data-downloads.md).
 
 Place these initially under `onshape-client-core::endpoints::*`, separate from
 low-level `request`, `response`, `auth`, and `oauth` modules. Helpers must build
@@ -476,7 +477,8 @@ Manual behavior checks after MCP edge conversion:
 - Captured headers can contain sensitive values; avoid user-facing raw header
   dumps without filtering.
 - The current `Accept: application/json` default may be wrong for artifact
-  downloads.
+  downloads. Verified `downloadExternalData` artifact downloads tolerate it, but
+  export-oriented callers should still prefer `Accept: application/octet-stream`.
 - Splitting OAuth token data incorrectly could break existing MCP token files;
   preserve the current flat JSON shape during the internal type split.
 - OpenAPI extraction could accidentally pull MCP dependencies into common code.
@@ -490,8 +492,8 @@ Manual behavior checks after MCP edge conversion:
 
 - When `onshape-export` is developed, which concrete Onshape endpoints and
   parameter encodings should become typed common helpers?
-- If Onshape external-data downloads require absolute URLs, should they use a
-  separate explicit download request type, and what host/auth/redirect rules
-  should that type enforce?
+- Whether any future external-data flow differs from the verified exported
+  artifact path by returning an absolute URL, redirect, or separate download
+  host.
 - After the binary response model is stable, which local request/response HTTP
   types should be replaced or supplemented by standard `http` crate types?
