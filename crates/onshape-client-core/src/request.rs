@@ -14,9 +14,6 @@ use serde_json::Value;
 // HTTP Method
 // ============================================================================
 
-/// HTTP method for an API request.
-pub use http::Method as HttpMethod;
-
 /// Error returned when parsing an unrecognized HTTP method string.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("unknown HTTP method: {0}")]
@@ -98,7 +95,7 @@ mod request_headers_serde {
 pub struct ApiRequest {
     /// HTTP method.
     #[serde(with = "method_serde")]
-    pub method: HttpMethod,
+    pub method: Method,
     /// Fully resolved URL path (path params substituted), e.g. `/documents/abc123`.
     pub path: String,
     /// Query parameters.
@@ -259,29 +256,23 @@ mod tests {
 
     #[test]
     fn http_method_from_str_lowercase() {
-        assert_eq!(parse_method_case_insensitive("get"), Ok(HttpMethod::GET));
-        assert_eq!(parse_method_case_insensitive("post"), Ok(HttpMethod::POST));
-        assert_eq!(parse_method_case_insensitive("put"), Ok(HttpMethod::PUT));
-        assert_eq!(
-            parse_method_case_insensitive("delete"),
-            Ok(HttpMethod::DELETE)
-        );
-        assert_eq!(
-            parse_method_case_insensitive("patch"),
-            Ok(HttpMethod::PATCH)
-        );
+        assert_eq!(parse_method_case_insensitive("get"), Ok(Method::GET));
+        assert_eq!(parse_method_case_insensitive("post"), Ok(Method::POST));
+        assert_eq!(parse_method_case_insensitive("put"), Ok(Method::PUT));
+        assert_eq!(parse_method_case_insensitive("delete"), Ok(Method::DELETE));
+        assert_eq!(parse_method_case_insensitive("patch"), Ok(Method::PATCH));
     }
 
     #[test]
     fn http_method_from_str_uppercase() {
-        assert_eq!(parse_method_case_insensitive("GET"), Ok(HttpMethod::GET));
-        assert_eq!(parse_method_case_insensitive("POST"), Ok(HttpMethod::POST));
+        assert_eq!(parse_method_case_insensitive("GET"), Ok(Method::GET));
+        assert_eq!(parse_method_case_insensitive("POST"), Ok(Method::POST));
     }
 
     #[test]
     fn http_method_from_str_mixed_case() {
-        assert_eq!(parse_method_case_insensitive("Get"), Ok(HttpMethod::GET));
-        assert_eq!(parse_method_case_insensitive("PoSt"), Ok(HttpMethod::POST));
+        assert_eq!(parse_method_case_insensitive("Get"), Ok(Method::GET));
+        assert_eq!(parse_method_case_insensitive("PoSt"), Ok(Method::POST));
     }
 
     #[test]
@@ -291,17 +282,17 @@ mod tests {
 
     #[test]
     fn http_method_display() {
-        assert_eq!(HttpMethod::GET.to_string(), "GET");
-        assert_eq!(HttpMethod::POST.to_string(), "POST");
-        assert_eq!(HttpMethod::PUT.to_string(), "PUT");
-        assert_eq!(HttpMethod::DELETE.to_string(), "DELETE");
-        assert_eq!(HttpMethod::PATCH.to_string(), "PATCH");
+        assert_eq!(Method::GET.to_string(), "GET");
+        assert_eq!(Method::POST.to_string(), "POST");
+        assert_eq!(Method::PUT.to_string(), "PUT");
+        assert_eq!(Method::DELETE.to_string(), "DELETE");
+        assert_eq!(Method::PATCH.to_string(), "PATCH");
     }
 
     #[test]
     fn api_request_serializes() {
         let req = ApiRequest {
-            method: HttpMethod::GET,
+            method: Method::GET,
             path: "/documents/abc123".to_string(),
             query_params: vec![("limit".to_string(), "10".to_string())],
             headers: HeaderMap::new(),
@@ -316,7 +307,7 @@ mod tests {
     #[test]
     fn api_request_with_json_body_serializes() {
         let req = ApiRequest {
-            method: HttpMethod::POST,
+            method: Method::POST,
             path: "/documents".to_string(),
             query_params: vec![],
             headers: HeaderMap::new(),

@@ -6,12 +6,12 @@
 use std::collections::{HashMap, HashSet};
 
 use base64::Engine;
-use http::HeaderMap;
+use http::{HeaderMap, Method};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use onshape_client_core::request::{ApiRequest, HttpMethod};
+pub use onshape_client_core::request::ApiRequest;
 use onshape_client_core::request::{BinaryField, MultipartBody, RequestBody};
 
 // ============================================================================
@@ -138,7 +138,7 @@ pub struct SearchFilters {
 #[derive(Clone, Debug)]
 struct ParsedEndpoint {
     operation_id: String,
-    method: HttpMethod,
+    method: Method,
     path: String,
     summary: String,
     description: String,
@@ -284,7 +284,7 @@ impl OpenApiSpec {
                 continue;
             };
             for (method_str, detail) in methods {
-                let Ok(method) = HttpMethod::from_bytes(method_str.to_ascii_uppercase().as_bytes())
+                let Ok(method) = Method::from_bytes(method_str.to_ascii_uppercase().as_bytes())
                 else {
                     continue;
                 };
@@ -334,7 +334,7 @@ impl OpenApiSpec {
         let method_filter = filters
             .method
             .as_deref()
-            .and_then(|s| HttpMethod::from_bytes(s.to_ascii_uppercase().as_bytes()).ok());
+            .and_then(|s| Method::from_bytes(s.to_ascii_uppercase().as_bytes()).ok());
 
         let tag_filter = filters.tag.as_deref().map(str::to_lowercase);
 
@@ -862,7 +862,7 @@ impl OpenApiSpec {
 
     fn parse_endpoint(
         operation_id: &str,
-        method: HttpMethod,
+        method: Method,
         path: &str,
         detail: &Value,
         components: &HashMap<String, Value>,
@@ -1613,7 +1613,7 @@ mod tests {
             .build_request("getDocument", &path_params, &HashMap::new(), None)
             .expect("should build");
 
-        assert_eq!(request.method, HttpMethod::GET);
+        assert_eq!(request.method, Method::GET);
         assert_eq!(request.path, "/documents/abc%2F123%20model");
         assert!(request.query_params.is_empty());
         assert!(request.body.is_none());
@@ -1639,7 +1639,7 @@ mod tests {
             .build_request("getDocuments", &HashMap::new(), &query_params, None)
             .expect("should build");
 
-        assert_eq!(request.method, HttpMethod::GET);
+        assert_eq!(request.method, Method::GET);
         assert_eq!(request.path, "/documents");
         assert_eq!(request.query_params.len(), 2);
 
@@ -1756,7 +1756,7 @@ mod tests {
             )
             .expect("should build");
 
-        assert_eq!(request.method, HttpMethod::POST);
+        assert_eq!(request.method, Method::POST);
         assert!(
             matches!(request.body, Some(RequestBody::Json(_))),
             "JSON endpoint should produce RequestBody::Json"
