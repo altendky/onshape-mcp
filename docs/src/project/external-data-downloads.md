@@ -79,8 +79,7 @@ Completed artifact responses included these useful headers:
 | Header | Observed behavior |
 | ------ | ----------------- |
 | `Content-Type` | Artifact media type, commonly `application/octet-stream;charset=utf-8`; glTF export returned `application/zip;charset=utf-8`. |
-| `Content-Disposition` | Present as `attachment; filename*=UTF-8''...` using the requested destination name and file extension. |
-| `filename*` | Also present with the same RFC 5987 encoded filename value. |
+| `Content-Disposition` | Present as `attachment; filename*=UTF-8''...` using the requested destination name and file extension; `filename*` is the RFC 5987-encoded parameter within this header value. |
 | `ETag` | Present on completed artifact responses. |
 | `Content-Length` | Not present on the verified HTTP/2 `200` artifact responses. |
 
