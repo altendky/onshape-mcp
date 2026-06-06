@@ -321,6 +321,28 @@ mod tests {
         }
     }
 
+    fn read_request_headers(stream: &mut std::net::TcpStream) -> String {
+        const MAX_HEADER_BYTES: usize = 16 * 1024;
+
+        let mut buffer = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut chunk).expect("should read request");
+            if read == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            assert!(
+                buffer.len() <= MAX_HEADER_BYTES,
+                "request headers should fit within {MAX_HEADER_BYTES} bytes"
+            );
+            if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&buffer).to_lowercase()
+    }
+
     #[test]
     fn client_creation_succeeds_basic() {
         let client = OnshapeClient::new(test_config());
@@ -380,9 +402,7 @@ mod tests {
 
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("should accept request");
-            let mut buffer = [0_u8; 4096];
-            let received = stream.read(&mut buffer).expect("should read request");
-            let request = String::from_utf8_lossy(&buffer[..received]).to_lowercase();
+            let request = read_request_headers(&mut stream);
             assert!(
                 request.contains("accept: application/json"),
                 "request should preserve JSON Accept header, got: {request}"
@@ -438,9 +458,7 @@ mod tests {
 
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("should accept request");
-            let mut buffer = [0_u8; 4096];
-            let received = stream.read(&mut buffer).expect("should read request");
-            let request = String::from_utf8_lossy(&buffer[..received]).to_lowercase();
+            let request = read_request_headers(&mut stream);
             assert!(
                 request.contains("accept: application/octet-stream"),
                 "request should preserve explicit Accept header, got: {request}"
@@ -497,9 +515,7 @@ mod tests {
 
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("should accept request");
-            let mut buffer = [0_u8; 4096];
-            let received = stream.read(&mut buffer).expect("should read request");
-            let request = String::from_utf8_lossy(&buffer[..received]).to_lowercase();
+            let request = read_request_headers(&mut stream);
             assert!(
                 request.contains("x-onshape-test: header-value"),
                 "request should include custom request header, got: {request}"
@@ -552,9 +568,7 @@ mod tests {
 
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("should accept request");
-            let mut buffer = [0_u8; 4096];
-            let received = stream.read(&mut buffer).expect("should read request");
-            let request = String::from_utf8_lossy(&buffer[..received]).to_lowercase();
+            let request = read_request_headers(&mut stream);
             assert!(
                 request.contains("authorization: basic"),
                 "request should include executor-owned auth, got: {request}"
