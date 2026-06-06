@@ -283,6 +283,7 @@ impl OpenApiSpec {
             let Some(methods) = methods_val.as_object() else {
                 continue;
             };
+            let path_parameters = Self::parse_parameters(methods_val);
             for (method_str, detail) in methods {
                 let Ok(method) = Method::from_bytes(method_str.to_ascii_uppercase().as_bytes())
                 else {
@@ -292,8 +293,14 @@ impl OpenApiSpec {
                     continue;
                 };
 
-                let endpoint =
-                    Self::parse_endpoint(operation_id, method, path, detail, &components);
+                let endpoint = Self::parse_endpoint(
+                    operation_id,
+                    method,
+                    path,
+                    detail,
+                    &path_parameters,
+                    &components,
+                );
                 if endpoints
                     .insert(operation_id.to_string(), endpoint)
                     .is_none()
@@ -427,7 +434,8 @@ impl OpenApiSpec {
     /// Build an API request effect for a given endpoint.
     ///
     /// Validates that required path parameters are provided and substitutes them
-    /// into the path template. Query parameters and body are passed through.
+    /// into the path template. Query parameters, headers, and body are passed
+    /// through.
     ///
     /// # Errors
     ///
@@ -437,6 +445,7 @@ impl OpenApiSpec {
         endpoint_id: &str,
         path_params: &HashMap<String, String>,
         query_params: &HashMap<String, String>,
+        header_params: &HeaderMap,
         body: Option<Value>,
     ) -> Result<ApiRequest, OpenApiError> {
         let ep = self
@@ -480,12 +489,12 @@ impl OpenApiSpec {
         }
 
         for param in &ep.parameters {
-            if param.location == ParameterLocation::Header && param.required {
+            if param.location == ParameterLocation::Header
+                && param.required
+                && !header_params.contains_key(param.name.as_str())
+            {
                 return Err(OpenApiError::InvalidParams {
-                    reason: format!(
-                        "required header parameter `{}` is unsupported because dynamic request building does not accept header parameter values yet",
-                        param.name
-                    ),
+                    reason: format!("missing required header parameter: {}", param.name),
                 });
             }
         }
@@ -518,7 +527,7 @@ impl OpenApiSpec {
             method: ep.method.clone(),
             path: resolved_path,
             query_params: query_params_vec,
-            headers: HeaderMap::new(),
+            headers: header_params.clone(),
             body: request_body,
             content_type: ep.request_body_content_type.clone(),
         })
@@ -865,6 +874,7 @@ impl OpenApiSpec {
         method: Method,
         path: &str,
         detail: &Value,
+        path_parameters: &[ParsedParameter],
         components: &HashMap<String, Value>,
     ) -> ParsedEndpoint {
         let summary = detail
@@ -890,7 +900,7 @@ impl OpenApiSpec {
             })
             .unwrap_or_default();
 
-        let parameters = Self::parse_parameters(detail);
+        let parameters = Self::merge_parameters(path_parameters, Self::parse_parameters(detail));
         let (has_request_body, request_body_schema, request_body_content_type) =
             Self::parse_request_body(detail, components);
         let response_schema = Self::parse_response_schema(detail, components);
@@ -968,6 +978,26 @@ impl OpenApiSpec {
                 })
             })
             .collect()
+    }
+
+    fn merge_parameters(
+        path_parameters: &[ParsedParameter],
+        operation_parameters: Vec<ParsedParameter>,
+    ) -> Vec<ParsedParameter> {
+        let mut parameters = path_parameters.to_vec();
+
+        for operation_parameter in operation_parameters {
+            if let Some(existing) = parameters.iter_mut().find(|parameter| {
+                parameter.name == operation_parameter.name
+                    && parameter.location == operation_parameter.location
+            }) {
+                *existing = operation_parameter;
+            } else {
+                parameters.push(operation_parameter);
+            }
+        }
+
+        parameters
     }
 
     fn parse_request_body(
@@ -1610,7 +1640,13 @@ mod tests {
         path_params.insert("did".to_string(), "abc/123 model".to_string());
 
         let request = spec
-            .build_request("getDocument", &path_params, &HashMap::new(), None)
+            .build_request(
+                "getDocument",
+                &path_params,
+                &HashMap::new(),
+                &HeaderMap::new(),
+                None,
+            )
             .expect("should build");
 
         assert_eq!(request.method, Method::GET);
@@ -1623,7 +1659,13 @@ mod tests {
     fn build_request_missing_required_path_param() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let err = spec
-            .build_request("getDocument", &HashMap::new(), &HashMap::new(), None)
+            .build_request(
+                "getDocument",
+                &HashMap::new(),
+                &HashMap::new(),
+                &HeaderMap::new(),
+                None,
+            )
             .unwrap_err();
         assert!(matches!(err, OpenApiError::InvalidParams { .. }));
     }
@@ -1636,7 +1678,13 @@ mod tests {
         query_params.insert("limit".to_string(), "10".to_string());
 
         let request = spec
-            .build_request("getDocuments", &HashMap::new(), &query_params, None)
+            .build_request(
+                "getDocuments",
+                &HashMap::new(),
+                &query_params,
+                &HeaderMap::new(),
+                None,
+            )
             .expect("should build");
 
         assert_eq!(request.method, Method::GET);
@@ -1677,7 +1725,13 @@ mod tests {
         .expect("should parse");
 
         let err = spec
-            .build_request("searchDocuments", &HashMap::new(), &HashMap::new(), None)
+            .build_request(
+                "searchDocuments",
+                &HashMap::new(),
+                &HashMap::new(),
+                &HeaderMap::new(),
+                None,
+            )
             .unwrap_err();
 
         match err {
@@ -1692,7 +1746,55 @@ mod tests {
     }
 
     #[test]
-    fn build_request_rejects_required_header_params() {
+    fn build_request_with_required_header_params() {
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "servers": [{ "url": "https://example.com/api/v1" }],
+            "paths": {
+                "/downloads/{did}": {
+                    "get": {
+                        "operationId": "downloadExternalData",
+                        "parameters": [
+                            {
+                                "name": "did",
+                                "in": "path",
+                                "required": true,
+                                "schema": { "type": "string" }
+                            },
+                            {
+                                "name": "If-Match",
+                                "in": "header",
+                                "required": true,
+                                "schema": { "type": "string" }
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }))
+        .expect("should parse");
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+        let mut header_params = HeaderMap::new();
+        header_params.insert("If-Match", "revision-1".parse().expect("valid header"));
+
+        let request = spec
+            .build_request(
+                "downloadExternalData",
+                &path_params,
+                &HashMap::new(),
+                &header_params,
+                None,
+            )
+            .expect("should build");
+
+        assert_eq!(request.path, "/downloads/doc1");
+        assert_eq!(request.headers["If-Match"], "revision-1");
+    }
+
+    #[test]
+    fn build_request_rejects_missing_required_header_params() {
         let spec = OpenApiSpec::from_value(&serde_json::json!({
             "openapi": "3.0.1",
             "servers": [{ "url": "https://example.com/api/v1" }],
@@ -1724,22 +1826,124 @@ mod tests {
         path_params.insert("did".to_string(), "doc1".to_string());
 
         let err = spec
-            .build_request("downloadExternalData", &path_params, &HashMap::new(), None)
+            .build_request(
+                "downloadExternalData",
+                &path_params,
+                &HashMap::new(),
+                &HeaderMap::new(),
+                None,
+            )
             .unwrap_err();
 
         match err {
             OpenApiError::InvalidParams { reason } => {
                 assert!(
-                    reason.contains("required header parameter `If-Match` is unsupported"),
-                    "error should mention unsupported required header, got: {reason}"
-                );
-                assert!(
-                    reason.contains("does not accept header parameter values yet"),
-                    "error should explain dynamic request input limitation, got: {reason}"
+                    reason.contains("missing required header parameter: If-Match"),
+                    "error should mention missing required header, got: {reason}"
                 );
             }
             other => panic!("expected InvalidParams, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn path_item_parameters_are_merged_with_operation_parameters() {
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "servers": [{ "url": "https://example.com/api/v1" }],
+            "paths": {
+                "/downloads/{did}": {
+                    "parameters": [
+                        {
+                            "name": "did",
+                            "in": "path",
+                            "required": true,
+                            "schema": { "type": "string" }
+                        },
+                        {
+                            "name": "If-Match",
+                            "in": "header",
+                            "required": true,
+                            "description": "path-level required header",
+                            "schema": { "type": "string" }
+                        },
+                        {
+                            "name": "X-Override",
+                            "in": "header",
+                            "required": true,
+                            "description": "path-level header",
+                            "schema": { "type": "string" }
+                        }
+                    ],
+                    "get": {
+                        "operationId": "downloadExternalData",
+                        "parameters": [
+                            {
+                                "name": "X-Override",
+                                "in": "header",
+                                "required": false,
+                                "description": "operation-level header",
+                                "schema": { "type": "string" }
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }))
+        .expect("should parse");
+
+        let detail = spec
+            .explain("downloadExternalData")
+            .expect("should explain endpoint");
+        let if_match = detail
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "If-Match")
+            .expect("should inherit path-item header parameter");
+        assert_eq!(if_match.location, ParameterLocation::Header);
+        assert!(if_match.required);
+
+        let override_header = detail
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "X-Override")
+            .expect("should keep overridden header parameter");
+        assert_eq!(override_header.location, ParameterLocation::Header);
+        assert!(!override_header.required);
+        assert_eq!(override_header.description, "operation-level header");
+
+        let mut path_params = HashMap::new();
+        path_params.insert("did".to_string(), "doc1".to_string());
+        let missing_header_err = spec
+            .build_request(
+                "downloadExternalData",
+                &path_params,
+                &HashMap::new(),
+                &HeaderMap::new(),
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&missing_header_err, OpenApiError::InvalidParams { reason } if reason.contains("missing required header parameter: If-Match")),
+            "expected missing inherited required header error, got: {missing_header_err:?}"
+        );
+
+        let mut header_params = HeaderMap::new();
+        header_params.insert("If-Match", "revision-1".parse().expect("valid header"));
+        let request = spec
+            .build_request(
+                "downloadExternalData",
+                &path_params,
+                &HashMap::new(),
+                &header_params,
+                None,
+            )
+            .expect("should build with inherited required header");
+
+        assert_eq!(request.path, "/downloads/doc1");
+        assert_eq!(request.headers["If-Match"], "revision-1");
+        assert!(!request.headers.contains_key("X-Override"));
     }
 
     #[test]
@@ -1752,6 +1956,7 @@ mod tests {
                 "createDocument",
                 &HashMap::new(),
                 &HashMap::new(),
+                &HeaderMap::new(),
                 Some(body),
             )
             .expect("should build");
@@ -2042,6 +2247,7 @@ mod tests {
                 "uploadFileCreateElement",
                 &path_params,
                 &HashMap::new(),
+                &HeaderMap::new(),
                 Some(body),
             )
             .expect("should build");
@@ -2088,6 +2294,7 @@ mod tests {
                 "uploadFileCreateElement",
                 &path_params,
                 &HashMap::new(),
+                &HeaderMap::new(),
                 Some(body),
             )
             .unwrap_err();
@@ -2120,6 +2327,7 @@ mod tests {
                 "uploadFileCreateElement",
                 &path_params,
                 &HashMap::new(),
+                &HeaderMap::new(),
                 Some(body),
             )
             .unwrap_err();
@@ -2149,6 +2357,7 @@ mod tests {
                 "uploadFileCreateElement",
                 &path_params,
                 &HashMap::new(),
+                &HeaderMap::new(),
                 Some(body),
             )
             .unwrap_err();
@@ -2182,6 +2391,7 @@ mod tests {
                 "uploadFileCreateElement",
                 &path_params,
                 &HashMap::new(),
+                &HeaderMap::new(),
                 Some(body),
             )
             .expect("should build");
@@ -2211,6 +2421,7 @@ mod tests {
                 "uploadFileCreateElement",
                 &path_params,
                 &HashMap::new(),
+                &HeaderMap::new(),
                 None,
             )
             .expect("should build");
@@ -2228,6 +2439,7 @@ mod tests {
                 "createDocument",
                 &HashMap::new(),
                 &HashMap::new(),
+                &HeaderMap::new(),
                 Some(body.clone()),
             )
             .expect("should build");

@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use base64::Engine;
+use http::{HeaderMap, HeaderName, HeaderValue};
 
 use rmcp::{
     ErrorData,
@@ -291,6 +292,18 @@ fn validate_file_path(path: &str) -> Result<PathBuf, String> {
         ));
     }
     Ok(path_buf)
+}
+
+fn header_params_to_header_map(params: &HashMap<String, String>) -> Result<HeaderMap, String> {
+    let mut headers = HeaderMap::new();
+    for (name, value) in params {
+        let header_name = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|e| format!("invalid header name {name:?}: {e}"))?;
+        let header_value = HeaderValue::from_str(value)
+            .map_err(|e| format!("invalid value for header {name:?}: {e}"))?;
+        headers.insert(header_name, header_value);
+    }
+    Ok(headers)
 }
 
 /// Convert a raw HTTP response from the Onshape API into a [`CallToolResult`].
@@ -974,6 +987,9 @@ pub struct ApiCallInput {
     /// Query parameters (e.g., `{"q": "robot arm", "limit": "10"}`).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub query_params: HashMap<String, String>,
+    /// Header parameters (e.g., `{"Accept": "application/octet-stream"}`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub header_params: HashMap<String, String>,
     /// JSON string for the request body (for POST/PUT/PATCH endpoints).
     /// Use `onshape_api_explain` to see the expected schema for each endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1370,16 +1386,18 @@ fn call_auth_status(
     };
 
     let empty_map = HashMap::new();
-    let request = match spec.build_request("sessionInfo", &empty_map, &empty_map, None) {
-        Ok(req) => req,
-        Err(e) => {
-            return ToolEffect::Done(Err(ErrorData::new(
-                ErrorCode::INTERNAL_ERROR,
-                format!("failed to build sessionInfo request: {e}"),
-                None,
-            )));
-        }
-    };
+    let empty_headers = HeaderMap::new();
+    let request =
+        match spec.build_request("sessionInfo", &empty_map, &empty_map, &empty_headers, None) {
+            Ok(req) => req,
+            Err(e) => {
+                return ToolEffect::Done(Err(ErrorData::new(
+                    ErrorCode::INTERNAL_ERROR,
+                    format!("failed to build sessionInfo request: {e}"),
+                    None,
+                )));
+            }
+        };
 
     ToolEffect::ApiRequest {
         request,
@@ -1509,10 +1527,16 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
         }
     }
 
+    let header_params = match header_params_to_header_map(&input.header_params) {
+        Ok(headers) => headers,
+        Err(msg) => return tool_input_error(msg),
+    };
+
     let request = match spec.build_request(
         &input.endpoint,
         &input.path_params,
         &input.query_params,
+        &header_params,
         body,
     ) {
         Ok(req) => req,
@@ -1924,6 +1948,7 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
         "getPartStudioShadedViews",
         &path_params,
         &query_params,
+        &HeaderMap::new(),
         None,
     ) {
         Ok(req) => req,
@@ -4310,6 +4335,20 @@ mod tests {
         let input: ApiCallInput =
             serde_json::from_str(r#"{"endpoint": "getDocuments"}"#).expect("should parse");
         assert!(input.file_refs.is_empty());
+        assert!(input.header_params.is_empty());
+    }
+
+    #[test]
+    fn api_call_input_with_header_params_parses() {
+        let input: ApiCallInput = serde_json::from_str(
+            r#"{
+                "endpoint": "getDocuments",
+                "header_params": {"Accept": "application/octet-stream"}
+            }"#,
+        )
+        .expect("should parse");
+
+        assert_eq!(input.header_params["Accept"], "application/octet-stream");
     }
 
     #[test]
@@ -4366,6 +4405,60 @@ mod tests {
         // Should be a direct ApiRequest, no ReadFiles indirection.
         let (_request, continuation) = assert_api_request(effect);
         assert!(matches!(continuation, Continuation::FormatApiResponse));
+    }
+
+    #[test]
+    fn api_call_header_params_reach_request() {
+        let spec = test_spec();
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("getDocuments".to_string()),
+        );
+        args.insert(
+            "header_params".to_string(),
+            serde_json::json!({"Accept": "application/octet-stream"}),
+        );
+
+        let effect = call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+
+        let (request, continuation) = assert_api_request(effect);
+        assert!(matches!(continuation, Continuation::FormatApiResponse));
+        assert_eq!(request.headers["Accept"], "application/octet-stream");
+    }
+
+    #[test]
+    fn api_call_invalid_header_name_returns_error() {
+        let spec = test_spec();
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("getDocuments".to_string()),
+        );
+        args.insert(
+            "header_params".to_string(),
+            serde_json::json!({"not a header": "value"}),
+        );
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(
+            msg.contains("invalid header name"),
+            "expected invalid header error, got: {msg}"
+        );
     }
 
     #[test]

@@ -62,9 +62,9 @@ common client boundary:
   setting authentication. Caller-supplied `Authorization` is overwritten by
   executor-owned auth, and `Accept: application/json` remains the default when no
   explicit `Accept` is present.
-- Dynamic OpenAPI request construction still rejects required header parameters
-  because its public input shape has no separate header-parameter map yet; that
-  remains part of the request-header/`Accept` follow-up.
+- Dynamic OpenAPI request construction accepts request headers as
+  `http::HeaderMap`; MCP-facing JSON input converts `header_params` into that
+  standard HTTP type before building an `ApiRequest`.
 
 Do not revisit this decision without a concrete problem from real common-client
 or export-service usage.
