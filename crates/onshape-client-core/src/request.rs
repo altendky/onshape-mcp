@@ -24,6 +24,11 @@ fn parse_method_case_insensitive(s: &str) -> Result<Method, UnknownHttpMethod> {
         .map_err(|_| UnknownHttpMethod(s.to_string()))
 }
 
+// `ApiRequest` serde is primarily for test and inspection ergonomics: internal
+// tests assert the request shape, and external consumers can serialize requests
+// in their own tests/debug tooling. Runtime request execution uses the typed
+// fields directly, so these helpers preserve that plain-data surface while the
+// boundary uses standard `http` types.
 mod method_serde {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -45,6 +50,8 @@ mod method_serde {
     }
 }
 
+// See `method_serde` for why `ApiRequest` keeps serde support around `http`
+// protocol types.
 mod request_headers_serde {
     use std::str;
 
