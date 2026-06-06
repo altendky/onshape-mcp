@@ -18,6 +18,7 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 - [Configuration](configuration.md) — Config sources, precedence, settings reference
 - [Authentication](authentication.md) — Auth methods, credentials, security
 - [Error Handling](error-handling.md) — Error types, HTTP mapping, MCP error codes
+- [External Data Downloads](external-data-downloads.md) — Verified behavior for translated/exported artifact downloads
 - [Tracing](tracing.md) — Sans-IO tracing design (tracing-sansio)
 
 ### Infrastructure
