@@ -275,9 +275,15 @@ Invoke an Onshape API endpoint with structured parameters. Path parameters are n
 | `endpoint` | `string` | Yes | The operation ID to call |
 | `path_params` | `object` | No | Path parameters (e.g., `{"did": "abc123"}`) |
 | `query_params` | `object` | No | Query parameters (e.g., `{"q": "robot arm", "limit": "10"}`) |
+| `header_params` | `object` | No | Header parameters (e.g., `{"Accept": "application/octet-stream"}`) |
 | `body` | `any` | No | Request body (for POST/PUT/PATCH endpoints) |
+| `file_refs` | `array` | No | File content to inject into multipart or JSON request body fields |
 
 **Output:** The API response content.
+
+`header_params` can set request headers such as `Accept`. Authentication remains
+executor-owned; caller-supplied `Authorization` headers are ignored and replaced
+with the configured Onshape credentials.
 
 **Effect Pattern:** This tool uses the effects-as-data pattern. The core crate validates the request and produces an `ApiRequest` effect, which the I/O layer executes. This keeps the core crate sans-IO.
 

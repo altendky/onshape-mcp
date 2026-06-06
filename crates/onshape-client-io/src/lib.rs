@@ -489,6 +489,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_applies_request_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("should bind test server");
+        let address = listener
+            .local_addr()
+            .expect("should get test server address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("should accept request");
+            let mut buffer = [0_u8; 4096];
+            let received = stream.read(&mut buffer).expect("should read request");
+            let request = String::from_utf8_lossy(&buffer[..received]).to_lowercase();
+            assert!(
+                request.contains("x-onshape-test: header-value"),
+                "request should include custom request header, got: {request}"
+            );
+
+            stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("should write response");
+        });
+
+        let client = OnshapeClient::new(ClientConfig {
+            base_url: format!("http://{address}"),
+            auth: ClientAuthConfig::Basic {
+                credentials: test_credentials(),
+            },
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .expect("should create client");
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            "X-Onshape-Test",
+            http::HeaderValue::from_static("header-value"),
+        );
+        let request = ApiRequest {
+            method: http::Method::GET,
+            path: "/headers".to_string(),
+            query_params: Vec::new(),
+            headers,
+            body: None,
+            content_type: None,
+        };
+
+        let response = client
+            .execute(&request)
+            .await
+            .expect("request should succeed");
+        server.join().expect("server thread should finish");
+
+        assert_eq!(response.status, http::StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
     async fn execute_ignores_caller_authorization_header() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("should bind test server");
         let address = listener

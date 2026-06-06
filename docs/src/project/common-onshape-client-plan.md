@@ -48,9 +48,9 @@ what decision or dependency is missing.
   type.
 - Request headers are modeled with `http::HeaderMap`; preserve the existing
   JSON-oriented default `Accept` behavior until a request explicitly overrides it.
-- Until dynamic OpenAPI request building accepts header parameter inputs, it must
-  not silently drop header parameters. Required header parameters should make
-  request construction fail with a clear unsupported-parameter error.
+- Dynamic OpenAPI request building accepts header parameter inputs as
+  `http::HeaderMap`, preserving the standard HTTP boundary type. Required header
+  parameters make request construction fail only when missing.
 - Represent response headers as `http::HeaderMap` so common callers can inspect
   standard HTTP metadata without coupling to a network framework.
 - Convert buffered response bytes to text only at the MCP boundary. Existing MCP
@@ -255,9 +255,9 @@ responses; callers decide how to interpret them.
   an explicit `Accept` header.
 - Model request headers as `http::HeaderMap` while keeping authentication
   executor-owned.
-- Dynamic OpenAPI request building should reject endpoints with required header
-  parameters for now, because its public input shape cannot accept separate
-  header parameter values yet. Do not silently omit required headers.
+- Dynamic OpenAPI request building accepts request headers as `http::HeaderMap`.
+  MCP-facing JSON input converts `header_params` into that type before request
+  construction. Do not silently omit required headers.
 
 ### 3. Adapt MCP at the Boundary
 
@@ -340,8 +340,8 @@ in shared decisions such as proactive refresh margins and retry-on-401 behavior.
 Ensure coverage exists for:
 
 - path and query parameter substitution.
-- required header parameters are rejected until dynamic OpenAPI request building
-  has a header-parameter input map.
+- required header parameters are accepted when supplied through dynamic OpenAPI
+  request building's header-parameter input map.
 - JSON body request building.
 - multipart binary and text body building.
 - schema lookup with `allOf`.
@@ -388,7 +388,8 @@ Implemented focused first helper set:
 - Request builders cite the `OpenAPI` operation IDs they implement and have
   golden tests for method, path, body, and content type construction.
 - Endpoint-specific download media negotiation remains a separate `Accept`
-  follow-up; the common request model can now carry request headers.
+  follow-up; the common request model and dynamic OpenAPI builder can now carry
+  request headers.
 
 Place these initially under `onshape-client-core::endpoints::*`, separate from
 low-level `request`, `response`, `auth`, and `oauth` modules. Helpers must build
@@ -453,8 +454,8 @@ Focused test coverage for this extraction step:
 
 - byte response helpers, including strict UTF-8 failure behavior.
 - MCP edge conversion from byte responses into existing text/JSON continuations.
-- OpenAPI request building rejects required header parameters while request
-  headers are unsupported.
+- OpenAPI request building accepts required header parameters and rejects them
+  only when missing.
 - direct and proxy OAuth token-file fixtures preserve the current flat MCP JSON
   shape through the token-material split.
 - shared pure refresh decision helpers cover proactive refresh and retry-on-401
