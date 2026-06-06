@@ -1306,6 +1306,7 @@ version = "0.4.0"
 dependencies = [
  "base64",
  "chrono",
+ "http",
  "oauth2",
  "schemars",
  "secrecy",
@@ -1319,6 +1320,7 @@ dependencies = [
 name = "onshape-client-io"
 version = "0.4.0"
 dependencies = [
+ "http",
  "oauth2",
  "onshape-client-core",
  "reqwest",
@@ -1349,6 +1351,7 @@ version = "0.4.0"
 dependencies = [
  "base64",
  "chrono",
+ "http",
  "onshape-client-core",
  "onshape-mcp-resources",
  "onshape-openapi",
@@ -1411,6 +1414,7 @@ name = "onshape-openapi"
 version = "0.4.0"
 dependencies = [
  "base64",
+ "http",
  "onshape-client-core",
  "schemars",
  "serde",

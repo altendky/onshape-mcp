@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use base64::Engine;
+use http::HeaderMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,7 +52,7 @@ pub struct EndpointSummary {
     /// The operation ID (unique identifier for this endpoint).
     pub operation_id: String,
     /// HTTP method.
-    pub method: HttpMethod,
+    pub method: String,
     /// URL path template (e.g., `/documents/{did}`).
     pub path: String,
     /// One-line description of the endpoint.
@@ -96,7 +97,7 @@ pub struct EndpointDetail {
     /// The operation ID.
     pub operation_id: String,
     /// HTTP method.
-    pub method: HttpMethod,
+    pub method: String,
     /// URL path template.
     pub path: String,
     /// Full description of the endpoint.
@@ -283,7 +284,8 @@ impl OpenApiSpec {
                 continue;
             };
             for (method_str, detail) in methods {
-                let Ok(method) = method_str.parse::<HttpMethod>() else {
+                let Ok(method) = HttpMethod::from_bytes(method_str.to_ascii_uppercase().as_bytes())
+                else {
                     continue;
                 };
                 let Some(operation_id) = detail.get("operationId").and_then(Value::as_str) else {
@@ -332,7 +334,7 @@ impl OpenApiSpec {
         let method_filter = filters
             .method
             .as_deref()
-            .and_then(|s| s.parse::<HttpMethod>().ok());
+            .and_then(|s| HttpMethod::from_bytes(s.to_ascii_uppercase().as_bytes()).ok());
 
         let tag_filter = filters.tag.as_deref().map(str::to_lowercase);
 
@@ -365,7 +367,7 @@ impl OpenApiSpec {
 
             results.push(EndpointSummary {
                 operation_id: ep.operation_id.clone(),
-                method: ep.method,
+                method: ep.method.to_string(),
                 path: ep.path.clone(),
                 description: if ep.summary.is_empty() {
                     Self::truncate_description(&ep.description, 120)
@@ -394,7 +396,7 @@ impl OpenApiSpec {
 
         Ok(EndpointDetail {
             operation_id: ep.operation_id.clone(),
-            method: ep.method,
+            method: ep.method.to_string(),
             path: ep.path.clone(),
             description: if ep.description.is_empty() {
                 ep.summary.clone()
@@ -481,7 +483,7 @@ impl OpenApiSpec {
             if param.location == ParameterLocation::Header && param.required {
                 return Err(OpenApiError::InvalidParams {
                     reason: format!(
-                        "required header parameter `{}` is unsupported because API requests do not model request headers yet",
+                        "required header parameter `{}` is unsupported because dynamic request building does not accept header parameter values yet",
                         param.name
                     ),
                 });
@@ -513,9 +515,10 @@ impl OpenApiSpec {
         };
 
         Ok(ApiRequest {
-            method: ep.method,
+            method: ep.method.clone(),
             path: resolved_path,
             query_params: query_params_vec,
+            headers: HeaderMap::new(),
             body: request_body,
             content_type: ep.request_body_content_type.clone(),
         })
@@ -1564,7 +1567,7 @@ mod tests {
         );
         // Only GET operations that match "document"
         assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|r| r.method == HttpMethod::Get));
+        assert!(results.iter().all(|r| r.method == "GET"));
     }
 
     #[test]
@@ -1573,7 +1576,7 @@ mod tests {
         let detail = spec.explain("getDocuments").expect("should find");
 
         assert_eq!(detail.operation_id, "getDocuments");
-        assert_eq!(detail.method, HttpMethod::Get);
+        assert_eq!(detail.method, "GET");
         assert_eq!(detail.path, "/documents");
         assert_eq!(detail.parameters.len(), 2);
         assert!(!detail.has_request_body);
@@ -1610,7 +1613,7 @@ mod tests {
             .build_request("getDocument", &path_params, &HashMap::new(), None)
             .expect("should build");
 
-        assert_eq!(request.method, HttpMethod::Get);
+        assert_eq!(request.method, HttpMethod::GET);
         assert_eq!(request.path, "/documents/abc%2F123%20model");
         assert!(request.query_params.is_empty());
         assert!(request.body.is_none());
@@ -1636,7 +1639,7 @@ mod tests {
             .build_request("getDocuments", &HashMap::new(), &query_params, None)
             .expect("should build");
 
-        assert_eq!(request.method, HttpMethod::Get);
+        assert_eq!(request.method, HttpMethod::GET);
         assert_eq!(request.path, "/documents");
         assert_eq!(request.query_params.len(), 2);
 
@@ -1730,6 +1733,10 @@ mod tests {
                     reason.contains("required header parameter `If-Match` is unsupported"),
                     "error should mention unsupported required header, got: {reason}"
                 );
+                assert!(
+                    reason.contains("does not accept header parameter values yet"),
+                    "error should explain dynamic request input limitation, got: {reason}"
+                );
             }
             other => panic!("expected InvalidParams, got {other:?}"),
         }
@@ -1749,7 +1756,7 @@ mod tests {
             )
             .expect("should build");
 
-        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.method, HttpMethod::POST);
         assert!(
             matches!(request.body, Some(RequestBody::Json(_))),
             "JSON endpoint should produce RequestBody::Json"

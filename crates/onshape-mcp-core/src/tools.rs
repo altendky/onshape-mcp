@@ -151,7 +151,7 @@ pub enum ToolEffect {
     /// the continuation and an [`IoResult::ApiResponse`].
     ApiRequest {
         /// The HTTP request to execute.
-        request: ApiRequest,
+        request: Box<ApiRequest>,
         /// What to do with the response.
         continuation: Continuation,
     },
@@ -557,7 +557,7 @@ fn resume_inject_files(
     }
 
     ToolEffect::ApiRequest {
-        request,
+        request: Box::new(request),
         continuation: Continuation::FormatApiResponse,
     }
 }
@@ -1381,7 +1381,7 @@ fn call_auth_status(
     };
 
     ToolEffect::ApiRequest {
-        request,
+        request: Box::new(request),
         continuation: Continuation::ProcessAuthValidation {
             resolved_auth: resolved_auth.clone(),
         },
@@ -1554,7 +1554,7 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
     // the request as an ApiRequest effect.
     if input.file_refs.is_empty() {
         ToolEffect::ApiRequest {
-            request,
+            request: Box::new(request),
             continuation: Continuation::FormatApiResponse,
         }
     } else {
@@ -1934,7 +1934,7 @@ fn call_screenshot(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -
     // --- Return the two-phase effect: API call, then file writes ---
 
     ToolEffect::ApiRequest {
-        request,
+        request: Box::new(request),
         continuation: Continuation::ProcessScreenshotResponse {
             output_path,
             label,
@@ -2164,7 +2164,7 @@ mod tests {
             ToolEffect::ApiRequest {
                 request,
                 continuation,
-            } => (request, continuation),
+            } => (*request, continuation),
             other => panic!("expected ApiRequest, got {other:?}"),
         }
     }
@@ -2788,7 +2788,7 @@ mod tests {
             Some(&spec),
         );
         let (request, _continuation) = assert_api_request(result);
-        assert_eq!(request.method, HttpMethod::Get);
+        assert_eq!(request.method, HttpMethod::GET);
         assert_eq!(request.path, "/documents");
         assert!(
             request.body.is_some(),
@@ -4469,9 +4469,10 @@ mod tests {
     fn json_request_for_injection(body: Value) -> ApiRequest {
         use onshape_client_core::request::{HttpMethod, RequestBody};
         ApiRequest {
-            method: HttpMethod::Post,
+            method: HttpMethod::POST,
             path: "/test".to_string(),
             query_params: vec![],
+            headers: http::HeaderMap::default(),
             body: Some(RequestBody::Json(body)),
             content_type: Some("application/json".to_string()),
         }
@@ -4583,9 +4584,10 @@ mod tests {
     fn multipart_request_for_injection(text_fields: Vec<(String, String)>) -> ApiRequest {
         use onshape_client_core::request::{HttpMethod, MultipartBody, RequestBody};
         ApiRequest {
-            method: HttpMethod::Post,
+            method: HttpMethod::POST,
             path: "/upload".to_string(),
             query_params: vec![],
+            headers: http::HeaderMap::default(),
             body: Some(RequestBody::Multipart(MultipartBody {
                 text_fields,
                 binary_fields: vec![],
@@ -4728,9 +4730,10 @@ mod tests {
     fn resume_inject_no_body_returns_error() {
         use onshape_client_core::request::HttpMethod;
         let request = ApiRequest {
-            method: HttpMethod::Get,
+            method: HttpMethod::GET,
             path: "/test".to_string(),
             query_params: vec![],
+            headers: http::HeaderMap::default(),
             body: None,
             content_type: None,
         };

@@ -729,10 +729,22 @@ struct RawResponse {
 
 fn raw_response_from_api_response(response: ApiResponse) -> RawResponse {
     RawResponse {
-        status: response.status,
-        headers: response.headers,
+        status: response.status.as_u16(),
+        headers: header_map_to_pairs(&response.headers),
         body: response.body.bytes,
     }
+}
+
+fn header_map_to_pairs(headers: &http::HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            )
+        })
+        .collect()
 }
 
 fn resume_with_raw_response(
@@ -848,7 +860,7 @@ async fn execute_oauth_inner(
     if let Ok(ref response) = result
         && oauth
             .session
-            .post_execute_action(response.status, refreshed)
+            .post_execute_action(response.status.as_u16(), refreshed)
             == PostExecuteAction::RefreshAndRetry
     {
         if let Err(e) = try_refresh(oauth).await {
@@ -1871,8 +1883,11 @@ mod tests {
     #[test]
     fn raw_response_from_api_response_preserves_bytes_and_headers() {
         let response = ApiResponse {
-            status: 200,
-            headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+            status: http::StatusCode::OK,
+            headers: http::HeaderMap::from_iter([(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static("text/plain"),
+            )]),
             body: ResponseBody::from("ok"),
         };
 
@@ -1881,7 +1896,7 @@ mod tests {
         assert_eq!(raw.status, 200);
         assert_eq!(
             raw.headers,
-            vec![("Content-Type".to_string(), "text/plain".to_string())]
+            vec![("content-type".to_string(), "text/plain".to_string())]
         );
         assert_eq!(raw.body, b"ok");
     }
@@ -1889,11 +1904,11 @@ mod tests {
     #[test]
     fn resume_with_raw_response_passes_invalid_utf8_to_continuation() {
         let response = ApiResponse {
-            status: 200,
-            headers: vec![(
-                "content-type".to_string(),
-                "application/octet-stream".to_string(),
-            )],
+            status: http::StatusCode::OK,
+            headers: http::HeaderMap::from_iter([(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static("application/octet-stream"),
+            )]),
             body: ResponseBody::from(vec![0xff]),
         };
 

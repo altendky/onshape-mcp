@@ -4,9 +4,9 @@
 //! The I/O layer (`onshape-client-io`) interprets these to make actual HTTP calls.
 
 use std::borrow::Cow;
-use std::str::{self, FromStr, Utf8Error};
+use std::str::{self, Utf8Error};
 
-use schemars::JsonSchema;
+use http::{HeaderMap, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -15,50 +15,73 @@ use serde_json::Value;
 // ============================================================================
 
 /// HTTP method for an API request.
-///
-/// JSON serialization/deserialization is **uppercase-only** (via `serde(rename_all = "UPPERCASE")`),
-/// matching the HTTP convention for method tokens in structured payloads.
-/// [`FromStr`] is **case-insensitive** (e.g. `"get"`, `"Get"`, `"GET"` all parse successfully),
-/// to accommodate sources like `OpenAPI` spec keys that use lowercase by convention.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum HttpMethod {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Patch,
-}
+pub use http::Method as HttpMethod;
 
 /// Error returned when parsing an unrecognized HTTP method string.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("unknown HTTP method: {0}")]
 pub struct UnknownHttpMethod(pub String);
 
-impl FromStr for HttpMethod {
-    type Err = UnknownHttpMethod;
+fn parse_method_case_insensitive(s: &str) -> Result<Method, UnknownHttpMethod> {
+    Method::from_bytes(s.to_ascii_uppercase().as_bytes())
+        .map_err(|_| UnknownHttpMethod(s.to_string()))
+}
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "get" => Ok(Self::Get),
-            "post" => Ok(Self::Post),
-            "put" => Ok(Self::Put),
-            "delete" => Ok(Self::Delete),
-            "patch" => Ok(Self::Patch),
-            _ => Err(UnknownHttpMethod(s.to_string())),
-        }
+mod method_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::{Method, parse_method_case_insensitive};
+
+    pub fn serialize<S>(method: &Method, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(method.as_str())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Method, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        parse_method_case_insensitive(&value).map_err(serde::de::Error::custom)
     }
 }
 
-impl std::fmt::Display for HttpMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Get => write!(f, "GET"),
-            Self::Post => write!(f, "POST"),
-            Self::Put => write!(f, "PUT"),
-            Self::Delete => write!(f, "DELETE"),
-            Self::Patch => write!(f, "PATCH"),
+mod request_headers_serde {
+    use std::str;
+
+    use http::{HeaderMap, HeaderName, HeaderValue};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(headers: &HeaderMap, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let pairs: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(name, value)| {
+                value
+                    .to_str()
+                    .map(|value| (name.as_str(), value))
+                    .map_err(serde::ser::Error::custom)
+            })
+            .collect::<Result<_, _>>()?;
+        pairs.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HeaderMap, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let pairs = Vec::<(String, String)>::deserialize(deserializer)?;
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            let name = HeaderName::from_bytes(name.as_bytes()).map_err(serde::de::Error::custom)?;
+            let value = HeaderValue::from_str(&value).map_err(serde::de::Error::custom)?;
+            headers.append(name, value);
         }
+        Ok(headers)
     }
 }
 
@@ -74,11 +97,15 @@ impl std::fmt::Display for HttpMethod {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ApiRequest {
     /// HTTP method.
+    #[serde(with = "method_serde")]
     pub method: HttpMethod,
     /// Fully resolved URL path (path params substituted), e.g. `/documents/abc123`.
     pub path: String,
     /// Query parameters.
     pub query_params: Vec<(String, String)>,
+    /// Request headers supplied by the request builder.
+    #[serde(default, with = "request_headers_serde")]
+    pub headers: HeaderMap,
     /// Request body, if any.
     pub body: Option<RequestBody>,
     /// Content type for the request body.
@@ -146,9 +173,9 @@ impl RequestBody {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApiResponse {
     /// HTTP status code.
-    pub status: u16,
-    /// Response headers as `(name, value)` pairs.
-    pub headers: Vec<(String, String)>,
+    pub status: StatusCode,
+    /// Response headers.
+    pub headers: HeaderMap,
     /// Response body bytes.
     pub body: ResponseBody,
 }
@@ -157,10 +184,7 @@ impl ApiResponse {
     /// Return the first response header value matching `name`, case-insensitively.
     #[must_use]
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_str())
+        self.headers.get(name).and_then(|value| value.to_str().ok())
     }
 
     /// Return the response `Content-Type` header, if present.
@@ -235,58 +259,52 @@ mod tests {
 
     #[test]
     fn http_method_from_str_lowercase() {
-        assert_eq!(HttpMethod::from_str("get"), Ok(HttpMethod::Get));
-        assert_eq!(HttpMethod::from_str("post"), Ok(HttpMethod::Post));
-        assert_eq!(HttpMethod::from_str("put"), Ok(HttpMethod::Put));
-        assert_eq!(HttpMethod::from_str("delete"), Ok(HttpMethod::Delete));
-        assert_eq!(HttpMethod::from_str("patch"), Ok(HttpMethod::Patch));
+        assert_eq!(parse_method_case_insensitive("get"), Ok(HttpMethod::GET));
+        assert_eq!(parse_method_case_insensitive("post"), Ok(HttpMethod::POST));
+        assert_eq!(parse_method_case_insensitive("put"), Ok(HttpMethod::PUT));
+        assert_eq!(
+            parse_method_case_insensitive("delete"),
+            Ok(HttpMethod::DELETE)
+        );
+        assert_eq!(
+            parse_method_case_insensitive("patch"),
+            Ok(HttpMethod::PATCH)
+        );
     }
 
     #[test]
     fn http_method_from_str_uppercase() {
-        assert_eq!(HttpMethod::from_str("GET"), Ok(HttpMethod::Get));
-        assert_eq!(HttpMethod::from_str("POST"), Ok(HttpMethod::Post));
+        assert_eq!(parse_method_case_insensitive("GET"), Ok(HttpMethod::GET));
+        assert_eq!(parse_method_case_insensitive("POST"), Ok(HttpMethod::POST));
     }
 
     #[test]
     fn http_method_from_str_mixed_case() {
-        assert_eq!(HttpMethod::from_str("Get"), Ok(HttpMethod::Get));
-        assert_eq!(HttpMethod::from_str("PoSt"), Ok(HttpMethod::Post));
+        assert_eq!(parse_method_case_insensitive("Get"), Ok(HttpMethod::GET));
+        assert_eq!(parse_method_case_insensitive("PoSt"), Ok(HttpMethod::POST));
     }
 
     #[test]
     fn http_method_from_str_unknown() {
-        assert!(HttpMethod::from_str("TRACE").is_err());
-        assert!(HttpMethod::from_str("").is_err());
+        assert!(parse_method_case_insensitive("").is_err());
     }
 
     #[test]
     fn http_method_display() {
-        assert_eq!(HttpMethod::Get.to_string(), "GET");
-        assert_eq!(HttpMethod::Post.to_string(), "POST");
-        assert_eq!(HttpMethod::Put.to_string(), "PUT");
-        assert_eq!(HttpMethod::Delete.to_string(), "DELETE");
-        assert_eq!(HttpMethod::Patch.to_string(), "PATCH");
-    }
-
-    #[test]
-    fn http_method_serializes_uppercase() {
-        let json = serde_json::to_string(&HttpMethod::Get).expect("should serialize");
-        assert_eq!(json, "\"GET\"");
-    }
-
-    #[test]
-    fn http_method_deserializes_uppercase() {
-        let method: HttpMethod = serde_json::from_str("\"POST\"").expect("should deserialize");
-        assert_eq!(method, HttpMethod::Post);
+        assert_eq!(HttpMethod::GET.to_string(), "GET");
+        assert_eq!(HttpMethod::POST.to_string(), "POST");
+        assert_eq!(HttpMethod::PUT.to_string(), "PUT");
+        assert_eq!(HttpMethod::DELETE.to_string(), "DELETE");
+        assert_eq!(HttpMethod::PATCH.to_string(), "PATCH");
     }
 
     #[test]
     fn api_request_serializes() {
         let req = ApiRequest {
-            method: HttpMethod::Get,
+            method: HttpMethod::GET,
             path: "/documents/abc123".to_string(),
             query_params: vec![("limit".to_string(), "10".to_string())],
+            headers: HeaderMap::new(),
             body: None,
             content_type: None,
         };
@@ -298,9 +316,10 @@ mod tests {
     #[test]
     fn api_request_with_json_body_serializes() {
         let req = ApiRequest {
-            method: HttpMethod::Post,
+            method: HttpMethod::POST,
             path: "/documents".to_string(),
             query_params: vec![],
+            headers: HeaderMap::new(),
             body: Some(RequestBody::Json(serde_json::json!({"name": "test"}))),
             content_type: Some("application/json".to_string()),
         };
@@ -338,8 +357,11 @@ mod tests {
     #[test]
     fn api_response_header_lookup_is_case_insensitive() {
         let response = ApiResponse {
-            status: 200,
-            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            status: StatusCode::OK,
+            headers: HeaderMap::from_iter([(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static("application/json"),
+            )]),
             body: ResponseBody::from("{}"),
         };
 
