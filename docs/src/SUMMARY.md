@@ -25,6 +25,7 @@
 
 - [CI](project/ci.md)
 - [Development](project/development.md)
+- [OpenAPI Updates](project/openapi-updates.md)
 - [Release](project/release.md)
 - [npm Wrapper](project/npm-wrapper.md)
 - [OAuth Proxy](project/oauth-proxy.md)

@@ -478,37 +478,6 @@ panic = "deny"
 
 See [Development > Testing Strategy](development.md#testing-strategy) and [Development > Coverage Requirements](development.md#coverage-requirements).
 
-## OpenAPI Spec Management
-
-The Onshape OpenAPI specification is stored locally for reference and code generation.
-
-| Setting | Value |
-| --------- | ------- |
-| Location | `crates/onshape-mcp-io/onshape-openapi.json` |
-| Source | `https://cad.onshape.com/api/v6/openapi` |
-| License | Apache 2.0 (see `crates/onshape-mcp-io/ONSHAPE-API-LICENSE`) |
-| Format | Pretty-printed JSON |
-
-### Update Workflow
-
-| Trigger | Schedule |
-| --------- | ---------- |
-| Nightly | 09:00 UTC |
-| Manual | workflow_dispatch |
-
-**Tooling:**
-
-- [peter-evans/create-pull-request](https://github.com/peter-evans/create-pull-request) — Creates/updates PR when spec changes
-- GitHub App token — Enables CI to run on auto-generated PRs
-
-**Behavior:**
-
-- Downloads latest spec from Onshape API
-- Pretty-prints JSON for readable diffs
-- Creates PR if changes detected (no PR on empty diff)
-- Auto-merge enabled (optional, requires branch protection)
-- Branch `automated/update-openapi-spec` deleted after merge
-
 ## Dependency Monitoring
 
 Dependabot is configured to monitor dependencies and create PRs for updates.
