@@ -13,7 +13,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use http::header::{ACCEPT, AUTHORIZATION};
+use http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use oauth2::AccessToken;
 use onshape_client_core::auth::{
     Credentials, basic_authorization_header_value, bearer_authorization_header_value,
@@ -217,21 +217,19 @@ impl OnshapeClient {
         match &request.body {
             Some(RequestBody::Json(value)) => {
                 // Serialize manually instead of using
-                // `reqwest::RequestBuilder::json()` so that the Content-Type
-                // header from the OpenAPI spec (e.g.
-                // "application/json;charset=UTF-8; qs=0.09") is preserved
-                // rather than being overwritten by `.json()`.
+                // `reqwest::RequestBuilder::json()` so caller-provided request
+                // metadata remains authoritative.  Normalize the spec media
+                // type before sending it because Onshape's OpenAPI uses
+                // server-side parameters such as JAX-RS `qs`.
                 let content_type = request
                     .content_type
                     .as_deref()
-                    .unwrap_or("application/json");
+                    .map_or("application/json", normalize_request_content_type);
                 let serialized =
                     serde_json::to_vec(value).map_err(|e| ClientError::ResponseBody {
                         message: format!("failed to serialize request body: {e}"),
                     })?;
-                builder = builder
-                    .header("Content-Type", content_type)
-                    .body(serialized);
+                builder = builder.header(CONTENT_TYPE, content_type).body(serialized);
             }
             Some(RequestBody::Multipart(multipart)) => {
                 // Build a multipart/form-data request.  `reqwest` sets the
@@ -277,6 +275,19 @@ impl OnshapeClient {
             headers,
             body: ResponseBody::from(body.to_vec()),
         })
+    }
+}
+
+fn normalize_request_content_type(content_type: &str) -> &str {
+    let media_type = content_type
+        .split_once(';')
+        .map_or(content_type, |(media_type, _)| media_type)
+        .trim();
+
+    if media_type.eq_ignore_ascii_case("application/json") {
+        "application/json"
+    } else {
+        media_type
     }
 }
 
@@ -495,6 +506,58 @@ mod tests {
             headers,
             body: None,
             content_type: None,
+        };
+
+        let response = client
+            .execute(&request)
+            .await
+            .expect("request should succeed");
+        server.join().expect("server thread should finish");
+
+        assert_eq!(response.status, http::StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn execute_normalizes_parameterized_json_content_type() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("should bind test server");
+        let address = listener
+            .local_addr()
+            .expect("should get test server address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("should accept request");
+            let request = read_request_headers(&mut stream);
+            assert!(
+                request.contains("content-type: application/json"),
+                "request should send normalized JSON Content-Type, got: {request}"
+            );
+            assert!(
+                !request.contains("qs=0.09"),
+                "request should not send server-side qs parameter, got: {request}"
+            );
+
+            stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("should write response");
+        });
+
+        let client = OnshapeClient::new(ClientConfig {
+            base_url: format!("http://{address}"),
+            auth: ClientAuthConfig::Basic {
+                credentials: test_credentials(),
+            },
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .expect("should create client");
+        let request = ApiRequest {
+            method: http::Method::POST,
+            path: "/json".to_string(),
+            query_params: Vec::new(),
+            headers: http::HeaderMap::new(),
+            body: Some(RequestBody::Json(serde_json::json!({"name": "test"}))),
+            content_type: Some("application/json;charset=UTF-8; qs=0.09".to_string()),
         };
 
         let response = client
