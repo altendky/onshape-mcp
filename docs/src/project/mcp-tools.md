@@ -279,11 +279,17 @@ Invoke an Onshape API endpoint with structured parameters. Path parameters are n
 | `body` | `any` | No | Request body (for POST/PUT/PATCH endpoints) |
 | `file_refs` | `array` | No | File content to inject into multipart or JSON request body fields |
 
-**Output:** The API response content.
+**Output:** The API response content. JSON responses are returned as JSON content;
+text responses are returned as text. Binary responses are returned as JSON metadata
+with `encoding: "base64"`, `byteLength`, `contentType` when present, and the
+base64-encoded `body`.
 
-`header_params` can set request headers such as `Accept`. Authentication remains
-executor-owned; caller-supplied `Authorization` headers are ignored and replaced
-with the configured Onshape credentials.
+`header_params` can set request headers such as `Accept`. If no `Accept` is
+provided, the server selects one from the endpoint's declared OpenAPI response
+media types, preferring JSON when available and otherwise using the declared
+binary/media type. Authentication remains executor-owned; caller-supplied
+`Authorization` headers are ignored and replaced with the configured Onshape
+credentials.
 
 **Effect Pattern:** This tool uses the effects-as-data pattern. The core crate validates the request and produces an `ApiRequest` effect, which the I/O layer executes. This keeps the core crate sans-IO.
 

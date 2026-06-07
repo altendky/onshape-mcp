@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use base64::Engine;
-use http::{HeaderMap, Method};
+use http::{HeaderMap, HeaderValue, Method, header::ACCEPT};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -117,6 +117,9 @@ pub struct EndpointDetail {
     /// Response schema (JSON Schema) for the success response.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_schema: Option<Value>,
+    /// Declared response media types for the success response.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub response_content_types: Vec<String>,
 }
 
 /// Filters for searching endpoints.
@@ -148,6 +151,7 @@ struct ParsedEndpoint {
     request_body_schema: Option<Value>,
     request_body_content_type: Option<String>,
     response_schema: Option<Value>,
+    response_content_types: Vec<String>,
     /// Lowercased text for search matching (operationId + path + summary + description + tags).
     search_text: String,
 }
@@ -428,6 +432,7 @@ impl OpenApiSpec {
             request_body_schema: ep.request_body_schema.clone(),
             request_body_content_type: ep.request_body_content_type.clone(),
             response_schema: ep.response_schema.clone(),
+            response_content_types: ep.response_content_types.clone(),
         })
     }
 
@@ -523,11 +528,21 @@ impl OpenApiSpec {
             None => None,
         };
 
+        let mut headers = header_params.clone();
+        if !headers.contains_key(ACCEPT)
+            && let Some(accept) = Self::preferred_accept_header(&ep.response_content_types)
+        {
+            let value = HeaderValue::from_str(&accept).map_err(|e| OpenApiError::InvalidSpec {
+                reason: format!("invalid response media type for Accept header: {e}"),
+            })?;
+            headers.insert(ACCEPT, value);
+        }
+
         Ok(ApiRequest {
             method: ep.method.clone(),
             path: resolved_path,
             query_params: query_params_vec,
-            headers: header_params.clone(),
+            headers,
             body: request_body,
             content_type: ep.request_body_content_type.clone(),
         })
@@ -904,6 +919,7 @@ impl OpenApiSpec {
         let (has_request_body, request_body_schema, request_body_content_type) =
             Self::parse_request_body(detail, components);
         let response_schema = Self::parse_response_schema(detail, components);
+        let response_content_types = Self::parse_response_content_types(detail);
 
         // Build search text
         let search_text = format!(
@@ -930,6 +946,7 @@ impl OpenApiSpec {
             request_body_schema,
             request_body_content_type,
             response_schema,
+            response_content_types,
             search_text,
         }
     }
@@ -1028,13 +1045,7 @@ impl OpenApiSpec {
     }
 
     fn parse_response_schema(detail: &Value, components: &HashMap<String, Value>) -> Option<Value> {
-        let responses = detail.get("responses")?.as_object()?;
-
-        // Look for 200 or 2xx response
-        let response = responses
-            .get("200")
-            .or_else(|| responses.get("201"))
-            .or_else(|| responses.get("2XX"))?;
+        let response = Self::select_success_response(detail)?;
 
         let content = response.get("content")?.as_object()?;
         // Prefer application/json (including variants); fall back to the
@@ -1044,6 +1055,41 @@ impl OpenApiSpec {
 
         let resolved = Self::resolve_ref_shallow(schema, components);
         Some(Self::annotate_schema_properties(&resolved, components))
+    }
+
+    fn parse_response_content_types(detail: &Value) -> Vec<String> {
+        let Some(response) = Self::select_success_response(detail) else {
+            return Vec::new();
+        };
+        let Some(content) = response.get("content").and_then(Value::as_object) else {
+            return Vec::new();
+        };
+
+        content.keys().cloned().collect()
+    }
+
+    fn select_success_response(detail: &Value) -> Option<&Value> {
+        let responses = detail.get("responses")?.as_object()?;
+
+        responses
+            .get("200")
+            .or_else(|| responses.get("201"))
+            .or_else(|| responses.get("2XX"))
+            .or_else(|| responses.get("default"))
+    }
+
+    fn preferred_accept_header(response_content_types: &[String]) -> Option<String> {
+        response_content_types
+            .iter()
+            .find(|content_type| content_type.starts_with("application/json"))
+            .map(|_| "application/json".to_string())
+            .or_else(|| {
+                response_content_types
+                    .iter()
+                    .find(|content_type| content_type.as_str() == "application/octet-stream")
+                    .cloned()
+            })
+            .or_else(|| response_content_types.first().cloned())
     }
 
     /// Pick the `application/json` (or `application/json;…` variant) entry from
@@ -1611,6 +1657,7 @@ mod tests {
         assert_eq!(detail.parameters.len(), 2);
         assert!(!detail.has_request_body);
         assert!(detail.response_schema.is_some());
+        assert_eq!(detail.response_content_types, vec!["application/json"]);
     }
 
     #[test]
@@ -1791,6 +1838,73 @@ mod tests {
 
         assert_eq!(request.path, "/downloads/doc1");
         assert_eq!(request.headers["If-Match"], "revision-1");
+    }
+
+    #[test]
+    fn build_request_sets_accept_from_binary_default_response() {
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "servers": [{ "url": "https://example.com/api/v1" }],
+            "paths": {
+                "/thumbnail": {
+                    "get": {
+                        "operationId": "getThumbnail",
+                        "responses": {
+                            "default": {
+                                "description": "default response",
+                                "content": {
+                                    "application/octet-stream": {
+                                        "schema": { "type": "object" }
+                                    },
+                                    "image/*": {
+                                        "schema": { "type": "object" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }))
+        .expect("should parse");
+
+        let detail = spec.explain("getThumbnail").expect("should explain");
+        assert_eq!(
+            detail.response_content_types,
+            vec!["application/octet-stream", "image/*"]
+        );
+        assert!(detail.response_schema.is_some());
+
+        let request = spec
+            .build_request(
+                "getThumbnail",
+                &HashMap::new(),
+                &HashMap::new(),
+                &HeaderMap::new(),
+                None,
+            )
+            .expect("should build");
+
+        assert_eq!(request.headers[ACCEPT], "application/octet-stream");
+    }
+
+    #[test]
+    fn build_request_preserves_explicit_accept_header() {
+        let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, "image/png".parse().expect("valid header"));
+
+        let request = spec
+            .build_request(
+                "getDocuments",
+                &HashMap::new(),
+                &HashMap::new(),
+                &headers,
+                None,
+            )
+            .expect("should build");
+
+        assert_eq!(request.headers[ACCEPT], "image/png");
     }
 
     #[test]
