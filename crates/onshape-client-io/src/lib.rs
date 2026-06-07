@@ -279,15 +279,16 @@ impl OnshapeClient {
 }
 
 fn normalize_request_content_type(content_type: &str) -> &str {
-    let media_type = content_type
+    let trimmed = content_type.trim();
+    let media_type = trimmed
         .split_once(';')
-        .map_or(content_type, |(media_type, _)| media_type)
+        .map_or(trimmed, |(media_type, _)| media_type)
         .trim();
 
     if media_type.eq_ignore_ascii_case("application/json") {
         "application/json"
     } else {
-        media_type
+        trimmed
     }
 }
 
@@ -402,6 +403,30 @@ mod tests {
         let client = OnshapeClient::new(test_oauth_config()).expect("should create client");
         #[allow(clippy::redundant_clone)]
         let _cloned = client.clone();
+    }
+
+    #[test]
+    fn normalize_request_content_type_strips_json_parameters() {
+        assert_eq!(
+            normalize_request_content_type("application/json;charset=UTF-8; qs=0.09"),
+            "application/json"
+        );
+        assert_eq!(
+            normalize_request_content_type(" Application/JSON; qs=0.09 "),
+            "application/json"
+        );
+    }
+
+    #[test]
+    fn normalize_request_content_type_preserves_non_json_parameters() {
+        assert_eq!(
+            normalize_request_content_type("application/vnd.onshape+json; charset=utf-8"),
+            "application/vnd.onshape+json; charset=utf-8"
+        );
+        assert_eq!(
+            normalize_request_content_type(" application/octet-stream; charset=utf-8 "),
+            "application/octet-stream; charset=utf-8"
+        );
     }
 
     #[tokio::test]
