@@ -1086,8 +1086,8 @@ impl OpenApiSpec {
             .or_else(|| {
                 response_content_types
                     .iter()
-                    .find(|content_type| content_type.as_str() == "application/octet-stream")
-                    .cloned()
+                    .find(|content_type| content_type.starts_with("application/octet-stream"))
+                    .map(|_| "application/octet-stream".to_string())
             })
             .or_else(|| response_content_types.first().cloned())
     }
@@ -1878,6 +1878,47 @@ mod tests {
         let request = spec
             .build_request(
                 "getThumbnail",
+                &HashMap::new(),
+                &HashMap::new(),
+                &HeaderMap::new(),
+                None,
+            )
+            .expect("should build");
+
+        assert_eq!(request.headers[ACCEPT], "application/octet-stream");
+    }
+
+    #[test]
+    fn build_request_sets_accept_from_parameterized_binary_response() {
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "servers": [{ "url": "https://example.com/api/v1" }],
+            "paths": {
+                "/download": {
+                    "get": {
+                        "operationId": "downloadArtifact",
+                        "responses": {
+                            "default": {
+                                "description": "default response",
+                                "content": {
+                                    "image/*": {
+                                        "schema": { "type": "object" }
+                                    },
+                                    "application/octet-stream;charset=utf-8": {
+                                        "schema": { "type": "object" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }))
+        .expect("should parse");
+
+        let request = spec
+            .build_request(
+                "downloadArtifact",
                 &HashMap::new(),
                 &HashMap::new(),
                 &HeaderMap::new(),
