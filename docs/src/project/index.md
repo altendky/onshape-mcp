@@ -23,8 +23,9 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 
 ### Infrastructure
 
-- [CI](ci.md) — GitHub settings, workflows, coverage, OpenAPI management
+- [CI](ci.md) — GitHub settings, workflows, coverage
 - [Development](development.md) — Local development, pre-commit hooks, testing
+- [OpenAPI Updates](openapi-updates.md) — Manual review checklist for vendored spec updates
 - [Release](release.md) — Distribution, versioning, publishing
 - [npm Wrapper](npm-wrapper.md) — npm package design for `npx` installation
 - [OAuth Proxy](oauth-proxy.md) — Cloudflare Worker token exchange proxy for OAuth2
