@@ -198,15 +198,22 @@ pub(super) fn wvm_element_path(kind: &str, target: WvmElementRef<'_>, suffix: &s
 }
 
 pub(super) fn encode_path_segment(value: &str) -> String {
-    value
-        .bytes()
-        .map(|byte| match byte {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut output = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                String::from(byte as char)
+                output.push(char::from(byte));
             }
-            _ => format!("%{byte:02X}"),
-        })
-        .collect()
+            _ => {
+                output.push('%');
+                output.push(char::from(HEX[usize::from(byte >> 4)]));
+                output.push(char::from(HEX[usize::from(byte & 0x0F)]));
+            }
+        }
+    }
+    output
 }
 
 #[cfg(test)]
@@ -215,6 +222,18 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+
+    #[test]
+    fn encode_path_segment_percent_encodes_reserved_and_utf8_bytes() {
+        for (input, expected) in [
+            ("", ""),
+            ("AZaz09-._~", "AZaz09-._~"),
+            ("/ +%", "%2F%20%2B%25"),
+            ("é", "%C3%A9"),
+        ] {
+            assert_eq!(encode_path_segment(input), expected);
+        }
+    }
 
     #[test]
     fn json_post_rejects_non_object_bodies() {
