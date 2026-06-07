@@ -79,9 +79,10 @@ The first three columns should be orthonormal with a positive determinant.
 
 `getElementThumbnail` returns metadata with URLs to pre-rendered thumbnails at fixed
 sizes (70×40, 300×170, 300×300, 600×340). The actual image endpoint
-`getElementThumbnailWithSize` returns raw `image/png` binary, which causes **HTTP 406**
-through JSON-only API tools that send `Accept: application/json`. See
-[#123](https://github.com/altendky/onshape-mcp/issues/123) for tracking.
+`getElementThumbnailWithSize` returns raw image/binary data. Through
+`onshape_api_call`, the server selects a non-JSON `Accept` header from the OpenAPI
+response media types when available, and binary responses are returned as JSON
+metadata containing a base64-encoded `body`.
 
 ### 3D export endpoints
 

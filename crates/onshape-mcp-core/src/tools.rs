@@ -4435,6 +4435,55 @@ mod tests {
     }
 
     #[test]
+    fn api_call_sets_binary_accept_from_response_content_type() {
+        let spec = OpenApiSpec::from_json(
+            r#"{
+                "openapi": "3.0.1",
+                "info": { "title": "Test API", "version": "1.0" },
+                "servers": [{ "url": "https://example.com/api/v1" }],
+                "paths": {
+                    "/thumbnail": {
+                        "get": {
+                            "operationId": "getThumbnail",
+                            "responses": {
+                                "default": {
+                                    "content": {
+                                        "application/octet-stream": { "schema": { "type": "object" } },
+                                        "image/*": { "schema": { "type": "object" } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "components": { "schemas": {} }
+            }"#,
+        )
+        .expect("test spec should parse");
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("getThumbnail".to_string()),
+        );
+
+        let effect = call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+
+        let (request, continuation) = assert_api_request(effect);
+        assert!(matches!(continuation, Continuation::FormatApiResponse));
+        assert_eq!(
+            request.headers[http::header::ACCEPT],
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
     fn api_call_invalid_header_name_returns_error() {
         let spec = test_spec();
         let auth = not_configured();
