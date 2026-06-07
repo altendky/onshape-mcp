@@ -61,6 +61,52 @@ impl<'a> WorkspaceVersion<'a> {
     }
 }
 
+/// Workspace, version, or microversion selector for endpoints whose path uses
+/// `{wvm}/{wvmid}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceVersionMicroversion<'a> {
+    /// Workspace selector, serialized in paths as `w/{id}`.
+    Workspace(&'a str),
+    /// Version selector, serialized in paths as `v/{id}`.
+    Version(&'a str),
+    /// Microversion selector, serialized in paths as `m/{id}`.
+    Microversion(&'a str),
+}
+
+impl<'a> WorkspaceVersionMicroversion<'a> {
+    /// Create a workspace selector.
+    #[must_use]
+    pub const fn workspace(id: &'a str) -> Self {
+        Self::Workspace(id)
+    }
+
+    /// Create a version selector.
+    #[must_use]
+    pub const fn version(id: &'a str) -> Self {
+        Self::Version(id)
+    }
+
+    /// Create a microversion selector.
+    #[must_use]
+    pub const fn microversion(id: &'a str) -> Self {
+        Self::Microversion(id)
+    }
+
+    const fn token(self) -> &'static str {
+        match self {
+            Self::Workspace(_) => "w",
+            Self::Version(_) => "v",
+            Self::Microversion(_) => "m",
+        }
+    }
+
+    const fn id(self) -> &'a str {
+        match self {
+            Self::Workspace(id) | Self::Version(id) | Self::Microversion(id) => id,
+        }
+    }
+}
+
 /// Common document-element target for Part Studio and Assembly export helpers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ElementRef<'a> {
@@ -70,6 +116,115 @@ pub struct ElementRef<'a> {
     pub workspace_or_version: WorkspaceVersion<'a>,
     /// Element ID.
     pub element_id: &'a str,
+}
+
+/// Advanced export options shared by typed export request bodies.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAdvancedParams<'a> {
+    /// URL-encoded configuration query string, separated by `;` for multiple
+    /// values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<&'a str>,
+}
+
+/// Mesh tessellation options for typed mesh export request bodies.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportMeshParams<'a> {
+    /// Maximum angular deviation between analytical surfaces and triangulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub angular_tolerance: Option<f64>,
+    /// Maximum distance deviation between analytical surfaces and triangulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance_tolerance: Option<f64>,
+    /// Maximum triangle edge length.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_chord_length: Option<f64>,
+    /// Export resolution, such as `fine`, `medium`, or `coarse`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<&'a str>,
+    /// Export unit, using Onshape's `GBTExportUnit` wire value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<&'a str>,
+}
+
+/// Typed request body for glTF export endpoints.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GltfExportRequestBody<'a> {
+    /// Advanced export options.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advanced_params: Option<ExportAdvancedParams<'a>>,
+    /// The name of the exported file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination_name: Option<&'a str>,
+    /// Whether to exclude hidden parts from export.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude_hidden_entities: Option<bool>,
+    /// Whether parts should be exported as a group or individually in a zip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grouping: Option<bool>,
+    /// Whether topology IDs should be exported as attributes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_export_ids: Option<bool>,
+    /// Rotate model from Z-axis-up orientation to Y-axis-up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_y_axis_up: Option<bool>,
+    /// Mesh tessellation options.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_params: Option<ExportMeshParams<'a>>,
+    /// Send notification to the user client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notify_user: Option<bool>,
+    /// Create a blob with exported file in the source document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store_in_document: Option<bool>,
+    /// Automatically download a translated file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_auto_download: Option<bool>,
+}
+
+/// Typed request body for STEP export endpoints.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepExportRequestBody<'a> {
+    /// Advanced export options.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advanced_params: Option<ExportAdvancedParams<'a>>,
+    /// The name of the exported file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination_name: Option<&'a str>,
+    /// Whether to exclude hidden parts from export.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude_hidden_entities: Option<bool>,
+    /// Whether parts should be exported as a group or individually in a zip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grouping: Option<bool>,
+    /// Whether topology IDs should be exported as attributes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_export_ids: Option<bool>,
+    /// Rotate model from Z-axis-up orientation to Y-axis-up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_y_axis_up: Option<bool>,
+    /// Send notification to the user client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notify_user: Option<bool>,
+    /// Original geometry processing mode before STEP translation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_parasolid_preprocessing_option: Option<&'a str>,
+    /// Export unit, using Onshape's `GBTExportUnit` wire value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_unit: Option<&'a str>,
+    /// STEP version string, such as `AP242`, `AP203`, or `AP214`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_version_string: Option<&'a str>,
+    /// Create a blob with exported file in the source document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store_in_document: Option<bool>,
+    /// Automatically download a translated file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_auto_download: Option<bool>,
 }
 
 impl<'a> ElementRef<'a> {
@@ -86,6 +241,49 @@ impl<'a> ElementRef<'a> {
             element_id,
         }
     }
+}
+
+/// Document-element target for endpoints whose path uses `{wvm}/{wvmid}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WvmElementRef<'a> {
+    /// Document ID.
+    pub document_id: &'a str,
+    /// Workspace, version, or microversion selector.
+    pub workspace_version_or_microversion: WorkspaceVersionMicroversion<'a>,
+    /// Element ID.
+    pub element_id: &'a str,
+}
+
+impl<'a> WvmElementRef<'a> {
+    /// Create a document-element reference for `{wvm}/{wvmid}` endpoints.
+    #[must_use]
+    pub const fn new(
+        document_id: &'a str,
+        workspace_version_or_microversion: WorkspaceVersionMicroversion<'a>,
+        element_id: &'a str,
+    ) -> Self {
+        Self {
+            document_id,
+            workspace_version_or_microversion,
+            element_id,
+        }
+    }
+}
+
+/// Optional query parameters for [`get_configuration`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GetConfigurationOptions<'a> {
+    /// Linked document ID used when accessing linked version data.
+    pub link_document_id: Option<&'a str>,
+}
+
+/// Optional query parameters for [`encode_configuration_map`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EncodeConfigurationMapOptions<'a> {
+    /// Version ID to use while encoding the configuration map.
+    pub version_id: Option<&'a str>,
+    /// Linked document ID used when accessing linked version data.
+    pub link_document_id: Option<&'a str>,
 }
 
 /// Minimal parsed response for `BTTranslationRequestInfo`.
@@ -316,6 +514,65 @@ pub fn download_external_data(document_id: &str, foreign_id: &str) -> ApiRequest
     }
 }
 
+/// Build a configuration definition request.
+///
+/// `OpenAPI` operation ID: `getConfiguration`.
+#[must_use]
+pub fn get_configuration(
+    target: WvmElementRef<'_>,
+    options: GetConfigurationOptions<'_>,
+) -> ApiRequest {
+    let mut query_params = Vec::new();
+    if let Some(link_document_id) = options.link_document_id {
+        query_params.push(("linkDocumentId".to_string(), link_document_id.to_string()));
+    }
+
+    ApiRequest {
+        method: Method::GET,
+        path: wvm_element_path("elements", target, "/configuration"),
+        query_params,
+        headers: HeaderMap::new(),
+        body: None,
+        content_type: None,
+    }
+}
+
+/// Build a configuration encoding request.
+///
+/// `OpenAPI` operation ID: `encodeConfigurationMap`.
+///
+/// # Errors
+///
+/// Returns an error if `params` cannot be serialized as a JSON object.
+pub fn encode_configuration_map<P: Serialize + ?Sized>(
+    document_id: &str,
+    element_id: &str,
+    options: EncodeConfigurationMapOptions<'_>,
+    params: &P,
+) -> Result<ApiRequest, Error> {
+    let mut request = json_post(
+        format!(
+            "/elements/d/{}/e/{}/configurationencodings",
+            encode_path_segment(document_id),
+            encode_path_segment(element_id)
+        ),
+        params,
+    )?;
+
+    if let Some(version_id) = options.version_id {
+        request
+            .query_params
+            .push(("versionId".to_string(), version_id.to_string()));
+    }
+    if let Some(link_document_id) = options.link_document_id {
+        request
+            .query_params
+            .push(("linkDocumentId".to_string(), link_document_id.to_string()));
+    }
+
+    Ok(request)
+}
+
 /// Parse a translation request info response.
 ///
 /// Response schema: `BTTranslationRequestInfo`.
@@ -352,6 +609,17 @@ fn element_path(kind: &str, target: ElementRef<'_>, suffix: &str) -> String {
         encode_path_segment(target.document_id),
         target.workspace_or_version.token(),
         encode_path_segment(target.workspace_or_version.id()),
+        encode_path_segment(target.element_id),
+        suffix
+    )
+}
+
+fn wvm_element_path(kind: &str, target: WvmElementRef<'_>, suffix: &str) -> String {
+    format!(
+        "/{kind}/d/{}/{}/{}/e/{}{}",
+        encode_path_segment(target.document_id),
+        target.workspace_version_or_microversion.token(),
+        encode_path_segment(target.workspace_version_or_microversion.id()),
         encode_path_segment(target.element_id),
         suffix
     )
@@ -413,6 +681,106 @@ mod tests {
             store_in_document: false,
             destination_name: "export-name",
         }
+    }
+
+    #[test]
+    fn gltf_export_request_body_serializes_golden_json() {
+        let body = GltfExportRequestBody {
+            advanced_params: Some(ExportAdvancedParams {
+                configuration: Some("size%3Dlarge"),
+            }),
+            destination_name: Some("preview-model"),
+            exclude_hidden_entities: Some(true),
+            grouping: Some(false),
+            include_export_ids: Some(true),
+            is_y_axis_up: Some(true),
+            mesh_params: Some(ExportMeshParams {
+                angular_tolerance: Some(0.001),
+                distance_tolerance: Some(0.002),
+                maximum_chord_length: Some(0.01),
+                resolution: Some("fine"),
+                unit: Some("METER"),
+            }),
+            notify_user: Some(false),
+            store_in_document: Some(false),
+            trigger_auto_download: Some(false),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&body).expect("body should serialize"),
+            json!({
+                "advancedParams": {
+                    "configuration": "size%3Dlarge"
+                },
+                "destinationName": "preview-model",
+                "excludeHiddenEntities": true,
+                "grouping": false,
+                "includeExportIds": true,
+                "isYAxisUp": true,
+                "meshParams": {
+                    "angularTolerance": 0.001,
+                    "distanceTolerance": 0.002,
+                    "maximumChordLength": 0.01,
+                    "resolution": "fine",
+                    "unit": "METER"
+                },
+                "notifyUser": false,
+                "storeInDocument": false,
+                "triggerAutoDownload": false
+            })
+        );
+    }
+
+    #[test]
+    fn step_export_request_body_serializes_golden_json() {
+        let body = StepExportRequestBody {
+            advanced_params: Some(ExportAdvancedParams {
+                configuration: Some("size%3Dlarge"),
+            }),
+            destination_name: Some("step-model"),
+            exclude_hidden_entities: Some(true),
+            grouping: Some(true),
+            include_export_ids: Some(false),
+            is_y_axis_up: Some(false),
+            notify_user: Some(false),
+            step_parasolid_preprocessing_option: Some("NO_PRE_PROCESSING"),
+            step_unit: Some("MILLIMETER"),
+            step_version_string: Some("AP242"),
+            store_in_document: Some(false),
+            trigger_auto_download: Some(false),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&body).expect("body should serialize"),
+            json!({
+                "advancedParams": {
+                    "configuration": "size%3Dlarge"
+                },
+                "destinationName": "step-model",
+                "excludeHiddenEntities": true,
+                "grouping": true,
+                "includeExportIds": false,
+                "isYAxisUp": false,
+                "notifyUser": false,
+                "stepParasolidPreprocessingOption": "NO_PRE_PROCESSING",
+                "stepUnit": "MILLIMETER",
+                "stepVersionString": "AP242",
+                "storeInDocument": false,
+                "triggerAutoDownload": false
+            })
+        );
+    }
+
+    #[test]
+    fn typed_export_request_bodies_omit_unset_fields() {
+        assert_eq!(
+            serde_json::to_value(GltfExportRequestBody::default()).expect("body should serialize"),
+            json!({})
+        );
+        assert_eq!(
+            serde_json::to_value(StepExportRequestBody::default()).expect("body should serialize"),
+            json!({})
+        );
     }
 
     #[test]
@@ -533,6 +901,118 @@ mod tests {
         assert_eq!(
             request.path,
             "/partstudios/d/doc/w/workspace/e/element/translations"
+        );
+    }
+
+    #[test]
+    fn get_configuration_workspace_builds_golden_request_without_query() {
+        let target = WvmElementRef::new(
+            "doc",
+            WorkspaceVersionMicroversion::workspace("workspace"),
+            "element",
+        );
+
+        let request = get_configuration(target, GetConfigurationOptions::default());
+
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(
+            request.path,
+            "/elements/d/doc/w/workspace/e/element/configuration"
+        );
+        assert!(request.query_params.is_empty());
+        assert!(request.body.is_none());
+        assert!(request.content_type.is_none());
+    }
+
+    #[test]
+    fn get_configuration_version_builds_golden_request_with_query() {
+        let target = WvmElementRef::new(
+            "doc",
+            WorkspaceVersionMicroversion::version("version"),
+            "element",
+        );
+
+        let request = get_configuration(
+            target,
+            GetConfigurationOptions {
+                link_document_id: Some("linked-doc"),
+            },
+        );
+
+        assert_eq!(
+            request.path,
+            "/elements/d/doc/v/version/e/element/configuration"
+        );
+        assert_eq!(
+            request.query_params,
+            [("linkDocumentId".to_string(), "linked-doc".to_string())]
+        );
+    }
+
+    #[test]
+    fn get_configuration_microversion_percent_encodes_selector_ids() {
+        let target = WvmElementRef::new(
+            "doc/1",
+            WorkspaceVersionMicroversion::microversion("micro+1"),
+            "elem 1",
+        );
+
+        let request = get_configuration(target, GetConfigurationOptions::default());
+
+        assert_eq!(
+            request.path,
+            "/elements/d/doc%2F1/m/micro%2B1/e/elem%201/configuration"
+        );
+    }
+
+    #[test]
+    fn encode_configuration_map_omits_none_query_params() {
+        let request = encode_configuration_map(
+            "doc",
+            "element",
+            EncodeConfigurationMapOptions::default(),
+            &json!({ "parameters": [] }),
+        )
+        .expect("request should build");
+
+        assert_eq!(request.method, Method::POST);
+        assert_eq!(
+            request.path,
+            "/elements/d/doc/e/element/configurationencodings"
+        );
+        assert!(request.query_params.is_empty());
+        assert_eq!(request.content_type.as_deref(), Some(JSON_CONTENT_TYPE));
+        assert!(
+            request
+                .body
+                .and_then(|body| body.as_json().cloned())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn encode_configuration_map_includes_query_params_in_stable_order() {
+        let request = encode_configuration_map(
+            "doc/1",
+            "elem+1",
+            EncodeConfigurationMapOptions {
+                version_id: Some("version"),
+                link_document_id: Some("linked-doc"),
+            },
+            &json!({ "parameters": [] }),
+        )
+        .expect("request should build");
+
+        assert_eq!(
+            request.path,
+            "/elements/d/doc%2F1/e/elem%2B1/configurationencodings"
+        );
+        assert_eq!(
+            request.query_params,
+            [
+                ("versionId".to_string(), "version".to_string()),
+                ("linkDocumentId".to_string(), "linked-doc".to_string()),
+            ]
         );
     }
 
