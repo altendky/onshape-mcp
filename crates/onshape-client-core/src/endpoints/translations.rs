@@ -4,6 +4,54 @@ use crate::endpoints::shared::{ElementRef, Error, element_path, encode_path_segm
 use crate::request::{ApiRequest, ApiResponse};
 use http::{HeaderMap, Method};
 
+/// Mesh tessellation options for generic translation request bodies.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslationMeshParams<'a> {
+    /// Maximum angular deviation between analytical surfaces and triangulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub angular_tolerance: Option<f64>,
+    /// Maximum distance deviation between analytical surfaces and triangulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance_tolerance: Option<f64>,
+    /// Maximum triangle edge length.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_chord_length: Option<f64>,
+    /// Export resolution, such as `fine`, `medium`, or `coarse`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<&'a str>,
+    /// Export unit, using Onshape's `GBTExportUnit` wire value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<&'a str>,
+}
+
+/// Typed request body for generic mesh translation endpoints, including 3MF.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshTranslationRequestBody<'a> {
+    /// The name of the exported file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination_name: Option<&'a str>,
+    /// Whether to exclude hidden parts from export.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude_hidden_entities: Option<bool>,
+    /// The name of the file format, such as `3MF`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format_name: Option<&'a str>,
+    /// Mesh tessellation options. These serialize as flat translation fields.
+    #[serde(flatten)]
+    pub mesh_params: TranslationMeshParams<'a>,
+    /// Send notification to the user client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notify_user: Option<bool>,
+    /// Create a blob with exported file in the source document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store_in_document: Option<bool>,
+    /// Automatically download a translated file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_auto_download: Option<bool>,
+}
+
 /// Minimal parsed response for `BTTranslationRequestInfo`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -225,6 +273,86 @@ mod tests {
             "/partstudios/d/doc%2F1/v/ver%201/e/elem%2B1/translations",
             "STL",
         );
+    }
+
+    #[test]
+    fn mesh_translation_request_body_serializes_golden_json() {
+        let body = MeshTranslationRequestBody {
+            destination_name: Some("coarse-model"),
+            exclude_hidden_entities: Some(true),
+            format_name: Some("3MF"),
+            mesh_params: TranslationMeshParams {
+                angular_tolerance: Some(0.5),
+                distance_tolerance: Some(0.01),
+                maximum_chord_length: Some(0.1),
+                resolution: Some("coarse"),
+                unit: Some("MILLIMETER"),
+            },
+            notify_user: Some(false),
+            store_in_document: Some(false),
+            trigger_auto_download: Some(false),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&body).expect("body should serialize"),
+            json!({
+                "angularTolerance": 0.5,
+                "destinationName": "coarse-model",
+                "distanceTolerance": 0.01,
+                "excludeHiddenEntities": true,
+                "formatName": "3MF",
+                "maximumChordLength": 0.1,
+                "notifyUser": false,
+                "resolution": "coarse",
+                "storeInDocument": false,
+                "triggerAutoDownload": false,
+                "unit": "MILLIMETER"
+            })
+        );
+    }
+
+    #[test]
+    fn typed_mesh_translation_body_omits_unset_fields() {
+        assert_eq!(
+            serde_json::to_value(MeshTranslationRequestBody::default())
+                .expect("body should serialize"),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn create_part_studio_translation_accepts_typed_mesh_body() {
+        let body = MeshTranslationRequestBody {
+            destination_name: Some("export-name"),
+            format_name: Some("3MF"),
+            mesh_params: TranslationMeshParams {
+                angular_tolerance: Some(0.5),
+                distance_tolerance: Some(0.01),
+                maximum_chord_length: Some(0.1),
+                resolution: Some("coarse"),
+                unit: Some("MILLIMETER"),
+            },
+            notify_user: Some(false),
+            store_in_document: Some(false),
+            ..MeshTranslationRequestBody::default()
+        };
+
+        let request =
+            create_part_studio_translation(target(), &body).expect("request should build");
+
+        assert_json_post(
+            &request,
+            "/partstudios/d/doc%2F1/v/ver%201/e/elem%2B1/translations",
+            "3MF",
+        );
+        let body = request
+            .body
+            .as_ref()
+            .and_then(RequestBody::as_json)
+            .expect("request should have a JSON body");
+        assert_eq!(body["angularTolerance"], 0.5);
+        assert_eq!(body["resolution"], "coarse");
+        assert_eq!(body["unit"], "MILLIMETER");
     }
 
     #[test]

@@ -22,7 +22,10 @@ pub use external_data::download_external_data;
 pub use shared::{
     ElementRef, Error, WorkspaceVersion, WorkspaceVersionMicroversion, WvmElementRef,
 };
-pub use translations::{TranslationRequestInfo, TranslationRequestState};
+pub use translations::{
+    MeshTranslationRequestBody, TranslationMeshParams, TranslationRequestInfo,
+    TranslationRequestState,
+};
 pub use translations::{
     create_assembly_translation, create_part_studio_translation, get_all_translator_formats,
     get_translation, parse_translation_request_info,
