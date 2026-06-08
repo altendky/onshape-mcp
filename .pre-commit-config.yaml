@@ -86,6 +86,13 @@ repos:
         files: (^mise\.toml$|^mise\.lock$)
         pass_filenames: false
 
+      - id: mdbook-build
+        name: mdbook build
+        entry: mise exec -- mdbook build docs
+        language: system
+        files: ^docs/
+        pass_filenames: false
+
       - id: sync-versions
         name: sync versions
         entry: node scripts/sync-versions.js

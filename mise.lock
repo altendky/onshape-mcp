@@ -132,6 +132,10 @@ url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.6/ca
 version = "0.24.0"
 backend = "cargo:lychee"
 
+[[tools."cargo:mdbook"]]
+version = "0.5.3"
+backend = "cargo:mdbook"
+
 [[tools."github:nextest-rs/nextest"]]
 version = "0.9.137"
 backend = "github:nextest-rs/nextest"
