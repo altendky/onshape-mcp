@@ -1,0 +1,7 @@
+[book]
+title = "Onshape MCP"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
