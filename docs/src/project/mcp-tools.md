@@ -25,7 +25,7 @@ All MCP tools use the `onshape_` prefix to avoid collisions with other MCP serve
 | Transport | Priority | Notes |
 | ----------- | ---------- | ------- |
 | stdio | P0 | Primary MCP transport |
-| HTTP/SSE | P1 | Server-Sent Events |
+| Streamable HTTP | Experimental | Available for self-hosting; not broadly verified; no publicly offered endpoint; ChatGPT failure tracked in [#546](https://github.com/altendky/onshape-mcp/issues/546) |
 | WebSocket | P2 | Bidirectional |
 
 ## Permission Model
@@ -91,8 +91,8 @@ Start an OAuth authorization flow. Returns a URL to open in your browser. After 
 
 | Parameter | Type | Required | Description |
 | ----------- | -------- | ---------- | ------------- |
-| `mode` | `string` | No | Login mode: `"proxy"` (default) or `"direct"` |
-| `proxy_url` | `string` | No | OAuth proxy URL override (proxy mode only) |
+| `mode` | `string` | No | Login mode: `"direct"` (default) or `"proxy"` |
+| `proxy_url` | `string` | Proxy only | Explicit nonblank URL of a self-hosted OAuth proxy |
 | `client_id` | `string` | No | OAuth 2.0 client ID (required for direct mode) |
 | `client_secret` | `string` | No | OAuth 2.0 client secret (required for direct mode) |
 
@@ -102,10 +102,14 @@ Start an OAuth authorization flow. Returns a URL to open in your browser. After 
 
 **Modes:**
 
-- **Proxy mode** (default): Fetches the `client_id` from the proxy's `/config` endpoint. The proxy holds the client secret and handles the token exchange.
-- **Direct mode**: Requires `client_id` and `client_secret`. Exchanges the authorization code directly with Onshape's token endpoint.
+- **Direct mode** (default): Requires `client_id` and `client_secret` from the user's Onshape OAuth application. Exchanges the authorization code directly with Onshape's token endpoint.
+- **Proxy mode**: Requires an explicit self-hosted proxy URL. Fetches the `client_id` from its `/config` endpoint and delegates token exchange. No public proxy is provided.
 
-The tool prevents concurrent login attempts — only one flow can be active at a time.
+The tool prevents concurrent login attempts — only one flow can be active at a
+time. It is intended for local stdio use. HTTP clients authenticate while
+connecting to the remote server instead. Direct secret arguments remain in the
+tool interface pending [#548](https://github.com/altendky/onshape-mcp/issues/548),
+so MCP clients should not retain them in transcripts or logs.
 
 ## Onshape API Tools
 

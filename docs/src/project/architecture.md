@@ -29,23 +29,29 @@
 See [Data Flow](data-flow.md) for sequence diagrams showing how requests,
 authentication, and token refresh flow through each operating mode.
 
-## External Services
+## Optional Self-Hosted Services
 
 ```text
 ┌──────────────────────────────────────────────────────────────────┐
-│                     OAuth Token Exchange Proxy                    │
+│                  Self-Hosted OAuth Token Exchange Proxy           │
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │              workers/oauth-proxy (TypeScript)               │  │
 │  │      Cloudflare Worker — forwards token requests to         │  │
 │  │      Onshape with client_secret, returns responses          │  │
 │  └────────────────────────────────────────────────────────────┘  │
-│  onshape-oauth-proxy.fstab.workers.dev                             │
+│  https://oauth-proxy.example.com                                  │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The OAuth proxy is a Cloudflare Worker, separate from the Rust workspace.
-It holds the OAuth2 client secret and exposes `/token/exchange` and `/token/refresh` endpoints that the CLI calls instead of contacting Onshape's token endpoint directly.
-See [OAuth Proxy](oauth-proxy.md) for details.
+The optional OAuth proxy is self-hosted Cloudflare Worker software, separate
+from the Rust workspace. It is never selected implicitly and no public proxy is
+provided. Local stdio is recommended and uses direct OAuth by default.
+
+The Rust binary also contains an experimental Streamable HTTP server with
+server-side per-user OAuth. It is available for independent self-hosting, does
+not use this proxy, has no project-operated public endpoint, and is not broadly
+verified. See [Data Flow](data-flow.md) and
+[#546](https://github.com/altendky/onshape-mcp/issues/546).
 
 ## Workspace Layout
 

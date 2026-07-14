@@ -137,10 +137,9 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
 /// during `opencode auth login`. This allows the MCP server to refresh tokens
 /// without requiring separate `client_id`/`client_secret` configuration.
 ///
-/// Only fills in fields that are `None` in the config — explicit config file,
-/// env var, or CLI values always take precedence.
+/// Recovers only a complete pair when neither field was explicitly configured.
+/// This avoids constructing a client ID/secret pair from different sources.
 fn merge_credentials_from_token_file(config: &mut AppConfig) {
-    // Only try if at least one OAuth field is missing
     if config.auth.client_id.is_some() && config.auth.client_secret.is_some() {
         return;
     }
@@ -190,13 +189,13 @@ fn merge_credentials_from_token_file(config: &mut AppConfig) {
         }
     };
 
-    if config.auth.client_id.is_none() {
-        config.auth.client_id = token_file.client_id;
-    }
-    if config.auth.client_secret.is_none()
-        && let Some(secret) = token_file.client_secret
+    if let (Some(client_id), Some(client_secret)) = (token_file.client_id, token_file.client_secret)
+        && !client_id.trim().is_empty()
+        && !client_secret.trim().is_empty()
     {
-        config.auth.client_secret = Some(SecretString::from(secret));
+        config.auth.client_id = Some(client_id);
+        config.auth.client_secret = Some(SecretString::from(client_secret));
+        config.auth.direct_credentials_from_token_file = true;
     }
 }
 

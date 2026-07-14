@@ -10,8 +10,10 @@ modes and their authentication lifecycles. For configuration details see
 
 The MCP server has three operating modes. **Stdio** is the default for local
 single-user use (Claude Desktop, OpenCode, etc.). **Streamable HTTP** is for
-remote multi-user deployments (Claude.ai, etc.). **CLI Auth Login** is a
-standalone command that completes the OAuth flow and writes a token file.
+experimental, independently self-hosted remote multi-user deployments. No
+public service is provided, and ChatGPT currently fails as tracked in
+[#546](https://github.com/altendky/onshape-mcp/issues/546). **CLI Auth Login**
+is a standalone command that completes the OAuth flow and writes a token file.
 
 ```mermaid
 flowchart TB
@@ -39,15 +41,15 @@ flowchart TB
     TokenFile[(tokens.json)]
 
     MCP1 -->|Basic or Bearer auth| Onshape
-    MCP1 -.->|token refresh<br>proxy or direct| Proxy
+    MCP1 -.->|optional explicit<br>proxy refresh| Proxy
     MCP1 -.->|token refresh<br>direct only| OnshapeOAuth
     MCP1 <-.->|file watcher| TokenFile
 
     MCP2 -->|per-user Bearer auth| Onshape
     MCP2 <-->|server-side OAuth| OnshapeOAuth
 
-    CLI -->|proxy mode| Proxy
-    CLI -->|direct mode| OnshapeOAuth
+    CLI -.->|explicit self-hosted<br>proxy mode| Proxy
+    CLI -->|direct mode<br>default| OnshapeOAuth
     Proxy -->|forwards with<br>client_secret| OnshapeOAuth
     CLI -->|save tokens| TokenFile
     Browser <-->|authorize + callback| OnshapeOAuth
@@ -80,9 +82,9 @@ sequenceDiagram
     MCP-->>Client: tool result (stdout)
 ```
 
-### OAuth Login — Proxy Mode
+### OAuth Login — Self-Hosted Proxy Mode
 
-Default login flow. The CLI never sees the OAuth client secret — the proxy
+Optional explicit login flow. The CLI never sees the OAuth client secret — the proxy
 adds it when forwarding to Onshape. The token file stores `proxy_url` so the
 server knows to use the proxy for future refreshes.
 
@@ -128,13 +130,13 @@ sequenceDiagram
 
 ### OAuth Login — Direct Mode
 
-Alternative flow when the user provides both `client_id` and `client_secret`.
+Default flow when the user provides both `client_id` and `client_secret`.
 The CLI exchanges directly with Onshape — no proxy involved. The token file
 stores `client_secret` so the server can refresh directly.
 
 ```mermaid
 sequenceDiagram
-    participant CLI as onshape-mcp<br>auth login --direct
+    participant CLI as onshape-mcp<br>auth login
     participant Browser as User's Browser
     participant Onshape as Onshape OAuth<br>(oauth.onshape.com)
     participant File as tokens.json
@@ -270,6 +272,9 @@ register dynamically, and go through a double OAuth flow: the MCP client
 authenticates to the MCP server, and the MCP server authenticates to
 Onshape on behalf of the user. The server operator's Onshape OAuth app
 credentials are used for the Onshape leg.
+
+This mode does not use the local OAuth proxy. It is experimental, is not
+broadly client-verified, and is operated only by independent self-hosters.
 
 ```mermaid
 sequenceDiagram

@@ -1,6 +1,17 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import { mkdirSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import {
+  closeSync,
+  chmodSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { randomUUID } from "crypto";
+import { basename, dirname, join } from "path";
 import { homedir } from "os";
 import * as oauth from "oauth4webapi";
 import {
@@ -19,9 +30,6 @@ const as: oauth.AuthorizationServer = {
 };
 const OAUTH_SCOPES = "OAuth2Read OAuth2Write";
 
-/** Default OAuth proxy URL. */
-const DEFAULT_PROXY_URL = "https://onshape-oauth-proxy.fstab.workers.dev";
-
 /**
  * Returns the data directory for onshape-mcp on the current platform.
  * Mirrors `default_token_file_path()` logic in onshape-client-core.
@@ -33,10 +41,16 @@ function dataDir(): string {
   if (platform === "darwin") {
     return join(home, "Library", "Application Support", "onshape-mcp");
   } else if (platform === "win32") {
-    return join(process.env.LOCALAPPDATA || join(home, "AppData", "Local"), "onshape-mcp");
+    return join(
+      process.env.LOCALAPPDATA || join(home, "AppData", "Local"),
+      "onshape-mcp",
+    );
   } else {
     // Linux and other Unix
-    return join(process.env.XDG_DATA_HOME || join(home, ".local", "share"), "onshape-mcp");
+    return join(
+      process.env.XDG_DATA_HOME || join(home, ".local", "share"),
+      "onshape-mcp",
+    );
   }
 }
 
@@ -51,7 +65,7 @@ function tokenFilePath(): string {
  * Token file shape.  Either `client_secret` (direct mode) or `proxy_url`
  * (proxy mode) is set, never both.
  */
-interface TokenFile {
+export interface TokenFile {
   access_token: string;
   refresh_token: string;
   expires_at: string | null;
@@ -62,13 +76,159 @@ interface TokenFile {
   proxy_url?: string;
 }
 
-/**
- * Save tokens to the token file with secure permissions.
- */
-function saveTokens(tokens: TokenFile): void {
-  const path = tokenFilePath();
+const TOKEN_LOCK_RETRY_MS = 25;
+const TOKEN_LOCK_TIMEOUT_MS = 75_000;
+const TOKEN_EXCHANGE_TIMEOUT_MS = 30_000;
+const PROXY_EXCHANGE_TRANSACTION_TIMEOUT_MS = 60_000;
+
+export function tokenLockPath(path: string): string {
+  return `${path}.lock`;
+}
+
+export function validateProxyUrl(value: string): string {
+  const proxyInput = value.trim();
+  if (!proxyInput) {
+    throw new Error("Self-hosted OAuth Proxy URL is required");
+  }
+  const parsedProxyUrl = new URL(proxyInput);
+  const hostname = parsedProxyUrl.hostname.toLowerCase();
+  const isLoopback =
+    hostname === "localhost" ||
+    hostname === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  if (
+    parsedProxyUrl.protocol !== "https:" &&
+    !(parsedProxyUrl.protocol === "http:" && isLoopback)
+  ) {
+    throw new Error(
+      "OAuth Proxy URL must use https:// (http:// is only allowed for loopback hosts)",
+    );
+  }
+  return parsedProxyUrl.origin + parsedProxyUrl.pathname.replace(/\/$/, "");
+}
+
+interface TokenFileLock {
+  path: string;
+  lockPath: string;
+  ownerPath: string;
+  cleanupPath: string;
+}
+
+export async function withTokenFileLock<T>(
+  operation: (lock: TokenFileLock) => Promise<T>,
+  path = tokenFilePath(),
+  lockTimeoutMs = TOKEN_LOCK_TIMEOUT_MS,
+): Promise<T> {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+  const lockPath = tokenLockPath(path);
+  const deadline = Bun.nanoseconds() + lockTimeoutMs * 1_000_000;
+  let lock: TokenFileLock | undefined;
+
+  while (true) {
+    try {
+      mkdirSync(lockPath, { mode: 0o700 });
+      const ownerPath = join(lockPath, `owner-${process.pid}-${randomUUID()}`);
+      try {
+        mkdirSync(ownerPath, { mode: 0o700 });
+      } catch (error) {
+        rmdirSync(lockPath);
+        throw error;
+      }
+      lock = {
+        path,
+        lockPath,
+        ownerPath,
+        cleanupPath: `${lockPath}.cleanup-${process.pid}-${randomUUID()}`,
+      };
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+
+      if (Bun.nanoseconds() >= deadline) {
+        throw new Error(
+          `Timed out waiting for token file lock directory ${lockPath}. Stop all onshape-mcp/OpenCode writers, then manually remove the lock directory if no writer is running.`,
+        );
+      }
+      await Bun.sleep(TOKEN_LOCK_RETRY_MS);
+    }
+  }
+  if (!lock) throw new Error("Token lock acquisition ended without a lock");
+
+  try {
+    return await operation(lock);
+  } finally {
+    try {
+      renameSync(lock.lockPath, lock.cleanupPath);
+      try {
+        rmdirSync(join(lock.cleanupPath, basename(lock.ownerPath)));
+        rmdirSync(lock.cleanupPath);
+      } catch (error) {
+        try {
+          renameSync(lock.cleanupPath, lock.lockPath);
+        } catch {
+          // Preserve the cleanup error below.
+        }
+        throw error;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+async function saveTokensLocked(
+  tokens: TokenFile,
+  path: string,
+  lock: TokenFileLock,
+): Promise<void> {
+  if (lock.path !== path) {
+    throw new Error(`Token lock does not protect ${path}`);
+  }
+  let temporaryPath: string | undefined;
+  let descriptor: number | undefined;
+  try {
+    temporaryPath = join(
+      dirname(path),
+      `.${basename(path)}.tmp-${process.pid}-${randomUUID()}`,
+    );
+    descriptor = openSync(temporaryPath, "wx", 0o600);
+    writeFileSync(descriptor, JSON.stringify(tokens, null, 2));
+    fsyncSync(descriptor);
+    chmodSync(temporaryPath, 0o600);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(temporaryPath, path);
+    temporaryPath = undefined;
+    chmodSync(path, 0o600);
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // Preserve the publication error.
+      }
+    }
+    if (temporaryPath !== undefined) {
+      try {
+        unlinkSync(temporaryPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+  }
+}
+
+/** Save tokens atomically while holding the shared credential lock. */
+export async function saveTokens(
+  tokens: TokenFile,
+  path = tokenFilePath(),
+  lockTimeoutMs = TOKEN_LOCK_TIMEOUT_MS,
+): Promise<void> {
+  await withTokenFileLock(
+    (lock) => saveTokensLocked(tokens, path, lock),
+    path,
+    lockTimeoutMs,
+  );
 }
 
 // ============================================================================
@@ -141,36 +301,21 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
       provider: "OnShape (onshape-mcp)",
       methods: [
         // ================================================================
-        // Proxy mode: client secret held by the proxy server.
+        // Self-hosted proxy mode: client secret held by the proxy server.
         // ================================================================
         {
           type: "oauth" as const,
-          label: "Onshape OAuth (via proxy)",
+          label: "Onshape OAuth (self-hosted proxy)",
           prompts: [
             {
               type: "text" as const,
               key: "proxy_url",
               message: "OAuth Proxy URL",
-              placeholder: DEFAULT_PROXY_URL,
+              placeholder: "https://oauth-proxy.example.com",
             },
           ],
           async authorize(inputs) {
-            const parsedProxyUrl = new URL(
-              (inputs?.proxy_url || DEFAULT_PROXY_URL).trim(),
-            );
-            const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(
-              parsedProxyUrl.hostname,
-            );
-            if (
-              parsedProxyUrl.protocol !== "https:" &&
-              !(parsedProxyUrl.protocol === "http:" && isLocalhost)
-            ) {
-              throw new Error(
-                "OAuth Proxy URL must use https:// (http:// is only allowed for localhost)",
-              );
-            }
-            const proxyUrl = parsedProxyUrl.origin + parsedProxyUrl.pathname
-              .replace(/\/$/, "");
+            const proxyUrl = validateProxyUrl(inputs?.proxy_url ?? "");
 
             // 1. Resolve proxy hostname to IPv6 and IPv4 addresses
             //    once, then reuse for both /config and /token/exchange.
@@ -232,8 +377,7 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
             if (configStatus === undefined) {
               return {
                 url: "-",
-                instructions:
-                  `Failed to connect to proxy at ${proxyHostname}.`,
+                instructions: `Failed to connect to proxy at ${proxyHostname}.`,
                 method: "auto" as const,
                 async callback() {
                   return { type: "failed" as const };
@@ -242,13 +386,13 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
             }
 
             if (configStatus === 403) {
-              const ipNote = triedSourceIps.length > 0
-                ? ` (source IP: ${triedSourceIps.join(", ")})`
-                : "";
+              const ipNote =
+                triedSourceIps.length > 0
+                  ? ` (source IP: ${triedSourceIps.join(", ")})`
+                  : "";
               return {
                 url: "-",
-                instructions:
-                  `Your IP address${ipNote} is not authorized to use this proxy.`,
+                instructions: `Your IP address${ipNote} is not authorized to use this proxy.`,
                 method: "auto" as const,
                 async callback() {
                   return { type: "failed" as const };
@@ -328,130 +472,152 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                     throw new Error("No authorization code in callback URL");
                   }
 
-                  // 6. Exchange via the proxy (not directly with Onshape).
-                  //    Uses the same DNS-aware dual-stack retry as the
-                  //    /config fetch above.  See ipv4-retry.ts for details.
-                  const exchangeUrl = `${proxyUrl}/token/exchange`;
-                  const exchangeBody = {
-                    code,
-                    redirect_uri: redirectUri,
-                    code_verifier: codeVerifier,
-                  };
+                  const tokenPath = tokenFilePath();
+                  return await withTokenFileLock(async (tokenLock) => {
+                    // 6. Exchange via the proxy (not directly with Onshape).
+                    //    Uses the same DNS-aware dual-stack retry as the
+                    //    /config fetch above.  See ipv4-retry.ts for details.
+                    const exchangeUrl = `${proxyUrl}/token/exchange`;
+                    const exchangeBody = {
+                      code,
+                      redirect_uri: redirectUri,
+                      code_verifier: codeVerifier,
+                    };
 
-                  const exchangeSourceIps: string[] = [];
-                  let respStatus: number | undefined;
-                  let respBody: string | undefined;
+                    const exchangeSourceIps: string[] = [];
+                    const exchangeDeadline =
+                      Date.now() + PROXY_EXCHANGE_TRANSACTION_TIMEOUT_MS;
+                    let respStatus: number | undefined;
+                    let respBody: string | undefined;
 
-                  const collectExchange403Ip = (body: string) => {
-                    const err = parseProxyError(body);
-                    if (err?.source_ip) exchangeSourceIps.push(err.source_ip);
-                  };
+                    const collectExchange403Ip = (body: string) => {
+                      const err = parseProxyError(body);
+                      if (err?.source_ip) exchangeSourceIps.push(err.source_ip);
+                    };
 
-                  // Try IPv6 addresses first (matches OS default preference).
-                  const ipv6Result = await tryAddresses(
-                    ipv6Addrs,
-                    exchangeUrl,
-                    exchangeBody,
-                  );
-
-                  if (ipv6Result && ipv6Result.status !== 403) {
-                    // Got a non-403 response over IPv6 — use it.
-                    respStatus = ipv6Result.status;
-                    respBody = ipv6Result.body;
-                  } else {
-                    // Either all IPv6 addrs had connection errors, or
-                    // we got 403.  Record the 403 IP and try IPv4.
-                    if (ipv6Result?.status === 403) {
-                      collectExchange403Ip(ipv6Result.body);
-                    }
-
-                    const ipv4Result = await tryAddresses(
-                      ipv4Addrs,
+                    // Try IPv6 addresses first (matches OS default preference).
+                    const ipv6Result = await tryAddresses(
+                      ipv6Addrs,
                       exchangeUrl,
                       exchangeBody,
+                      "POST",
+                      exchangeDeadline,
                     );
 
-                    if (ipv4Result) {
-                      respStatus = ipv4Result.status;
-                      respBody = ipv4Result.body;
-                      if (ipv4Result.status === 403) {
-                        collectExchange403Ip(ipv4Result.body);
-                      }
-                    } else if (ipv6Result) {
-                      // All IPv4 addrs had connection errors but we had
-                      // an IPv6 response — use it (likely the 403).
+                    if (ipv6Result && ipv6Result.status !== 403) {
+                      // Got a non-403 response over IPv6 — use it.
                       respStatus = ipv6Result.status;
                       respBody = ipv6Result.body;
                     } else {
-                      // Every address in both families failed to connect.
+                      // Either all IPv6 addrs had connection errors, or
+                      // we got 403.  Record the 403 IP and try IPv4.
+                      if (ipv6Result?.status === 403) {
+                        collectExchange403Ip(ipv6Result.body);
+                      }
+
+                      const ipv4Result = await tryAddresses(
+                        ipv4Addrs,
+                        exchangeUrl,
+                        exchangeBody,
+                        "POST",
+                        exchangeDeadline,
+                      );
+
+                      if (ipv4Result) {
+                        respStatus = ipv4Result.status;
+                        respBody = ipv4Result.body;
+                        if (ipv4Result.status === 403) {
+                          collectExchange403Ip(ipv4Result.body);
+                        }
+                      } else if (ipv6Result) {
+                        // All IPv4 addrs had connection errors but we had
+                        // an IPv6 response — use it (likely the 403).
+                        respStatus = ipv6Result.status;
+                        respBody = ipv6Result.body;
+                      } else {
+                        // Every address in both families failed to connect.
+                        throw new Error(
+                          `Failed to connect to proxy at ${proxyHostname} (tried ${ipv6Addrs.length} IPv6 and ${ipv4Addrs.length} IPv4 addresses)`,
+                        );
+                      }
+                    }
+
+                    if (respStatus !== 200) {
+                      if (respStatus === 403) {
+                        const ipNote =
+                          exchangeSourceIps.length > 0
+                            ? ` (source IP: ${exchangeSourceIps.join(", ")})`
+                            : "";
+                        throw new Error(
+                          `Your IP address${ipNote} is not authorized to use this proxy.`,
+                        );
+                      }
+                      const proxyErr = parseProxyError(respBody!);
+                      const detail = proxyErr
+                        ? JSON.stringify(proxyErr)
+                        : respBody;
                       throw new Error(
-                        `Failed to connect to proxy at ${proxyHostname} (tried ${ipv6Addrs.length} IPv6 and ${ipv4Addrs.length} IPv4 addresses)`,
+                        `Proxy token exchange failed (${respStatus}): ${detail}`,
                       );
                     }
-                  }
 
-                  if (respStatus !== 200) {
-                    if (respStatus === 403) {
-                      const ipNote = exchangeSourceIps.length > 0
-                        ? ` (source IP: ${exchangeSourceIps.join(", ")})`
-                        : "";
+                    const result = JSON.parse(respBody!) as {
+                      access_token: string;
+                      refresh_token?: string;
+                      token_type?: string;
+                      expires_in?: number;
+                      scope?: string;
+                    };
+
+                    if (
+                      typeof result.access_token !== "string" ||
+                      result.access_token.trim() === ""
+                    ) {
                       throw new Error(
-                        `Your IP address${ipNote} is not authorized to use this proxy.`,
+                        "Proxy token exchange returned invalid token payload: missing or empty access_token",
                       );
                     }
-                    const proxyErr = parseProxyError(respBody!);
-                    const detail = proxyErr
-                      ? JSON.stringify(proxyErr)
-                      : respBody;
-                    throw new Error(
-                      `Proxy token exchange failed (${respStatus}): ${detail}`,
+                    if (
+                      typeof result.refresh_token !== "string" ||
+                      result.refresh_token.trim() === ""
+                    ) {
+                      throw new Error(
+                        "Proxy token exchange returned invalid token payload: missing or empty refresh_token",
+                      );
+                    }
+
+                    const expiresAt = result.expires_in
+                      ? new Date(
+                          Date.now() + result.expires_in * 1000,
+                        ).toISOString()
+                      : null;
+
+                    const scopes = result.scope
+                      ? result.scope.split(" ").filter(Boolean)
+                      : null;
+
+                    // 7. Save tokens with proxy_url (not client_secret).
+                    await saveTokensLocked(
+                      {
+                        access_token: result.access_token,
+                        refresh_token: result.refresh_token,
+                        expires_at: expiresAt,
+                        token_type: result.token_type || "bearer",
+                        scopes,
+                        client_id: clientId,
+                        proxy_url: proxyUrl,
+                      },
+                      tokenPath,
+                      tokenLock,
                     );
-                  }
 
-                  const result = JSON.parse(respBody!) as {
-                    access_token: string;
-                    refresh_token?: string;
-                    token_type?: string;
-                    expires_in?: number;
-                    scope?: string;
-                  };
-
-                  if (
-                    typeof result.access_token !== "string" ||
-                    result.access_token === ""
-                  ) {
-                    throw new Error(
-                      "Proxy token exchange returned invalid token payload: missing or empty access_token",
-                    );
-                  }
-
-                  const expiresAt = result.expires_in
-                    ? new Date(
-                        Date.now() + result.expires_in * 1000,
-                      ).toISOString()
-                    : null;
-
-                  const scopes = result.scope
-                    ? result.scope.split(" ").filter(Boolean)
-                    : null;
-
-                  // 7. Save tokens with proxy_url (not client_secret).
-                  saveTokens({
-                    access_token: result.access_token,
-                    refresh_token: result.refresh_token ?? "",
-                    expires_at: expiresAt,
-                    token_type: result.token_type || "bearer",
-                    scopes,
-                    client_id: clientId,
-                    proxy_url: proxyUrl,
-                  });
-
-                  return {
-                    type: "success" as const,
-                    access: result.access_token,
-                    refresh: result.refresh_token ?? "",
-                    expires: result.expires_in ?? 3600,
-                  };
+                    return {
+                      type: "success" as const,
+                      access: result.access_token,
+                      refresh: result.refresh_token,
+                      expires: result.expires_in ?? 3600,
+                    };
+                  }, tokenPath);
                 } catch (err) {
                   const msg = err instanceof Error ? err.message : String(err);
                   console.error(`Authorization failed: ${msg}`);
@@ -488,7 +654,7 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
             const clientId = inputs?.client_id;
             const clientSecret = inputs?.client_secret;
 
-            if (!clientId || !clientSecret) {
+            if (!clientId?.trim() || !clientSecret?.trim()) {
               throw new Error("Client ID and Client Secret are required");
             }
 
@@ -519,7 +685,8 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
 
             return {
               url: authUrl.toString(),
-              instructions: "Open the URL above to authorize with Onshape. After granting access, you will be redirected back automatically.",
+              instructions:
+                "Open the URL above to authorize with Onshape. After granting access, you will be redirected back automatically.",
               method: "auto" as const,
               async callback() {
                 try {
@@ -535,56 +702,69 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                     state,
                   );
 
-                  // Exchange the authorization code for tokens
-                  const response =
-                    await oauth.authorizationCodeGrantRequest(
+                  const tokenPath = tokenFilePath();
+                  return await withTokenFileLock(async (tokenLock) => {
+                    // Exchange the authorization code for tokens
+                    const response = await oauth.authorizationCodeGrantRequest(
                       as,
                       client,
                       clientAuth,
                       params,
                       redirectUri,
                       codeVerifier,
+                      {
+                        signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
+                      },
                     );
 
-                  const result =
-                    await oauth.processAuthorizationCodeResponse(
+                    const result = await oauth.processAuthorizationCodeResponse(
                       as,
                       client,
                       response,
                     );
+                    if (!result.refresh_token?.trim()) {
+                      throw new Error(
+                        "Onshape token exchange returned missing or empty refresh_token",
+                      );
+                    }
 
-                  // Calculate expiration time
-                  const expiresAt = result.expires_in
-                    ? new Date(
-                        Date.now() + result.expires_in * 1000,
-                      ).toISOString()
-                    : null;
+                    // Calculate expiration time
+                    const expiresAt = result.expires_in
+                      ? new Date(
+                          Date.now() + result.expires_in * 1000,
+                        ).toISOString()
+                      : null;
 
-                  // Parse scopes from space-separated string into array
-                  const scopes = result.scope
-                    ? result.scope.split(" ").filter(Boolean)
-                    : null;
+                    // Parse scopes from space-separated string into array
+                    const scopes = result.scope
+                      ? result.scope.split(" ").filter(Boolean)
+                      : null;
 
-                  // Write tokens and client credentials to a single file
-                  // for the Rust MCP server. Including client credentials
-                  // enables the server to refresh tokens without requiring
-                  // separate configuration.
-                  saveTokens({
-                    access_token: result.access_token,
-                    refresh_token: result.refresh_token ?? "",
-                    expires_at: expiresAt,
-                    token_type: result.token_type || "bearer",
-                    scopes,
-                    client_id: clientId,
-                    client_secret: clientSecret,
-                  });
+                    // Write tokens and client credentials to a single file
+                    // for the Rust MCP server. Including client credentials
+                    // enables the server to refresh tokens without requiring
+                    // separate configuration.
+                    await saveTokensLocked(
+                      {
+                        access_token: result.access_token,
+                        refresh_token: result.refresh_token,
+                        expires_at: expiresAt,
+                        token_type: result.token_type || "bearer",
+                        scopes,
+                        client_id: clientId,
+                        client_secret: clientSecret,
+                      },
+                      tokenPath,
+                      tokenLock,
+                    );
 
-                  return {
-                    type: "success" as const,
-                    access: result.access_token,
-                    refresh: result.refresh_token ?? "",
-                    expires: result.expires_in ?? 3600,
-                  };
+                    return {
+                      type: "success" as const,
+                      access: result.access_token,
+                      refresh: result.refresh_token,
+                      expires: result.expires_in ?? 3600,
+                    };
+                  }, tokenPath);
                 } catch (err) {
                   const msg = err instanceof Error ? err.message : String(err);
                   console.error(`Authorization failed: ${msg}`);
@@ -596,7 +776,7 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
             };
           },
         },
-      ],
+      ].reverse(),
     },
   };
 };

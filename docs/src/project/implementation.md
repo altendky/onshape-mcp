@@ -72,7 +72,7 @@ Sans-IO tracing was planned but has not been started.
 - [x] Set up GitHub Release automation (archives, SHA256SUMS)
 - [x] Set up crates.io publishing
 - [x] Set up npm publishing (with staging validation)
-- [x] Create Dockerfile and Fly.io deployment for HTTP transport
+- [x] Create Dockerfile and a historical/private Fly.io deployment for HTTP transport (not publicly offered)
 
 ## Phase 6: OAuth Token Exchange Proxy
 
@@ -89,7 +89,7 @@ Sans-IO tracing was planned but has not been started.
 - [x] Implement `RefreshMethod` enum (Direct/Proxy) in MCP server
 - [x] Implement proxy token refresh in `onshape-mcp-io`
 - [x] Add proxy-mode auth method to OpenCode plugin
-- [x] Deploy to Cloudflare (`onshape-oauth-proxy.fstab.workers.dev`)
+- [x] Historical/private Cloudflare deployment (`onshape-oauth-proxy.fstab.workers.dev`), not publicly offered
 - [x] Set secrets via `wrangler secret put` (ONSHAPE_CLIENT_ID, ONSHAPE_CLIENT_SECRET)
 - [ ] Configure `ALLOWED_SOURCES` in Cloudflare dashboard
 - [ ] Verify all endpoints with curl

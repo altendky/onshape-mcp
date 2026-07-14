@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use onshape_mcp_io::config::ENV_PREFIX;
@@ -18,7 +18,7 @@ struct McpTestClient {
     response_rx: mpsc::Receiver<std::io::Result<String>>,
     next_id: i64,
     /// Temp directory for XDG isolation — kept alive for the lifetime of the client.
-    _isolation_dir: tempfile::TempDir,
+    _isolation_dir: Arc<tempfile::TempDir>,
 }
 
 impl McpTestClient {
@@ -35,7 +35,16 @@ impl McpTestClient {
     }
 
     fn spawn_with_env_and_args(env: &HashMap<&str, &str>, args: &[&str]) -> Self {
-        let isolation_dir = tempfile::tempdir().expect("should create isolation temp dir");
+        let isolation_dir =
+            Arc::new(tempfile::tempdir().expect("should create isolation temp dir"));
+        Self::spawn_in_isolation(isolation_dir, env, args)
+    }
+
+    fn spawn_in_isolation(
+        isolation_dir: Arc<tempfile::TempDir>,
+        env: &HashMap<&str, &str>,
+        args: &[&str],
+    ) -> Self {
         let mut cmd = isolated_command(isolation_dir.path());
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -339,6 +348,53 @@ fn call_auth_status(client: &mut McpTestClient) -> serde_json::Value {
         .as_str()
         .expect("text should be a string");
     serde_json::from_str(text).expect("text should be valid JSON")
+}
+
+#[test]
+fn persisted_direct_credentials_survive_process_restart() {
+    let isolation_dir = Arc::new(tempfile::tempdir().expect("should create isolation temp dir"));
+    let token_dir = isolation_dir.path().join("data/onshape-mcp");
+    std::fs::create_dir_all(&token_dir).expect("should create token directory");
+    let token_path = token_dir.join("tokens.json");
+    std::fs::write(
+        &token_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "access_token": "persisted-access",
+            "refresh_token": "persisted-refresh",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "token_type": "bearer",
+            "scopes": ["OAuth2Read"],
+            "client_id": "persisted-client",
+            "client_secret": "persisted-secret"
+        }))
+        .expect("tokens should serialize"),
+    )
+    .expect("should write token file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600))
+            .expect("should secure token file");
+    }
+
+    for _ in 0..2 {
+        let mut client =
+            McpTestClient::spawn_in_isolation(Arc::clone(&isolation_dir), &HashMap::new(), &[]);
+        client.initialize();
+        let auth_result = call_auth_status(&mut client);
+        assert_eq!(auth_result["status"], "not_validated");
+        assert_eq!(auth_result["auth_method"], "oauth");
+        client.shutdown();
+    }
+
+    let partial_config = HashMap::from([("ONSHAPE_MCP_AUTH__CLIENT_ID", "incomplete-explicit-id")]);
+    let mut client =
+        McpTestClient::spawn_in_isolation(Arc::clone(&isolation_dir), &partial_config, &[]);
+    client.initialize();
+    let auth_result = call_auth_status(&mut client);
+    assert_eq!(auth_result["status"], "not_validated");
+    assert_eq!(auth_result["auth_method"], "oauth");
+    client.shutdown();
 }
 
 #[test]

@@ -14,8 +14,9 @@ not a replacement for CAD skills.
 Early development. This is offered for people to try if they're interested —
 things may not always work as expected, and feedback is appreciated.
 
-Access to the hosted servers is currently limited to a closed testing group.
-Don't call us, we'll call you.
+This project does not provide a public hosted MCP server or a public OAuth
+proxy. Run it locally, self-host it, or connect to a server operated by someone
+you independently trust.
 
 ## Getting Started
 
@@ -25,7 +26,16 @@ This is the recommended path. A local server can read and write files on your
 machine directly — screenshots, exports, and FeatureScript — instead of passing
 content through the conversation.
 
-**Step 1: Get the server binary**
+**Step 1: Create an Onshape OAuth application**
+
+Create your own OAuth application in Onshape with
+`http://localhost:18338/callback` as a redirect URL. Keep its client ID and
+client secret available for `onshape-mcp auth login`. Direct OAuth with these
+user-owned credentials is the default. API access and secret keys are also
+supported as an alternative; see
+[Authentication](docs/src/project/authentication.md).
+
+**Step 2: Get the server binary**
 
 Pick whichever is easier for you:
 
@@ -36,7 +46,7 @@ Pick whichever is easier for you:
   [GitHub Releases](https://github.com/altendky/onshape-mcp/releases) and save
   it somewhere convenient.
 
-**Step 2: Configure your MCP client**
+**Step 3: Configure your MCP client**
 
 Tell your MCP client how to launch the server.
 
@@ -104,21 +114,30 @@ Using the downloaded binary:
 Any MCP client that supports stdio transport can launch this server. The command
 is either `npx --yes onshape-mcp` or the path to the downloaded binary.
 
-**Step 3: Try it**
+**Step 4: Authenticate and try it**
 
-Ask your AI assistant to create a new Onshape document with a simple shape. If
-you haven't authenticated yet, it will give you a URL to open in your browser to
-log into Onshape and approve access.
+Configure your OAuth client ID and secret, then run
+`npx --yes onshape-mcp auth login` when using the npm package, or
+`onshape-mcp auth login` when using the downloaded binary.
+Prefer configuration or `ONSHAPE_MCP_AUTH__CLIENT_ID` and
+`ONSHAPE_MCP_AUTH__CLIENT_SECRET` environment variables. The supported
+`--client-id` and `--client-secret` flags may expose secrets in shell history or
+process listings. Restart or start your MCP client, then ask your AI assistant
+to create a new Onshape document with a simple shape.
 
-### Web Setup (Claude.ai or other web MCP clients)
+### Experimental Remote Setup
 
-No local installation needed. Add `https://onshape.mcp.fstab.net/mcp` as a
-remote MCP server in your client's settings. You'll be prompted to log into
-Onshape when you first use it.
+Streamable HTTP remains available for self-hosting, but it is experimental and
+has not been broadly verified. This project offers no publicly operated
+endpoint. If an independent operator gives you access, add a placeholder URL such as
+`https://mcp.example.com/mcp` to your web MCP client and confirm the operator's
+trust, access, and retention policies first. ChatGPT connectivity is currently
+known to fail; see [#546](https://github.com/altendky/onshape-mcp/issues/546).
 
-The web transport has no access to your local filesystem. FeatureScript and
-other file content passes through the conversation instead of being read from
-and written to disk, which uses significantly more tokens.
+HTTP transport deliberately disables MCP file reads and writes. File-reference
+arguments and local output paths therefore cannot access your computer; provide
+supported request content inline and retrieve remote results through the tool
+response instead.
 
 ## Tips
 

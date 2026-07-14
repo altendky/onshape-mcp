@@ -6,6 +6,41 @@
 pub mod config;
 pub mod tools;
 
+/// Validate and normalize an explicitly configured OAuth proxy URL.
+///
+/// HTTPS is required except for HTTP loopback addresses used in local
+/// development. Query strings and fragments are not part of the proxy base URL.
+///
+/// # Errors
+///
+/// Returns an error for a blank or malformed URL, a URL without a host, or an
+/// insecure scheme on a non-loopback host.
+pub fn validate_proxy_url(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("proxy_url must not be blank".to_string());
+    }
+
+    let url = url::Url::parse(value).map_err(|error| format!("invalid proxy URL: {error}"))?;
+    let host = url
+        .host()
+        .ok_or_else(|| "proxy URL must include a host".to_string())?;
+    let is_loopback = match host {
+        url::Host::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(address) => address.octets()[0] == 127,
+        url::Host::Ipv6(address) => address.is_loopback(),
+    };
+
+    if url.scheme() != "https" && !(url.scheme() == "http" && is_loopback) {
+        return Err(
+            "proxy URL must use https:// (http:// is only allowed for loopback hosts)".to_string(),
+        );
+    }
+
+    let path = url.path().strip_suffix('/').unwrap_or_else(|| url.path());
+    Ok(format!("{}{path}", url.origin().ascii_serialization()))
+}
+
 use chrono::{DateTime, Utc};
 use onshape_client_core::auth::AuthMethod;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
@@ -148,8 +183,10 @@ impl AuthStatusResult {
                 auth_method: AuthMethod::OAuth,
                 last_check: None,
                 message: Some(
-                    "OAuth client credentials configured but no access token present. \
-                     Complete the OAuth authorization flow to obtain tokens."
+                    "OAuth is configured but no access token is present. Run \
+                     `onshape-mcp auth login` for direct OAuth, or use \
+                     `onshape-mcp auth login --proxy-url <self-hosted-proxy-url>` \
+                     for an explicitly self-hosted proxy."
                         .into(),
                 ),
             },
@@ -412,6 +449,9 @@ mod tests {
                 .as_deref()
                 .is_some_and(|m| m.contains("no access token"))
         );
+        let message = result.message.expect("pending status should have guidance");
+        assert!(message.contains("onshape-mcp auth login"));
+        assert!(message.contains("self-hosted-proxy-url"));
     }
 
     #[test]
@@ -620,6 +660,47 @@ mod tests {
             let from_new = AuthStatusResult::new(resolved, None, now());
             let from_old = AuthStatusResult::from_resolved(resolved, now());
             assert_eq!(from_new, from_old, "mismatch for {resolved:?}");
+        }
+    }
+
+    #[test]
+    fn proxy_url_accepts_https_and_normalizes_base_url() {
+        assert_eq!(
+            validate_proxy_url(" https://proxy.example.com/base/?ignored=yes#fragment ")
+                .expect("HTTPS proxy should be valid"),
+            "https://proxy.example.com/base"
+        );
+    }
+
+    #[test]
+    fn proxy_url_allows_http_for_loopback_hosts() {
+        for (input, expected) in [
+            ("http://localhost:8787", "http://localhost:8787"),
+            ("http://127.42.3.9:8787/", "http://127.42.3.9:8787"),
+            ("http://[::1]:8787", "http://[::1]:8787"),
+        ] {
+            assert_eq!(
+                validate_proxy_url(input).expect("loopback HTTP should be valid"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_url_rejects_insecure_non_loopback_and_invalid_values() {
+        for input in [
+            "http://proxy.example.com",
+            "http://128.0.0.1",
+            "ftp://localhost",
+            "",
+            "   ",
+            "not a URL",
+            "https://",
+        ] {
+            assert!(
+                validate_proxy_url(input).is_err(),
+                "should reject {input:?}"
+            );
         }
     }
 }

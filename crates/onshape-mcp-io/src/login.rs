@@ -457,12 +457,25 @@ async fn complete_login_flow(
     // Validate the callback.
     let auth_code = validate_callback(&callback_url, &session.csrf_state)?;
 
-    // Exchange the code for tokens.
-    let token_file = exchange_code(auth_code, session.pkce_verifier, &exchange_config).await?;
+    exchange_code_and_save(
+        auth_code,
+        session.pkce_verifier,
+        &exchange_config,
+        &token_path,
+    )
+    .await
+}
 
-    // Save tokens to disk.
-    crate::oauth::save_token_file(&token_path, &token_file)?;
-
+async fn exchange_code_and_save(
+    auth_code: AuthorizationCode,
+    pkce_verifier: PkceCodeVerifier,
+    exchange_config: &ExchangeConfig,
+    token_path: &std::path::Path,
+) -> Result<(), LoginError> {
+    // The authorization code is not consumed until the shared lock is held.
+    let token_lock = crate::oauth::TokenFileLock::acquire(token_path).await?;
+    let token_file = exchange_code(auth_code, pkce_verifier, exchange_config).await?;
+    crate::oauth::save_token_file_locked(token_path, &token_file, &token_lock)?;
     Ok(())
 }
 
@@ -608,7 +621,7 @@ async fn exchange_code_direct(
     // login must include one.
     if response
         .refresh_token()
-        .is_none_or(|t| t.secret().is_empty())
+        .is_none_or(|t| t.secret().trim().is_empty())
     {
         return Err(LoginError::TokenExchange(
             "token response missing or empty refresh_token".to_string(),
@@ -682,7 +695,7 @@ async fn exchange_code_proxy(
     // Without one, the session will break once the access token expires.
     let refresh_token = token_response
         .refresh_token
-        .filter(|t| !t.is_empty())
+        .filter(|t| !t.trim().is_empty())
         .ok_or_else(|| {
             LoginError::TokenExchange("proxy response missing or empty refresh_token".to_string())
         })?;
@@ -1219,20 +1232,68 @@ mod tests {
         assert!(!is_bind_contention(&err));
     }
 
-    // ====================================================================
-    // Token file write test
-    // ====================================================================
+    #[tokio::test]
+    async fn login_holds_shared_lock_before_proxy_exchange() {
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("should bind proxy");
+        let address = listener.local_addr().expect("should have address");
+        let app = axum::Router::new().route(
+            "/token/exchange",
+            axum::routing::post({
+                let requests = Arc::clone(&requests);
+                move || {
+                    let requests = Arc::clone(&requests);
+                    async move {
+                        requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        axum::Json(serde_json::json!({
+                            "access_token": "login-access",
+                            "refresh_token": "login-refresh",
+                            "token_type": "bearer",
+                            "expires_in": 3600
+                        }))
+                    }
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("proxy should serve");
+        });
+        let dir = tempfile::tempdir().expect("should create temp dir");
+        let token_path = dir.path().join("tokens.json");
+        let held_lock = crate::oauth::TokenFileLock::acquire(&token_path)
+            .await
+            .expect("should hold token lock");
+        let config = ExchangeConfig::Proxy {
+            client_id: "proxy-client".to_string(),
+            proxy_url: format!("http://{address}"),
+        };
+        let transaction = exchange_code_and_save(
+            AuthorizationCode::new("authorization-code".to_string()),
+            PkceCodeVerifier::new("pkce-verifier".to_string()),
+            &config,
+            &token_path,
+        );
+        tokio::pin!(transaction);
 
-    #[test]
-    fn token_file_written_after_exchange() {
-        // This is tested via the existing save_token_file tests in oauth.rs.
-        // The login flow reuses save_token_file, so we just verify the
-        // function exists and the path resolves.
-        let path = default_token_file_path();
-        // path may be None in CI containers without a home directory.
-        if let Some(ref p) = path {
-            assert!(p.ends_with("onshape-mcp/tokens.json"));
-        }
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(75), &mut transaction)
+                .await
+                .is_err()
+        );
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+        drop(held_lock);
+        transaction
+            .await
+            .expect("login should exchange and publish after lock release");
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let token_file = crate::oauth::load_token_file(&token_path)
+            .expect("login should publish complete tokens");
+        assert_eq!(token_file.tokens.access_token.secret(), "login-access");
+        server.abort();
     }
 
     // ====================================================================
