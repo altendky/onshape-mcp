@@ -84,6 +84,93 @@ export interface TokenFile {
   proxy_url?: string;
 }
 
+interface ProxyTokenResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type?: "bearer";
+  expires_in?: number;
+  scope?: string;
+}
+
+export function parseProxyTokenResponse(body: string): ProxyTokenResponse {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Error("Proxy token exchange returned invalid JSON");
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(
+      "Proxy token exchange returned invalid token payload: expected an object",
+    );
+  }
+  const payload = parsed as Record<string, unknown>;
+
+  if (
+    typeof payload.access_token !== "string" ||
+    payload.access_token.trim() === ""
+  ) {
+    throw new Error(
+      "Proxy token exchange returned invalid token payload: missing or empty access_token",
+    );
+  }
+  if (
+    typeof payload.refresh_token !== "string" ||
+    payload.refresh_token.trim() === ""
+  ) {
+    throw new Error(
+      "Proxy token exchange returned invalid token payload: missing or empty refresh_token",
+    );
+  }
+
+  let tokenType: "bearer" | undefined;
+  if (payload.token_type !== undefined) {
+    if (
+      typeof payload.token_type !== "string" ||
+      payload.token_type.trim() === "" ||
+      payload.token_type.toLowerCase() !== "bearer"
+    ) {
+      throw new Error(
+        "Proxy token exchange returned invalid token payload: token_type must be bearer",
+      );
+    }
+    tokenType = "bearer";
+  }
+
+  let expiresIn: number | undefined;
+  if (payload.expires_in !== undefined) {
+    if (
+      typeof payload.expires_in !== "number" ||
+      !Number.isFinite(payload.expires_in) ||
+      payload.expires_in < 0
+    ) {
+      throw new Error(
+        "Proxy token exchange returned invalid token payload: expires_in must be a finite nonnegative number",
+      );
+    }
+    expiresIn = payload.expires_in;
+  }
+
+  let scope: string | undefined;
+  if (payload.scope !== undefined) {
+    if (typeof payload.scope !== "string" || payload.scope.trim() === "") {
+      throw new Error(
+        "Proxy token exchange returned invalid token payload: scope must be a nonempty string",
+      );
+    }
+    scope = payload.scope;
+  }
+
+  return {
+    access_token: payload.access_token,
+    refresh_token: payload.refresh_token,
+    ...(tokenType === undefined ? {} : { token_type: tokenType }),
+    ...(expiresIn === undefined ? {} : { expires_in: expiresIn }),
+    ...(scope === undefined ? {} : { scope }),
+  };
+}
+
 const TOKEN_LOCK_RETRY_MS = 25;
 const TOKEN_LOCK_TIMEOUT_MS = 75_000;
 const TOKEN_EXCHANGE_TIMEOUT_MS = 30_000;
@@ -638,38 +725,21 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                       );
                     }
 
-                    const result = JSON.parse(respBody!) as {
-                      access_token: string;
-                      refresh_token?: string;
-                      token_type?: string;
-                      expires_in?: number;
-                      scope?: string;
-                    };
-
-                    if (
-                      typeof result.access_token !== "string" ||
-                      result.access_token.trim() === ""
-                    ) {
+                    if (respBody === undefined) {
                       throw new Error(
-                        "Proxy token exchange returned invalid token payload: missing or empty access_token",
+                        "Proxy token exchange returned no response body",
                       );
                     }
-                    if (
-                      typeof result.refresh_token !== "string" ||
-                      result.refresh_token.trim() === ""
-                    ) {
-                      throw new Error(
-                        "Proxy token exchange returned invalid token payload: missing or empty refresh_token",
-                      );
-                    }
+                    const result = parseProxyTokenResponse(respBody);
 
-                    const expiresAt = result.expires_in
-                      ? new Date(
-                          Date.now() + result.expires_in * 1000,
-                        ).toISOString()
-                      : null;
+                    const expiresAt =
+                      result.expires_in !== undefined
+                        ? new Date(
+                            Date.now() + result.expires_in * 1000,
+                          ).toISOString()
+                        : null;
 
-                    const scopes = result.scope
+                    const scopes = result.scope !== undefined
                       ? result.scope.split(" ").filter(Boolean)
                       : null;
 
@@ -679,7 +749,7 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                         access_token: result.access_token,
                         refresh_token: result.refresh_token,
                         expires_at: expiresAt,
-                        token_type: result.token_type || "bearer",
+                        token_type: result.token_type ?? "bearer",
                         scopes,
                         client_id: clientId,
                         proxy_url: proxyUrl,

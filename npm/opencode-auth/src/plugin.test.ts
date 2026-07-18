@@ -16,6 +16,7 @@ import { join } from "path";
 
 import {
   OnshapeAuthPlugin,
+  parseProxyTokenResponse,
   publishTokenFile,
   resolveDataDir,
   saveTokens,
@@ -23,6 +24,77 @@ import {
   validateProxyUrl,
   withTokenFileLock,
 } from "./plugin.js";
+
+describe("proxy token response", () => {
+  test("validates and normalizes a complete response", () => {
+    expect(
+      parseProxyTokenResponse(
+        JSON.stringify({
+          access_token: "access",
+          refresh_token: "refresh",
+          token_type: "Bearer",
+          expires_in: 0,
+          scope: "OAuth2Read OAuth2Write",
+        }),
+      ),
+    ).toEqual({
+      access_token: "access",
+      refresh_token: "refresh",
+      token_type: "bearer",
+      expires_in: 0,
+      scope: "OAuth2Read OAuth2Write",
+    });
+  });
+
+  test("accepts omitted optional fields", () => {
+    expect(
+      parseProxyTokenResponse(
+        JSON.stringify({
+          access_token: "access",
+          refresh_token: "refresh",
+        }),
+      ),
+    ).toEqual({ access_token: "access", refresh_token: "refresh" });
+  });
+
+  test("rejects malformed required and optional fields", () => {
+    const valid = { access_token: "access", refresh_token: "refresh" };
+    const invalidPayloads = [
+      {},
+      { ...valid, access_token: " " },
+      { ...valid, access_token: 123 },
+      { ...valid, refresh_token: "" },
+      { ...valid, refresh_token: null },
+      { ...valid, token_type: 123 },
+      { ...valid, token_type: null },
+      { ...valid, token_type: "mac" },
+      { ...valid, expires_in: "3600" },
+      { ...valid, expires_in: null },
+      { ...valid, expires_in: -1 },
+      { ...valid, scope: 123 },
+      { ...valid, scope: null },
+      { ...valid, scope: " " },
+    ];
+
+    for (const payload of invalidPayloads) {
+      expect(() => parseProxyTokenResponse(JSON.stringify(payload))).toThrow(
+        "invalid token payload",
+      );
+    }
+    expect(() =>
+      parseProxyTokenResponse(
+        '{"access_token":"access","refresh_token":"refresh","expires_in":1e309}',
+      ),
+    ).toThrow("expires_in must be a finite nonnegative number");
+  });
+
+  test("rejects malformed JSON and non-object payloads", () => {
+    expect(() => parseProxyTokenResponse("not json")).toThrow("invalid JSON");
+    for (const body of ["null", "[]", "42"]) {
+      expect(() => parseProxyTokenResponse(body)).toThrow("expected an object");
+    }
+  });
+});
 
 async function methods() {
   const plugin = await OnshapeAuthPlugin({} as never);
