@@ -172,7 +172,9 @@ Each entry is auto-detected:
 - Otherwise, it is treated as a hostname and resolved at request time via Cloudflare's DNS-over-HTTPS API (`https://cloudflare-dns.com/dns-query`).
   Both A (IPv4) and AAAA (IPv6) records are queried.
 
-Example: `ALLOWED_SOURCES=home.example.com,10.0.0.5`
+Example: `ALLOWED_SOURCES=home.example.com,203.0.113.5`
+
+Configure the public egress IPv4 and/or IPv6 address that Cloudflare reports for each permitted network, or a hostname that resolves to it. `203.0.113.5` is a documentation-only address and must be replaced.
 
 This handles dynamic DNS automatically — if the IP for `home.example.com` changes, the worker resolves the new IP on the next request.
 The DNS-over-HTTPS lookup adds approximately 5–20ms of latency (Cloudflare-internal).
