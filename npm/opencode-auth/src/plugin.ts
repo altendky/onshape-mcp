@@ -93,6 +93,45 @@ export function tokenLockPath(path: string): string {
   return `${path}.lock`;
 }
 
+async function settle<T>(
+  operation: () => Promise<T>,
+): Promise<PromiseSettledResult<T>> {
+  try {
+    return { status: "fulfilled", value: await operation() };
+  } catch (reason) {
+    return { status: "rejected", reason };
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function completeWithCleanup<T>(
+  operationResult: PromiseSettledResult<T>,
+  cleanupErrors: unknown[],
+): T {
+  if (operationResult.status === "rejected") {
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [operationResult.reason, ...cleanupErrors],
+        `Operation failed: ${errorMessage(operationResult.reason)}; cleanup failed: ${cleanupErrors.map(errorMessage).join("; ")}`,
+        { cause: operationResult.reason },
+      );
+    }
+    throw operationResult.reason;
+  }
+
+  if (cleanupErrors.length === 1) throw cleanupErrors[0];
+  if (cleanupErrors.length > 1) {
+    throw new AggregateError(
+      cleanupErrors,
+      `Cleanup failed: ${cleanupErrors.map(errorMessage).join("; ")}`,
+    );
+  }
+  return operationResult.value;
+}
+
 export function validateProxyUrl(value: string): string {
   const proxyInput = value.trim();
   if (!proxyInput) {
@@ -186,26 +225,27 @@ export async function withTokenFileLock<T>(
   }
   if (!lock) throw new Error("Token lock acquisition ended without a lock");
 
+  const operationResult = await settle(() => operation(lock));
+  const cleanupErrors: unknown[] = [];
   try {
-    return await operation(lock);
-  } finally {
+    renameSync(lock.lockPath, lock.cleanupPath);
     try {
-      renameSync(lock.lockPath, lock.cleanupPath);
-      try {
-        rmdirSync(join(lock.cleanupPath, basename(lock.ownerPath)));
-        rmdirSync(lock.cleanupPath);
-      } catch (error) {
-        try {
-          renameSync(lock.cleanupPath, lock.lockPath);
-        } catch {
-          // Preserve the cleanup error below.
-        }
-        throw error;
-      }
+      rmdirSync(join(lock.cleanupPath, basename(lock.ownerPath)));
+      rmdirSync(lock.cleanupPath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      cleanupErrors.push(error);
+      try {
+        renameSync(lock.cleanupPath, lock.lockPath);
+      } catch (restoreError) {
+        cleanupErrors.push(restoreError);
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      cleanupErrors.push(error);
     }
   }
+  return completeWithCleanup(operationResult, cleanupErrors);
 }
 
 async function saveTokensLocked(
@@ -218,36 +258,41 @@ async function saveTokensLocked(
   }
   let temporaryPath: string | undefined;
   let descriptor: number | undefined;
-  try {
-    temporaryPath = join(
+  const operationResult = await settle(async () => {
+    const candidatePath = join(
       dirname(path),
       `.${basename(path)}.tmp-${process.pid}-${randomUUID()}`,
     );
-    descriptor = openSync(temporaryPath, "wx", 0o600);
+    descriptor = openSync(candidatePath, "wx", 0o600);
+    temporaryPath = candidatePath;
     writeFileSync(descriptor, JSON.stringify(tokens, null, 2));
     fsyncSync(descriptor);
-    chmodSync(temporaryPath, 0o600);
+    chmodSync(candidatePath, 0o600);
     closeSync(descriptor);
     descriptor = undefined;
-    await publishTokenFile(() => renameSync(temporaryPath!, path));
+    await publishTokenFile(() => renameSync(candidatePath, path));
     temporaryPath = undefined;
     chmodSync(path, 0o600);
-  } finally {
-    if (descriptor !== undefined) {
-      try {
-        closeSync(descriptor);
-      } catch {
-        // Preserve the publication error.
-      }
+  });
+
+  const cleanupErrors: unknown[] = [];
+  if (descriptor !== undefined) {
+    try {
+      closeSync(descriptor);
+    } catch (error) {
+      cleanupErrors.push(error);
     }
-    if (temporaryPath !== undefined) {
-      try {
-        unlinkSync(temporaryPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (temporaryPath !== undefined) {
+    try {
+      unlinkSync(temporaryPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        cleanupErrors.push(error);
       }
     }
   }
+  completeWithCleanup(operationResult, cleanupErrors);
 }
 
 /** Save tokens atomically while holding the shared credential lock. */

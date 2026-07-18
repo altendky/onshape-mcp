@@ -9,6 +9,7 @@ import {
   rmSync,
   statSync,
   rmdirSync,
+  writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -188,10 +189,12 @@ describe("token writer lock", () => {
     const path = join(dir, "tokens.json");
     const lockPath = tokenLockPath(path);
     try {
-      await withTokenFileLock(async () => {
+      const result = await withTokenFileLock(async () => {
         expect(statSync(lockPath).isDirectory()).toBe(true);
         expect(existsSync(path)).toBe(false);
+        return "completed";
       }, path);
+      expect(result).toBe("completed");
       expect(existsSync(lockPath)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -221,13 +224,62 @@ describe("token writer lock", () => {
   test("releases the transaction lock after an exchange error", async () => {
     const dir = mkdtempSync(join(tmpdir(), "onshape-token-exchange-error-"));
     const path = join(dir, "tokens.json");
+    const operationError = new Error("exchange failed");
+    let thrown: unknown;
     try {
-      await expect(
-        withTokenFileLock(async () => {
-          throw new Error("exchange failed");
-        }, path),
-      ).rejects.toThrow("exchange failed");
+      try {
+        await withTokenFileLock(async () => {
+          throw operationError;
+        }, path);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBe(operationError);
       expect(existsSync(tokenLockPath(path))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("surfaces a lock cleanup error after a successful operation", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "onshape-token-cleanup-error-"));
+    const path = join(dir, "tokens.json");
+    let thrown: unknown;
+    try {
+      try {
+        await withTokenFileLock(async (lock) => {
+          writeFileSync(join(lock.lockPath, "blocker"), "");
+        }, path);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("retains operation and lock cleanup errors", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "onshape-token-combined-error-"));
+    const path = join(dir, "tokens.json");
+    const operationError = new Error("exchange failed");
+    let thrown: unknown;
+    try {
+      try {
+        await withTokenFileLock(async (lock) => {
+          writeFileSync(join(lock.lockPath, "blocker"), "");
+          throw operationError;
+        }, path);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(AggregateError);
+      const aggregate = thrown as AggregateError;
+      expect(aggregate.cause).toBe(operationError);
+      expect(aggregate.errors[0]).toBe(operationError);
+      expect(aggregate.errors).toHaveLength(2);
+      expect(aggregate.message).toContain("exchange failed");
+      expect(aggregate.message).toContain("cleanup failed");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
