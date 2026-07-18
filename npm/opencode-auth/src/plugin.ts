@@ -92,6 +92,13 @@ interface ProxyTokenResponse {
   scope?: string;
 }
 
+export function absoluteOAuthExpiry(
+  expiresIn: number | undefined,
+  now = Date.now(),
+): number {
+  return now + (expiresIn ?? 3600) * 1000;
+}
+
 export function parseProxyTokenResponse(body: string): ProxyTokenResponse {
   let parsed: unknown;
   try {
@@ -732,11 +739,10 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                     }
                     const result = parseProxyTokenResponse(respBody);
 
+                    const expires = absoluteOAuthExpiry(result.expires_in);
                     const expiresAt =
                       result.expires_in !== undefined
-                        ? new Date(
-                            Date.now() + result.expires_in * 1000,
-                          ).toISOString()
+                        ? new Date(expires).toISOString()
                         : null;
 
                     const scopes = result.scope !== undefined
@@ -762,7 +768,7 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                       type: "success" as const,
                       access: result.access_token,
                       refresh: result.refresh_token,
-                      expires: result.expires_in ?? 3600,
+                      expires,
                     };
                   }, tokenPath);
                 } catch (err) {
@@ -875,12 +881,12 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                       );
                     }
 
-                    // Calculate expiration time
-                    const expiresAt = result.expires_in
-                      ? new Date(
-                          Date.now() + result.expires_in * 1000,
-                        ).toISOString()
-                      : null;
+                    // OpenCode expects an absolute Unix timestamp in milliseconds.
+                    const expires = absoluteOAuthExpiry(result.expires_in);
+                    const expiresAt =
+                      result.expires_in !== undefined
+                        ? new Date(expires).toISOString()
+                        : null;
 
                     // Parse scopes from space-separated string into array
                     const scopes = result.scope
@@ -909,7 +915,7 @@ export const OnshapeAuthPlugin: Plugin = async (_ctx) => {
                       type: "success" as const,
                       access: result.access_token,
                       refresh: result.refresh_token,
-                      expires: result.expires_in ?? 3600,
+                      expires,
                     };
                   }, tokenPath);
                 } catch (err) {

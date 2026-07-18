@@ -15,6 +15,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 import {
+  absoluteOAuthExpiry,
   OnshapeAuthPlugin,
   parseProxyTokenResponse,
   publishTokenFile,
@@ -26,6 +27,12 @@ import {
 } from "./plugin.js";
 
 describe("proxy token response", () => {
+  test("converts relative expiry seconds to absolute milliseconds", () => {
+    expect(absoluteOAuthExpiry(3600, 1_000)).toBe(3_601_000);
+    expect(absoluteOAuthExpiry(0, 1_000)).toBe(1_000);
+    expect(absoluteOAuthExpiry(undefined, 1_000)).toBe(3_601_000);
+  });
+
   test("validates and normalizes a complete response", () => {
     expect(
       parseProxyTokenResponse(
