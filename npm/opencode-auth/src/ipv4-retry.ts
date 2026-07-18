@@ -35,6 +35,17 @@ import { request as httpsRequest } from "node:https";
 import type { RequestOptions } from "node:https";
 import { isIP } from "node:net";
 
+const MAX_PROXY_RESPONSE_BYTES = 1024 * 1024;
+
+class ProxyResponseTooLargeError extends Error {
+  constructor() {
+    super(
+      `proxy response body exceeds ${MAX_PROXY_RESPONSE_BYTES} byte limit`,
+    );
+    this.name = "ProxyResponseTooLargeError";
+  }
+}
+
 // ============================================================================
 // Proxy error response parsing
 // ============================================================================
@@ -213,10 +224,22 @@ function requestToIp(
     const request = isHttps ? httpsRequest : httpRequest;
     const options = requestOptionsForIp(ipAddress, parsed, method, body);
     const req = request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk: string) => (data += chunk));
+      const chunks: Buffer[] = [];
+      let receivedBytes = 0;
+      res.on("data", (chunk: Buffer) => {
+        receivedBytes += chunk.byteLength;
+        if (receivedBytes > MAX_PROXY_RESPONSE_BYTES) {
+          reject(new ProxyResponseTooLargeError());
+          res.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
       res.on("end", () => {
-        resolve({ status: res.statusCode ?? 0, body: data });
+        resolve({
+          status: res.statusCode ?? 0,
+          body: Buffer.concat(chunks, receivedBytes).toString("utf8"),
+        });
       });
       res.on("error", reject);
     });
@@ -313,9 +336,9 @@ export async function tryAddresses(
     if (deadline !== undefined && Date.now() >= deadline) return null;
     try {
       return await requestToIp(addr, parsed, method, body, deadline);
-    } catch {
-      // Connection error — try the next address.
-      continue;
+    } catch (error) {
+      if (error instanceof ProxyResponseTooLargeError) throw error;
+      // Connection errors fall through to the next address.
     }
   }
   return null;

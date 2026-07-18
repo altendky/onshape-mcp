@@ -54,6 +54,29 @@ async function closeServer(server: ReturnType<typeof createServer>) {
   });
 }
 
+async function localResponseServer(body: string) {
+  let requestCount = 0;
+  const server = createServer((_request, response) => {
+    requestCount += 1;
+    response.writeHead(200, { "Content-Type": "text/plain" });
+    response.end(body);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("missing server address");
+  return {
+    server,
+    port: address.port,
+    get requestCount() {
+      return requestCount;
+    },
+  };
+}
+
 // ============================================================================
 // parseProxyError
 // ============================================================================
@@ -259,6 +282,40 @@ describe("tryAddresses", () => {
       ]);
     } finally {
       await closeServer(server);
+    }
+  });
+
+  test("accepts a proxy response at the byte limit", async () => {
+    const body = "é".repeat(512 * 1024);
+    const local = await localResponseServer(body);
+    try {
+      const result = await tryAddresses(
+        ["127.0.0.1"],
+        `http://localhost:${local.port}/config`,
+        null,
+        "GET",
+      );
+      expect(result?.body).toBe(body);
+    } finally {
+      await closeServer(local.server);
+    }
+  });
+
+  test("rejects an oversized proxy response without retrying", async () => {
+    const body = `${"é".repeat(512 * 1024)}x`;
+    const local = await localResponseServer(body);
+    try {
+      await expect(
+        tryAddresses(
+          ["127.0.0.1", "127.0.0.1"],
+          `http://localhost:${local.port}/config`,
+          null,
+          "GET",
+        ),
+      ).rejects.toThrow("proxy response body exceeds 1048576 byte limit");
+      expect(local.requestCount).toBe(1);
+    } finally {
+      await closeServer(local.server);
     }
   });
 
