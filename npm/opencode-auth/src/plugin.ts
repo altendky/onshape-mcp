@@ -296,8 +296,16 @@ export async function withTokenFileLock<T>(
       try {
         mkdirSync(ownerPath, { mode: 0o700 });
       } catch (error) {
-        rmdirSync(lockPath);
-        throw error;
+        const cleanupErrors: unknown[] = [];
+        try {
+          rmdirSync(lockPath);
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError);
+        }
+        return completeWithCleanup<T>(
+          { status: "rejected", reason: error },
+          cleanupErrors,
+        );
       }
       lock = {
         path,
