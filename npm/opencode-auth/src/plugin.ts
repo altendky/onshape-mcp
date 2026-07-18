@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "fs";
 import { randomUUID } from "crypto";
-import { basename, dirname, join } from "path";
+import { basename, dirname, join, posix, win32 } from "path";
 import { homedir } from "os";
 import * as oauth from "oauth4webapi";
 import {
@@ -29,36 +29,44 @@ const as: oauth.AuthorizationServer = {
   code_challenge_methods_supported: ["S256"],
 };
 const OAUTH_SCOPES = "OAuth2Read OAuth2Write";
+const TOKEN_REPLACE_RETRY_MS = 25;
+const TOKEN_REPLACE_TIMEOUT_MS = 1_000;
 
 /**
  * Returns the data directory for onshape-mcp on the current platform.
- * Mirrors `default_token_file_path()` logic in onshape-client-core.
+ * Mirrors `default_token_file_path()` logic in onshape-mcp-io.
  */
-function dataDir(): string {
-  const platform = process.platform;
-  const home = homedir();
+export function resolveDataDir(
+  platform: NodeJS.Platform,
+  home: string,
+  environment: NodeJS.ProcessEnv,
+): string {
+  const paths = platform === "win32" ? win32 : posix;
+  const xdgDataHome = environment.XDG_DATA_HOME;
+  const xdgRoot = xdgDataHome ? paths.parse(xdgDataHome).root : "";
+  const isAbsoluteXdgDataHome =
+    xdgDataHome &&
+    paths.isAbsolute(xdgDataHome) &&
+    (platform !== "win32" || (xdgRoot !== "\\" && xdgRoot !== "/"));
+  if (isAbsoluteXdgDataHome) {
+    return paths.join(xdgDataHome, "onshape-mcp");
+  }
 
   if (platform === "darwin") {
-    return join(home, "Library", "Application Support", "onshape-mcp");
+    return paths.join(home, "Library", "Application Support", "onshape-mcp");
   } else if (platform === "win32") {
-    return join(
-      process.env.LOCALAPPDATA || join(home, "AppData", "Local"),
+    return paths.join(
+      environment.LOCALAPPDATA || paths.join(home, "AppData", "Local"),
       "onshape-mcp",
     );
   } else {
     // Linux and other Unix
-    return join(
-      process.env.XDG_DATA_HOME || join(home, ".local", "share"),
-      "onshape-mcp",
-    );
+    return paths.join(home, ".local", "share", "onshape-mcp");
   }
 }
 
-/**
- * Returns the default token file path for the current platform.
- */
 function tokenFilePath(): string {
-  return join(dataDir(), "tokens.json");
+  return join(resolveDataDir(process.platform, homedir(), process.env), "tokens.json");
 }
 
 /**
@@ -112,6 +120,30 @@ interface TokenFileLock {
   lockPath: string;
   ownerPath: string;
   cleanupPath: string;
+}
+
+export async function publishTokenFile(
+  publication: () => void,
+  platform: NodeJS.Platform = process.platform,
+  timeoutMs = TOKEN_REPLACE_TIMEOUT_MS,
+): Promise<void> {
+  const deadline = Bun.nanoseconds() + timeoutMs * 1_000_000;
+  while (true) {
+    try {
+      publication();
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (
+        platform !== "win32" ||
+        (code !== "EACCES" && code !== "EPERM" && code !== "EBUSY") ||
+        Bun.nanoseconds() >= deadline
+      ) {
+        throw error;
+      }
+      await Bun.sleep(TOKEN_REPLACE_RETRY_MS);
+    }
+  }
 }
 
 export async function withTokenFileLock<T>(
@@ -197,7 +229,7 @@ async function saveTokensLocked(
     chmodSync(temporaryPath, 0o600);
     closeSync(descriptor);
     descriptor = undefined;
-    renameSync(temporaryPath, path);
+    await publishTokenFile(() => renameSync(temporaryPath!, path));
     temporaryPath = undefined;
     chmodSync(path, 0o600);
   } finally {

@@ -12,7 +12,7 @@ use figment::providers::{Env, Format, Serialized, Toml};
 use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
 use secrecy::SecretString;
 
-use crate::oauth::{McpOAuthTokenFile, default_token_file_path};
+use crate::oauth::{absolute_env_path, default_token_file_path, load_token_file};
 
 /// The environment variable prefix used for all configuration.
 ///
@@ -33,7 +33,9 @@ pub const ENV_PREFIX: &str = "ONSHAPE_MCP_";
 /// Returns `None` if the platform config directory cannot be determined.
 #[must_use]
 pub fn default_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("onshape-mcp").join("config.toml"))
+    absolute_env_path(std::env::var_os("XDG_CONFIG_HOME"))
+        .or_else(dirs::config_dir)
+        .map(|dir| dir.join("onshape-mcp").join("config.toml"))
 }
 
 // ============================================================================
@@ -152,37 +154,13 @@ fn merge_credentials_from_token_file(config: &mut AppConfig) {
         return;
     }
 
-    // Check permissions — warn if the file exists but has problems
-    if let Err(err) = check_file_permissions(&path) {
-        // TODO: replace eprintln! with tracing::warn! once tracing is available
-        // See: https://github.com/altendky/onshape-mcp/issues/73
-        eprintln!(
-            "Warning: token file {} has insecure permissions, skipping credential extraction: {err}",
-            path.display(),
-        );
-        return;
-    }
-
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
+    let token_file = match load_token_file(&path) {
+        Ok(token_file) => token_file,
         Err(err) => {
             // TODO: replace eprintln! with tracing::warn! once tracing is available
             // See: https://github.com/altendky/onshape-mcp/issues/73
             eprintln!(
-                "Warning: could not read token file {}: {err}",
-                path.display(),
-            );
-            return;
-        }
-    };
-
-    let token_file = match serde_json::from_str::<McpOAuthTokenFile>(&contents) {
-        Ok(d) => d,
-        Err(err) => {
-            // TODO: replace eprintln! with tracing::warn! once tracing is available
-            // See: https://github.com/altendky/onshape-mcp/issues/73
-            eprintln!(
-                "Warning: could not parse token file {}: {err}",
+                "Warning: could not load token file {} for credential extraction: {err}",
                 path.display(),
             );
             return;
@@ -316,9 +294,8 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
 
-    use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
-
     use super::*;
+    use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
 
     #[test]
     fn defaults_toml_deserializes_into_app_config() {

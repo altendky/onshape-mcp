@@ -193,7 +193,7 @@ impl McpTestClient {
 
 /// Create a [`Command`] for the server binary with environment isolation.
 ///
-/// Sets up XDG overrides and clears `ONSHAPE_MCP_*` env vars so the spawned
+/// Sets up platform path overrides and clears `ONSHAPE_MCP_*` env vars so the spawned
 /// process cannot pick up the developer's local config/token files or env-based
 /// credentials.
 ///
@@ -207,13 +207,13 @@ fn isolated_command(isolation_dir: &std::path::Path) -> Command {
         cmd.env_remove(&key);
     }
 
-    // Override XDG directories so dirs::data_dir() and dirs::config_dir()
-    // resolve to empty temp directories instead of the user's real ones.
+    // Absolute XDG overrides are honored by onshape-mcp on every platform.
     cmd.env("XDG_DATA_HOME", isolation_dir.join("data"));
     cmd.env("XDG_CONFIG_HOME", isolation_dir.join("config"));
-    // Belt-and-suspenders: override HOME for platforms where dirs uses it
-    // as a fallback (e.g., if XDG vars are somehow not respected).
     cmd.env("HOME", isolation_dir.join("home"));
+    cmd.env("LOCALAPPDATA", isolation_dir.join("local-app-data"));
+    cmd.env("APPDATA", isolation_dir.join("roaming-app-data"));
+    cmd.env("USERPROFILE", isolation_dir.join("user-profile"));
 
     cmd
 }

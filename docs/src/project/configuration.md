@@ -24,6 +24,8 @@ From lowest to highest priority:
 | Unix | `~/.config/onshape-mcp/config.toml` |
 | Windows | `%APPDATA%\onshape-mcp\config.toml` |
 
+An absolute `XDG_CONFIG_HOME` overrides these defaults on every platform.
+
 > **Security note:** Authentication and HTTP OAuth settings can contain
 > sensitive credentials, including `secret_key`, `client_secret`, and
 > `onshape_client_secret`. To protect them:
@@ -117,3 +119,7 @@ OAuth tokens are stored separately from configuration:
 | Unix | `~/.local/share/onshape-mcp/tokens.json` |
 | macOS | `~/Library/Application Support/onshape-mcp/tokens.json` |
 | Windows | `%LOCALAPPDATA%\onshape-mcp\tokens.json` |
+
+An absolute `XDG_DATA_HOME` overrides these defaults on every platform. Windows
+token storage otherwise always uses LocalAppData; old token files under
+RoamingAppData (`%APPDATA%`) are ignored.

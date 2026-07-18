@@ -15,6 +15,8 @@ import { join } from "path";
 
 import {
   OnshapeAuthPlugin,
+  publishTokenFile,
+  resolveDataDir,
   saveTokens,
   tokenLockPath,
   validateProxyUrl,
@@ -27,6 +29,48 @@ async function methods() {
 }
 
 describe("Onshape auth methods", () => {
+  test("honors an absolute POSIX XDG data override", () => {
+    expect(
+      resolveDataDir("darwin", "/home/test", {
+        XDG_DATA_HOME: "/isolated/data",
+      }),
+    ).toBe("/isolated/data/onshape-mcp");
+  });
+
+  test("honors only drive-qualified or UNC Windows XDG data overrides", () => {
+    const localData = "C:\\Users\\test\\AppData\\Local";
+    const resolveWindowsDataDir = (xdgDataHome: string) =>
+      resolveDataDir("win32", "C:\\Users\\test", {
+        XDG_DATA_HOME: xdgDataHome,
+        LOCALAPPDATA: localData,
+      });
+
+    expect(resolveWindowsDataDir("C:\\isolated\\data")).toBe(
+      "C:\\isolated\\data\\onshape-mcp",
+    );
+    expect(resolveWindowsDataDir("\\\\server\\share\\data")).toBe(
+      "\\\\server\\share\\data\\onshape-mcp",
+    );
+    expect(resolveWindowsDataDir("\\data")).toBe(
+      `${localData}\\onshape-mcp`,
+    );
+    expect(resolveWindowsDataDir("/data")).toBe(
+      `${localData}\\onshape-mcp`,
+    );
+    expect(resolveWindowsDataDir("relative")).toBe(
+      `${localData}\\onshape-mcp`,
+    );
+  });
+
+  test("APPDATA cannot override LOCALAPPDATA for Windows token storage", () => {
+    expect(
+      resolveDataDir("win32", "/home/test", {
+        LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+        APPDATA: "C:\\Users\\test\\AppData\\Roaming",
+      }),
+    ).toBe("C:\\Users\\test\\AppData\\Local\\onshape-mcp");
+  });
+
   test("offers direct OAuth first and labels proxy as self-hosted", async () => {
     const authMethods = await methods();
 
@@ -110,6 +154,35 @@ const testTokens = {
 };
 
 describe("token writer lock", () => {
+  test("bounds persistent Windows sharing failures and rethrows the final error", async () => {
+    const publicationError = Object.assign(new Error("file is still shared"), {
+      code: "EACCES",
+    });
+    const timeoutMs = 50;
+    const started = Bun.nanoseconds();
+    let attempts = 0;
+    let thrown: unknown;
+
+    try {
+      await publishTokenFile(
+        () => {
+          attempts += 1;
+          throw publicationError;
+        },
+        "win32",
+        timeoutMs,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    const elapsedMs = (Bun.nanoseconds() - started) / 1_000_000;
+    expect(thrown).toBe(publicationError);
+    expect(attempts).toBeGreaterThan(1);
+    expect(elapsedMs).toBeGreaterThanOrEqual(timeoutMs);
+    expect(elapsedMs).toBeLessThan(500);
+  });
+
   test("holds the shared lock for the complete operation", async () => {
     const dir = mkdtempSync(join(tmpdir(), "onshape-token-transaction-"));
     const path = join(dir, "tokens.json");

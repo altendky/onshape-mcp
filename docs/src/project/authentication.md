@@ -97,13 +97,19 @@ OAuth access and refresh tokens are stored in a local JSON file:
 | macOS | `~/Library/Application Support/onshape-mcp/tokens.json` |
 | Windows | `%LOCALAPPDATA%\onshape-mcp\tokens.json` |
 
+An absolute `XDG_DATA_HOME` overrides these defaults on every platform. Windows
+token storage otherwise always uses LocalAppData. Old token files under
+RoamingAppData (`%APPDATA%`) are ignored, so reauthentication may be required.
+
 The token file has the same permission requirements as the config file (0600 on Unix).
 Token refresh is handled automatically: the server proactively refreshes tokens before they expire and reactively refreshes on 401 responses. Refreshed tokens are persisted to the token file. The server also detects externally-refreshed tokens (e.g. from another process writing the token file).
 
 Rust and OpenCode writers serialize each complete credential-consuming
 transaction with the adjacent `tokens.json.lock` directory. The lock is acquired
 before a refresh token or authorization code is exchanged and remains held
-through atomic token-file replacement and in-memory adoption. A waiter rechecks
+through atomic token-file replacement and in-memory adoption. Windows writers
+briefly retry replacement when a short-lived third-party reader denies deletion.
+A waiter rechecks
 the file after acquiring the lock and adopts a complete publication from the
 preceding transaction instead of repeating an exchange. Writers wait up to 75
 seconds, longer than the 30-second direct exchange timeout and 60-second proxy

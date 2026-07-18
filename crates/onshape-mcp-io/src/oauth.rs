@@ -3,6 +3,8 @@
 //! Handles reading and writing OAuth token files with proper permission checks.
 
 use std::{
+    ffi::OsString,
+    fs::OpenOptions,
     io::{Read, Write},
     path::{Path, PathBuf},
     time::Duration,
@@ -16,6 +18,14 @@ use crate::config::{ConfigLoadError, check_file_permissions};
 const TOKEN_LOCK_SUFFIX: &str = ".lock";
 const TOKEN_LOCK_RETRY: Duration = Duration::from_millis(25);
 const TOKEN_LOCK_TIMEOUT: Duration = Duration::from_secs(75);
+#[cfg(windows)]
+const TOKEN_REPLACE_RETRY: Duration = Duration::from_millis(25);
+#[cfg(windows)]
+const TOKEN_REPLACE_TIMEOUT: Duration = Duration::from_secs(1);
+
+pub(crate) fn absolute_env_path(value: Option<OsString>) -> Option<PathBuf> {
+    value.map(PathBuf::from).filter(|path| path.is_absolute())
+}
 
 /// Returns the default data directory for onshape-mcp on the current platform.
 ///
@@ -26,7 +36,9 @@ const TOKEN_LOCK_TIMEOUT: Duration = Duration::from_secs(75);
 /// Returns `None` if the platform data directory cannot be determined.
 #[must_use]
 pub fn default_data_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("onshape-mcp"))
+    absolute_env_path(std::env::var_os("XDG_DATA_HOME"))
+        .or_else(dirs::data_local_dir)
+        .map(|dir| dir.join("onshape-mcp"))
 }
 
 /// Returns the default token file path for the current platform.
@@ -116,7 +128,18 @@ pub(crate) fn load_token_file_with_snapshot(
         },
     })?;
 
-    let mut file = std::fs::File::open(path).map_err(|source| TokenFileError::Read {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+        options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+    }
+    let mut file = options.open(path).map_err(|source| TokenFileError::Read {
         path: path.display().to_string(),
         source,
     })?;
@@ -206,12 +229,44 @@ pub(crate) fn save_token_file_locked(
             path: path.display().to_string(),
             source,
         })?;
+    persist_token_file(file, path)?;
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn persist_token_file(file: tempfile::NamedTempFile, path: &Path) -> Result<(), TokenFileError> {
     file.persist(path).map_err(|error| TokenFileError::Write {
         path: path.display().to_string(),
         source: error.error,
     })?;
-
     Ok(())
+}
+
+#[cfg(windows)]
+fn persist_token_file(
+    mut file: tempfile::NamedTempFile,
+    path: &Path,
+) -> Result<(), TokenFileError> {
+    let deadline = std::time::Instant::now() + TOKEN_REPLACE_TIMEOUT;
+    loop {
+        match file.persist(path) {
+            Ok(_) => return Ok(()),
+            Err(error)
+                if error.error.kind() == std::io::ErrorKind::PermissionDenied
+                    && std::time::Instant::now() < deadline =>
+            {
+                file = error.file;
+                std::thread::sleep(TOKEN_REPLACE_RETRY);
+            }
+            Err(error) => {
+                return Err(TokenFileError::Write {
+                    path: path.display().to_string(),
+                    source: error.error,
+                });
+            }
+        }
+    }
 }
 
 /// Exclusive cross-process token writer lock.
@@ -562,6 +617,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn absolute_environment_paths_are_accepted_and_relative_paths_are_ignored() {
+        assert_eq!(
+            absolute_env_path(Some(std::env::temp_dir().into_os_string())),
+            Some(std::env::temp_dir())
+        );
+        assert_eq!(absolute_env_path(Some(OsString::from("relative"))), None);
+        assert_eq!(absolute_env_path(Some(OsString::new())), None);
+    }
+
     #[tokio::test]
     async fn save_creates_parent_directories() {
         let dir = TempDir::new().expect("should create temp dir");
@@ -731,9 +796,7 @@ mod tests {
         let reader_path = path.clone();
         let reader = std::thread::spawn(move || {
             while !reader_stop.load(Ordering::Relaxed) {
-                let contents = std::fs::read_to_string(&reader_path).expect("read should succeed");
-                serde_json::from_str::<McpOAuthTokenFile>(&contents)
-                    .expect("reader must only observe complete JSON");
+                load_token_file(&reader_path).expect("reader must load a complete publication");
                 reader_reads.fetch_add(1, Ordering::Relaxed);
             }
         });
@@ -748,6 +811,39 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         reader.join().expect("reader should not panic");
         assert!(reads.load(Ordering::Relaxed) > 0);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn publication_retries_while_reader_denies_delete_sharing() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+        let dir = TempDir::new().expect("should create temp dir");
+        let path = dir.path().join("tokens.json");
+        save_token_file(&path, &test_token_file())
+            .await
+            .expect("should save baseline");
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)
+            .expect("should hold a non-delete-sharing reader");
+        let lock = TokenFileLock::acquire(&path)
+            .await
+            .expect("should acquire lock");
+        let writer_path = path.clone();
+        let writer = tokio::task::spawn_blocking(move || {
+            save_token_file_locked(&writer_path, &test_token_file(), &lock)
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        drop(reader);
+        writer
+            .await
+            .expect("writer task should finish")
+            .expect("publication should retry and succeed");
     }
 
     #[test]
