@@ -7,6 +7,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
+import { networkInterfaces } from "node:os";
 import {
   isIpv6,
   parseProxyError,
@@ -16,6 +17,10 @@ import {
   shouldRetryIpv4,
   tryAddresses,
 } from "./ipv4-retry.js";
+
+const hasIpv6Loopback = Object.values(networkInterfaces()).some((addresses) =>
+  addresses?.some(({ address }) => address === "::1"),
+);
 
 async function localHttpServer(host: string) {
   const requests: Array<{ method?: string; host?: string; body: string }> = [];
@@ -257,27 +262,25 @@ describe("tryAddresses", () => {
     }
   });
 
-  test("performs local HTTP GET to an IPv6 literal when available", async () => {
-    let local;
-    try {
-      local = await localHttpServer("::1");
-    } catch {
-      return;
-    }
-    const { server, requests, port } = local;
-    try {
-      const result = await tryAddresses(
-        ["::1"],
-        `http://[::1]:${port}/config`,
-        null,
-        "GET",
-      );
-      expect(result?.status).toBe(200);
-      expect(requests[0]?.host).toBe(`[::1]:${port}`);
-    } finally {
-      await closeServer(server);
-    }
-  });
+  test.skipIf(!hasIpv6Loopback)(
+    "performs local HTTP GET to an IPv6 literal when available",
+    async () => {
+      const local = await localHttpServer("::1");
+      const { server, requests, port } = local;
+      try {
+        const result = await tryAddresses(
+          ["::1"],
+          `http://[::1]:${port}/config`,
+          null,
+          "GET",
+        );
+        expect(result?.status).toBe(200);
+        expect(requests[0]?.host).toBe(`[::1]:${port}`);
+      } finally {
+        await closeServer(server);
+      }
+    },
+  );
 });
 
 describe("address resolution", () => {
