@@ -387,14 +387,21 @@ fn persisted_direct_credentials_survive_process_restart() {
         client.shutdown();
     }
 
-    let partial_config = HashMap::from([("ONSHAPE_MCP_AUTH__CLIENT_ID", "incomplete-explicit-id")]);
-    let mut client =
-        McpTestClient::spawn_in_isolation(Arc::clone(&isolation_dir), &partial_config, &[]);
-    client.initialize();
-    let auth_result = call_auth_status(&mut client);
-    assert_eq!(auth_result["status"], "not_validated");
-    assert_eq!(auth_result["auth_method"], "oauth");
-    client.shutdown();
+    for partial_config in [
+        HashMap::from([("ONSHAPE_MCP_AUTH__CLIENT_ID", "incomplete-explicit-id")]),
+        HashMap::from([(
+            "ONSHAPE_MCP_AUTH__CLIENT_SECRET",
+            "incomplete-explicit-secret",
+        )]),
+    ] {
+        let mut client =
+            McpTestClient::spawn_in_isolation(Arc::clone(&isolation_dir), &partial_config, &[]);
+        client.initialize();
+        let auth_result = call_auth_status(&mut client);
+        assert_eq!(auth_result["status"], "not_validated");
+        assert_eq!(auth_result["auth_method"], "oauth");
+        client.shutdown();
+    }
 }
 
 #[test]

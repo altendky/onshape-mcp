@@ -139,8 +139,9 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
 /// during `opencode auth login`. This allows the MCP server to refresh tokens
 /// without requiring separate `client_id`/`client_secret` configuration.
 ///
-/// Recovers only a complete pair when neither field was explicitly configured.
-/// This avoids constructing a client ID/secret pair from different sources.
+/// Recovers a complete pair when explicit configuration does not provide one.
+/// A complete token-file pair atomically replaces either partial explicit field,
+/// avoiding credentials assembled from different sources.
 fn merge_credentials_from_token_file(config: &mut AppConfig) {
     if config.auth.client_id.is_some() && config.auth.client_secret.is_some() {
         return;
@@ -225,9 +226,10 @@ fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLo
 ///
 /// **Precedence** (lowest to highest):
 /// 1. Hardcoded defaults
-/// 2. Credentials file (OAuth `client_id`/`client_secret` only, written by `opencode auth login`)
-/// 3. Config file (TOML) — if it exists and has secure permissions
-/// 4. Environment variables (`ONSHAPE_MCP_` prefix, double underscore for nesting)
+/// 2. Config file (TOML) — if it exists and has secure permissions
+/// 3. Environment variables (`ONSHAPE_MCP_` prefix, double underscore for nesting)
+/// 4. A complete token-file OAuth credential pair when explicit configuration
+///    does not provide a complete pair
 ///
 /// # Arguments
 ///
