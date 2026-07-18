@@ -349,9 +349,13 @@ curl -X POST https://oauth-proxy.example.com/token/exchange \
 curl -X POST https://oauth-proxy.example.com/token/refresh \
   -H 'Content-Type: application/json' \
   -d '{"refresh_token": "test-refresh-token"}'
+```
 
+Run the disallowed-source check from a network whose public IPv4 or IPv6 egress address is not matched directly, or through a hostname, by `ALLOWED_SOURCES`. The expected response has HTTP status 403 and a body containing `{ "error": "forbidden", "source_ip": "..." }`.
+
+```sh
 # Verify 403 from a disallowed source
-curl -X POST https://oauth-proxy.example.com/token/exchange \
+curl --include -X POST https://oauth-proxy.example.com/token/exchange \
   -H 'Content-Type: application/json' \
   -d '{"code": "test", "redirect_uri": "http://localhost:8080/callback"}'
 ```
