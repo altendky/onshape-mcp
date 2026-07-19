@@ -38,9 +38,6 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
-          # Workaround for Codecov action Keybase GPG key import failure:
-          # https://github.com/codecov/codecov-action/issues/1955#issuecomment-4640001038
-          use_pypi: true
           use_oidc: true
           files: npm/onshape-mcp/coverage/lcov.info
           flags: npm
