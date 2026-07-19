@@ -10,7 +10,7 @@ token refresh lifecycle, and the authentication state machine.
 | Auto (default) | Implemented | Automatically detects the best available auth method |
 | API Keys (Basic) | Implemented | Base64-encoded credentials over HTTPS; personal use, single user |
 | API Keys (HMAC-SHA256) | Future | Per-request signed headers with nonce/timestamp; replay protection, secret never sent |
-| OAuth 2.0 | Implemented | Authorization code flow via OpenCode plugin; token file storage |
+| OAuth 2.0 | Implemented | Direct local authorization by default; optional explicit self-hosted proxy; HTTP server OAuth |
 
 ## Auto-Detection (Default)
 
@@ -49,11 +49,15 @@ secret_key = "..."
 
 ### OAuth 2.0 Credentials
 
-OAuth requires a client ID and client secret from an Onshape OAuth application, plus access tokens obtained through the authorization code flow.
+Local OAuth requires a client ID and client secret from an Onshape OAuth
+application owned by the user, plus access tokens obtained through the
+authorization code flow. Direct exchange with Onshape is the default.
 
-The client secret can be provided directly to the CLI (via config file, environment variable, or CLI flag) or held by the [OAuth token exchange proxy](oauth-proxy.md).
-When using the proxy, the CLI only needs the client ID (which is public) — the proxy adds the client secret when forwarding token requests to Onshape.
-See [OAuth Proxy](oauth-proxy.md) for details on this deployment model.
+An optional [OAuth token exchange proxy](oauth-proxy.md) can hold the secret,
+but proxy mode must be selected explicitly with a nonblank URL for a proxy you
+self-host. The project operates no public proxy. Streamable HTTP uses OAuth
+credentials configured by that server's independent operator and does not use
+the local token exchange proxy.
 
 **Config file example:**
 
@@ -80,6 +84,9 @@ client_secret = "..."
 | `--client-id <ID>` | OAuth 2.0 client ID |
 | `--client-secret <SECRET>` | OAuth 2.0 client secret |
 
+Prefer environment variables or configuration for direct credentials. Secret
+CLI arguments may be retained in shell history or visible in process listings.
+
 ### OAuth Token File
 
 OAuth access and refresh tokens are stored in a local JSON file:
@@ -90,12 +97,38 @@ OAuth access and refresh tokens are stored in a local JSON file:
 | macOS | `~/Library/Application Support/onshape-mcp/tokens.json` |
 | Windows | `%LOCALAPPDATA%\onshape-mcp\tokens.json` |
 
+An absolute `XDG_DATA_HOME` overrides these defaults on every platform. Windows
+token storage otherwise always uses LocalAppData. Old token files under
+RoamingAppData (`%APPDATA%`) are ignored, so reauthentication may be required.
+
 The token file has the same permission requirements as the config file (0600 on Unix).
 Token refresh is handled automatically: the server proactively refreshes tokens before they expire and reactively refreshes on 401 responses. Refreshed tokens are persisted to the token file. The server also detects externally-refreshed tokens (e.g. from another process writing the token file).
 
+Rust and OpenCode writers serialize each complete credential-consuming
+transaction with the adjacent `tokens.json.lock` directory. The lock is acquired
+before a refresh token or authorization code is exchanged and remains held
+through atomic token-file replacement and in-memory adoption. Windows writers
+briefly retry replacement when a short-lived third-party reader denies deletion.
+A waiter rechecks
+the file after acquiring the lock and adopts a complete publication from the
+preceding transaction instead of repeating an exchange. Writers wait up to 75
+seconds, longer than the 30-second direct exchange timeout and 60-second proxy
+exchange transaction limit, and never remove an existing lock automatically. If
+that wait times out, stop all onshape-mcp and OpenCode token writers; only after
+confirming that no writer is running, manually remove the `tokens.json.lock`
+directory.
+
 The token file includes an optional `scopes` field tracking the OAuth scopes granted by the authorization server. The `token_type` field is validated on load — only `"bearer"` (case-insensitive) is accepted.
 
-The token file may also include `client_id` and `client_secret` fields. When the user completes `opencode auth login` via the OpenCode plugin, the plugin writes these alongside the tokens so the MCP server can refresh tokens without requiring separate client credential configuration. Explicit configuration (config file, environment variables, CLI flags) always takes precedence over credentials embedded in the token file.
+The token file may also include `client_id` plus either `client_secret` for
+direct refresh or `proxy_url` for refresh through an explicitly selected
+self-hosted proxy. A newly completed login overwrites the file, so an existing
+file does not prevent switching modes or reauthorizing. Initial refresh-method
+precedence is an explicitly configured `proxy_url`, then an explicitly
+configured complete `client_id` and `client_secret` pair, then complete persisted
+token-file metadata. Persisted direct credentials also fill missing direct
+configuration, allowing later starts without repeating those settings. The
+watcher adopts complete refresh metadata from a newly written token file.
 
 ### Token File Watching
 
@@ -129,21 +162,24 @@ Both methods support two modes:
 
 | Mode | Description | Client secret |
 | ------ | ------------- | --------------- |
-| Proxy (default) | Token exchange via the [OAuth proxy](oauth-proxy.md) | Held by the proxy |
-| Direct | Token exchange directly with Onshape | Provided by the user |
+| Direct (default) | Token exchange directly with Onshape | Provided by the user |
+| Proxy | Token exchange via an explicitly selected [self-hosted proxy](oauth-proxy.md) | Held by the proxy |
 
 #### CLI Usage
 
 ```bash
-# Proxy mode (default) — no client secret needed
+# Direct mode (default) with credentials supplied by the environment
+export ONSHAPE_MCP_AUTH__CLIENT_ID=YOUR_ID
+export ONSHAPE_MCP_AUTH__CLIENT_SECRET=YOUR_SECRET
 onshape-mcp auth login
 
-# Proxy mode with custom proxy URL
-onshape-mcp auth login --proxy-url https://my-proxy.example.com
-
-# Direct mode — requires client_id and client_secret
-onshape-mcp auth login --direct --client-id YOUR_ID --client-secret YOUR_SECRET
+# Optional proxy mode — URL is required and must identify your self-hosted proxy
+onshape-mcp auth login --proxy-url https://oauth-proxy.example.com
 ```
+
+Configuration is also supported. Avoid `--client-secret` when practical because
+secret CLI arguments may be retained in shell history or visible in process
+listings.
 
 The CLI opens your browser to the Onshape authorization page, starts a local callback server on `localhost:18338`, exchanges the authorization code for tokens, and saves them to the token file. The MCP server automatically detects the new tokens via the file watcher.
 
@@ -162,9 +198,25 @@ Add it to your `opencode.json`:
 }
 ```
 
-OpenCode installs the plugin automatically at startup. Then run `opencode auth login` to complete the OAuth flow.
-The plugin prompts for client ID and client secret, opens the Onshape authorization page in your browser,
-starts a local callback server, exchanges the authorization code for tokens, and writes them to the token file.
+OpenCode installs the plugin automatically at startup. Then run `opencode auth
+login` to complete the OAuth flow. Direct OAuth is listed first and prompts for
+your client ID and secret. The optional self-hosted proxy method requires an
+explicit nonblank proxy URL. Both methods preserve the same callback, PKCE,
+exchange, and token-file behavior as the standalone flow.
+
+The current MCP login tool schema still accepts direct `client_secret` input.
+Redesigning that interface is deferred in
+[#548](https://github.com/altendky/onshape-mcp/issues/548); clients should avoid
+logging or retaining tool arguments containing secrets.
+
+### Streamable HTTP OAuth
+
+Experimental Streamable HTTP servers perform per-user browser OAuth using the
+independent server operator's Onshape OAuth application. They do not use the
+local token file or token exchange proxy. The project provides no public hosted
+server, and users must trust the operator with their Onshape tokens. ChatGPT
+connectivity is a known failure tracked in
+[#546](https://github.com/altendky/onshape-mcp/issues/546).
 
 **Future credential sources** (to be implemented):
 
@@ -220,7 +272,7 @@ Validation state is runtime-only and resets to `NotValidated` whenever credentia
 When the OAuth refresh token is revoked or expired (the token endpoint returns `unauthorized_client` or `invalid_grant`), the server:
 
 1. Transitions from `OAuth` state to `OAuthPending` — signaling that the user must re-authenticate.
-2. Sets validation state to `Invalid` with an actionable error message directing the user to complete the OAuth flow (e.g. `opencode auth login`).
+2. Sets validation state to `Invalid` with an actionable error message directing the user to run direct `onshape-mcp auth login` or explicitly select a self-hosted proxy.
 3. Continues watching for a new token file. Once the user completes re-authorization and tokens are written, the server automatically transitions back to `OAuth` state.
 
 ## MCP Notifications

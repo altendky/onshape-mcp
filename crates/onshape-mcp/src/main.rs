@@ -51,7 +51,7 @@ enum Command {
         #[command(subcommand)]
         action: AuthCommand,
     },
-    /// Run the MCP server over Streamable HTTP transport.
+    /// Run the experimental MCP server over self-hosted Streamable HTTP transport.
     ///
     /// Serves the MCP endpoint at `/mcp` with per-user OAuth authentication
     /// via Onshape. Requires `public_url`, `onshape_client_id`, and
@@ -93,15 +93,14 @@ enum AuthCommand {
     /// Opens your browser to authorize with Onshape, then exchanges
     /// the authorization code for tokens and saves them to the token file.
     Login {
-        /// Use direct mode (provide `client_id` and `client_secret` directly).
-        /// By default, uses the OAuth proxy which holds the client secret.
-        #[arg(long)]
-        direct: bool,
-
-        /// OAuth proxy URL override (only used in proxy mode).
-        #[arg(long)]
+        /// Use an explicitly self-hosted OAuth proxy instead of direct OAuth.
+        #[arg(long, value_parser = parse_nonblank_proxy_url)]
         proxy_url: Option<String>,
     },
+}
+
+fn parse_nonblank_proxy_url(value: &str) -> Result<String, String> {
+    onshape_mcp_core::validate_proxy_url(value)
 }
 
 #[tokio::main]
@@ -210,33 +209,26 @@ async fn handle_auth_command(
     cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match action {
-        AuthCommand::Login { direct, proxy_url } => {
-            handle_auth_login(*direct, proxy_url.clone(), cli).await
-        }
+        AuthCommand::Login { proxy_url } => handle_auth_login(proxy_url.clone(), cli).await,
     }
 }
 
 /// Handle `auth login` — complete the OAuth authorization flow.
 async fn handle_auth_login(
-    direct: bool,
     proxy_url: Option<String>,
     cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use onshape_mcp_core::tools::{DEFAULT_PROXY_URL, LoginMode};
+    use onshape_mcp_core::tools::LoginMode;
 
-    // Determine the login mode from flags and config.
-    let mode = if direct {
-        // Direct mode: need client_id and client_secret.
-        // Try CLI flags first, then load from config.
+    // Supplying a proxy URL explicitly selects self-hosted proxy mode.
+    let mode = if let Some(proxy_url) = proxy_url {
+        LoginMode::Proxy { proxy_url }
+    } else {
         let (client_id, client_secret) = resolve_direct_credentials(cli)?;
         LoginMode::Direct {
             client_id,
             client_secret,
         }
-    } else {
-        // Proxy mode.
-        let url = proxy_url.unwrap_or_else(|| DEFAULT_PROXY_URL.to_string());
-        LoginMode::Proxy { proxy_url: url }
     };
 
     eprintln!("Starting OAuth authorization flow...");
@@ -286,7 +278,7 @@ fn resolve_direct_credentials(
 
     // Try CLI flags first.
     if let (Some(id), Some(secret)) = (&cli.client_id, &cli.client_secret) {
-        return Ok((id.clone(), secret.clone()));
+        return validate_direct_credentials(id.clone(), secret.clone());
     }
 
     // Fall back to config file / env vars.
@@ -304,6 +296,20 @@ fn resolve_direct_credentials(
          Provide via --client-secret flag, config file, or ONSHAPE_MCP_AUTH__CLIENT_SECRET env var.",
     )?;
     let client_secret = client_secret_value.expose_secret().to_string();
+
+    validate_direct_credentials(client_id, client_secret)
+}
+
+fn validate_direct_credentials(
+    client_id: String,
+    client_secret: String,
+) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+    if client_id.trim().is_empty() {
+        return Err("client_id must not be blank".into());
+    }
+    if client_secret.trim().is_empty() {
+        return Err("client_secret must not be blank".into());
+    }
 
     Ok((client_id, client_secret))
 }
@@ -347,4 +353,154 @@ fn build_cli_overrides(cli: &Cli) -> figment::value::Dict {
         cli_overrides.insert("auth".into(), figment::value::Value::from(auth_overrides));
     }
     cli_overrides
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::{AuthCommand, Cli, Command, resolve_direct_credentials};
+
+    #[test]
+    fn bare_auth_login_has_no_proxy_url() {
+        let cli = Cli::try_parse_from(["onshape-mcp", "auth", "login"]).expect("should parse");
+
+        assert!(matches!(
+            cli.command,
+            Some(Command::Auth {
+                action: AuthCommand::Login { proxy_url: None }
+            })
+        ));
+    }
+
+    #[test]
+    fn auth_login_proxy_url_is_explicit() {
+        let cli = Cli::try_parse_from([
+            "onshape-mcp",
+            "auth",
+            "login",
+            "--proxy-url",
+            "https://oauth-proxy.example.com",
+        ])
+        .expect("should parse");
+
+        assert!(matches!(
+            cli.command,
+            Some(Command::Auth {
+                action: AuthCommand::Login {
+                    proxy_url: Some(ref url)
+                }
+            }) if url == "https://oauth-proxy.example.com"
+        ));
+    }
+
+    #[test]
+    fn auth_login_direct_flag_is_removed() {
+        let Err(error) = Cli::try_parse_from(["onshape-mcp", "auth", "login", "--direct"]) else {
+            panic!("--direct should not be accepted");
+        };
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn auth_login_rejects_blank_proxy_url() {
+        let Err(error) = Cli::try_parse_from(["onshape-mcp", "auth", "login", "--proxy-url", "  "])
+        else {
+            panic!("blank --proxy-url should not be accepted");
+        };
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn auth_login_rejects_insecure_non_loopback_proxy_url() {
+        let Err(error) = Cli::try_parse_from([
+            "onshape-mcp",
+            "auth",
+            "login",
+            "--proxy-url",
+            "http://proxy.example.com",
+        ]) else {
+            panic!("insecure remote proxy should fail");
+        };
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+        assert!(error.to_string().contains("https://"));
+    }
+
+    #[test]
+    fn auth_login_allows_http_loopback_proxy_url() {
+        for proxy_url in ["http://localhost:8787", "http://127.8.9.10", "http://[::1]"] {
+            Cli::try_parse_from(["onshape-mcp", "auth", "login", "--proxy-url", proxy_url])
+                .expect("loopback HTTP proxy should parse");
+        }
+    }
+
+    #[test]
+    fn direct_credentials_reject_blank_client_id() {
+        let cli = Cli::try_parse_from([
+            "onshape-mcp",
+            "--client-id",
+            "  ",
+            "--client-secret",
+            "secret",
+            "auth",
+            "login",
+        ])
+        .expect("should parse");
+
+        let error = resolve_direct_credentials(&cli).expect_err("blank client ID should fail");
+        assert!(error.to_string().contains("client_id"));
+    }
+
+    #[test]
+    fn direct_credentials_reject_blank_client_secret() {
+        let cli = Cli::try_parse_from([
+            "onshape-mcp",
+            "--client-id",
+            "client",
+            "--client-secret",
+            "\t ",
+            "auth",
+            "login",
+        ])
+        .expect("should parse");
+
+        let error = resolve_direct_credentials(&cli).expect_err("blank client secret should fail");
+        assert!(error.to_string().contains("client_secret"));
+    }
+
+    #[test]
+    fn direct_credentials_preserve_nonblank_client_secret() {
+        let cli = Cli::try_parse_from([
+            "onshape-mcp",
+            "--client-id",
+            "client",
+            "--client-secret",
+            " secret with spaces ",
+            "auth",
+            "login",
+        ])
+        .expect("should parse");
+
+        let (_, secret) = resolve_direct_credentials(&cli).expect("credentials should resolve");
+        assert_eq!(secret, " secret with spaces ");
+    }
+
+    #[test]
+    fn http_help_marks_transport_experimental_and_self_hosted() {
+        let mut command = Cli::command();
+        let http = command
+            .find_subcommand_mut("http")
+            .expect("http subcommand should exist");
+        let help = http
+            .get_about()
+            .expect("http help should exist")
+            .to_string();
+
+        assert!(help.contains("experimental"));
+        assert!(help.contains("self-hosted"));
+    }
 }

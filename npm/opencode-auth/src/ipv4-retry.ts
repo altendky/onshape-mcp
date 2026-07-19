@@ -30,7 +30,21 @@
  */
 
 import { resolve4, resolve6 } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import type { RequestOptions } from "node:https";
+import { isIP } from "node:net";
+
+const MAX_PROXY_RESPONSE_BYTES = 1024 * 1024;
+
+class ProxyResponseTooLargeError extends Error {
+  constructor() {
+    super(
+      `proxy response body exceeds ${MAX_PROXY_RESPONSE_BYTES} byte limit`,
+    );
+    this.name = "ProxyResponseTooLargeError";
+  }
+}
 
 // ============================================================================
 // Proxy error response parsing
@@ -56,11 +70,7 @@ export function parseProxyError(body: string): ProxyErrorResponse | null {
     return null;
   }
 
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    Array.isArray(parsed)
-  ) {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return null;
   }
 
@@ -109,8 +119,11 @@ export function shouldRetryIpv4(responseBody: string): boolean {
  * Returns an empty array if DNS resolution fails or yields no results.
  */
 export async function resolveIpv4(hostname: string): Promise<string[]> {
+  const normalized = normalizeHostname(hostname);
+  if (normalized.toLowerCase() === "localhost") return ["127.0.0.1"];
+  if (isIP(normalized) !== 0) return isIP(normalized) === 4 ? [normalized] : [];
   try {
-    return await resolve4(hostname);
+    return await resolve4(normalized);
   } catch {
     return [];
   }
@@ -122,25 +135,34 @@ export async function resolveIpv4(hostname: string): Promise<string[]> {
  * Returns an empty array if DNS resolution fails or yields no results.
  */
 export async function resolveIpv6(hostname: string): Promise<string[]> {
+  const normalized = normalizeHostname(hostname);
+  if (normalized.toLowerCase() === "localhost") return ["::1"];
+  if (isIP(normalized) !== 0) return isIP(normalized) === 6 ? [normalized] : [];
   try {
-    return await resolve6(hostname);
+    return await resolve6(normalized);
   } catch {
     return [];
   }
 }
 
+function normalizeHostname(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+}
+
 // ============================================================================
-// HTTPS POST to a specific IP
+// HTTP(S) requests to a specific IP
 // ============================================================================
 
-/** Result of an HTTPS POST request. */
+/** Result of an HTTP(S) request. */
 export interface HttpResult {
   status: number;
   body: string;
 }
 
 /**
- * Make an HTTPS POST request with JSON body to a specific IP address.
+ * Make an HTTP(S) POST request with JSON body to a specific IP address.
  *
  * The request is sent directly to `ipAddress` with `servername` set
  * for TLS SNI and `Host` set for HTTP routing, so Cloudflare (or any
@@ -158,11 +180,11 @@ export function httpsPostJsonToIp(
 ): Promise<HttpResult> {
   const parsed = new URL(url);
   const body = JSON.stringify(jsonBody);
-  return httpsRequestToIp(ipAddress, parsed, "POST", body);
+  return requestToIp(ipAddress, parsed, "POST", body);
 }
 
 /**
- * Make an HTTPS GET request to a specific IP address.
+ * Make an HTTP(S) GET request to a specific IP address.
  *
  * The request is sent directly to `ipAddress` with `servername` set
  * for TLS SNI and `Host` set for HTTP routing.
@@ -174,7 +196,7 @@ export function httpsGetToIp(
   url: string,
 ): Promise<HttpResult> {
   const parsed = new URL(url);
-  return httpsRequestToIp(ipAddress, parsed, "GET", null);
+  return requestToIp(ipAddress, parsed, "GET", null);
 }
 
 /**
@@ -186,42 +208,51 @@ export function httpsGetToIp(
  *
  * Supports both GET (no body) and POST (with body) requests.
  */
-function httpsRequestToIp(
+function requestToIp(
   ipAddress: string,
   parsed: URL,
   method: "GET" | "POST",
   body: string | null,
+  deadline?: number,
 ): Promise<HttpResult> {
-  const hostname = parsed.hostname;
-  const port = parsed.port || 443;
-
-  const headers: Record<string, string | number> = {
-    Host: hostname,
-  };
-  if (body !== null) {
-    headers["Content-Type"] = "application/json";
-    headers["Content-Length"] = Buffer.byteLength(body);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`unsupported proxy URL protocol: ${parsed.protocol}`);
   }
+  const isHttps = parsed.protocol === "https:";
 
   return new Promise((resolve, reject) => {
-    const req = httpsRequest(
-      {
-        hostname: ipAddress,
-        port,
-        path: parsed.pathname + parsed.search,
-        method,
-        servername: hostname, // TLS SNI must match the certificate
-        headers,
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (chunk: string) => (data += chunk));
-        res.on("end", () => {
-          resolve({ status: res.statusCode ?? 0, body: data });
+    const request = isHttps ? httpsRequest : httpRequest;
+    const options = requestOptionsForIp(ipAddress, parsed, method, body);
+    const req = request(options, (res) => {
+      const chunks: Buffer[] = [];
+      let receivedBytes = 0;
+      res.on("data", (chunk: Buffer) => {
+        receivedBytes += chunk.byteLength;
+        if (receivedBytes > MAX_PROXY_RESPONSE_BYTES) {
+          reject(new ProxyResponseTooLargeError());
+          res.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on("end", () => {
+        resolve({
+          status: res.statusCode ?? 0,
+          body: Buffer.concat(chunks, receivedBytes).toString("utf8"),
         });
-        res.on("error", reject);
-      },
-    );
+      });
+      res.on("error", reject);
+    });
+    const deadlineTimer =
+      deadline === undefined
+        ? undefined
+        : setTimeout(
+            () => req.destroy(new Error("request transaction timed out")),
+            Math.max(0, deadline - Date.now()),
+          );
+    req.once("close", () => {
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+    });
 
     // 30 s matches the Rust implementation's reqwest timeout for the
     // same proxy requests (lib.rs `.timeout(Duration::from_secs(30))`).
@@ -234,6 +265,32 @@ function httpsRequestToIp(
     }
     req.end();
   });
+}
+
+export function requestOptionsForIp(
+  ipAddress: string,
+  parsed: URL,
+  method: "GET" | "POST",
+  body: string | null,
+): RequestOptions {
+  const isHttps = parsed.protocol === "https:";
+  const headers: Record<string, string | number> = { Host: parsed.host };
+  if (body !== null) {
+    headers["Content-Type"] = "application/json";
+    headers["Content-Length"] = Buffer.byteLength(body);
+  }
+  const options: RequestOptions = {
+    hostname: ipAddress,
+    port: parsed.port || (isHttps ? 443 : 80),
+    path: parsed.pathname + parsed.search,
+    method,
+    headers,
+  };
+  const hostname = normalizeHostname(parsed.hostname);
+  if (isHttps && isIP(hostname) === 0) {
+    options.servername = hostname;
+  }
+  return options;
 }
 
 // ============================================================================
@@ -252,18 +309,22 @@ export async function tryAddresses(
   addresses: string[],
   url: string,
   jsonBody: unknown,
+  method?: "POST",
+  deadline?: number,
 ): Promise<HttpResult | null>;
 export async function tryAddresses(
   addresses: string[],
   url: string,
   jsonBody: null,
   method: "GET",
+  deadline?: number,
 ): Promise<HttpResult | null>;
 export async function tryAddresses(
   addresses: string[],
   url: string,
   jsonBody: unknown,
   method: "GET" | "POST" = "POST",
+  deadline?: number,
 ): Promise<HttpResult | null> {
   // Parse URL once before the loop.  Errors here (malformed URL)
   // propagate immediately to the caller instead of being silently
@@ -272,11 +333,12 @@ export async function tryAddresses(
   const body = method === "POST" ? JSON.stringify(jsonBody) : null;
 
   for (const addr of addresses) {
+    if (deadline !== undefined && Date.now() >= deadline) return null;
     try {
-      return await httpsRequestToIp(addr, parsed, method, body);
-    } catch {
-      // Connection error — try the next address.
-      continue;
+      return await requestToIp(addr, parsed, method, body, deadline);
+    } catch (error) {
+      if (error instanceof ProxyResponseTooLargeError) throw error;
+      // Connection errors fall through to the next address.
     }
   }
   return null;

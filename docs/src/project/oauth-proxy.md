@@ -1,9 +1,12 @@
 # OAuth Token Exchange Proxy
 
-A Cloudflare Worker that acts as an OAuth2 token exchange proxy for Onshape.
+A Cloudflare Worker that can be self-hosted as an OAuth2 token exchange proxy for Onshape.
 The worker holds the OAuth2 client secret and exposes endpoints that CLI applications can call to exchange authorization codes for tokens and to refresh tokens — without the CLI ever needing the client secret.
 
-Hosted at: `https://onshape-oauth-proxy.fstab.workers.dev`
+The repository provides software, not a public proxy service. Direct OAuth is
+the recommended default. Proxy users must deploy this worker themselves and
+explicitly supply its URL, represented here as
+`https://oauth-proxy.example.com`.
 
 ## Motivation
 
@@ -31,7 +34,7 @@ The proxy does not parse, interpret, or store token responses.
 │          │<────────│   client_secret)     │<────────│                     │
 │          │  JSON   │                      │  JSON   │                     │
 └──────────┘         └──────────────────────┘         └─────────────────────┘
-                     onshape-oauth-proxy.fstab.workers.dev             oauth.onshape.com
+                     oauth-proxy.example.com                          oauth.onshape.com
 ```
 
 ### Technology Choice
@@ -67,7 +70,9 @@ Tests import only `handler.ts` and assert on returned effects — no fetch mocki
 ### `GET /config`
 
 Returns the proxy's OAuth client configuration.
-Not IP-restricted — the client ID is public per OAuth spec.
+IP-restricted like all endpoints except `GET /health`. The client ID itself is
+public, but restricting `/config` lets clients fail before starting a browser
+flow from an unauthorized network.
 
 **Response:**
 
@@ -77,7 +82,8 @@ Not IP-restricted — the client ID is public per OAuth spec.
 }
 ```
 
-This allows CLI tools to discover the client ID from just the proxy URL, enabling zero-configuration proxy mode.
+This allows CLI tools to discover the client ID after the user explicitly
+supplies the self-hosted proxy URL.
 
 ### `POST /token/exchange`
 
@@ -166,9 +172,11 @@ Each entry is auto-detected:
 - Otherwise, it is treated as a hostname and resolved at request time via Cloudflare's DNS-over-HTTPS API (`https://cloudflare-dns.com/dns-query`).
   Both A (IPv4) and AAAA (IPv6) records are queried.
 
-Example: `ALLOWED_SOURCES=home.fstab.net,10.0.0.5`
+Example: `ALLOWED_SOURCES=home.example.com,203.0.113.5`
 
-This handles dynamic DNS automatically — if the IP for `home.fstab.net` changes, the worker resolves the new IP on the next request.
+Configure the public egress IPv4 and/or IPv6 address that Cloudflare reports for each permitted network, or a hostname that resolves to it. `203.0.113.5` is a documentation-only address and must be replaced.
+
+This handles dynamic DNS automatically — if the IP for `home.example.com` changes, the worker resolves the new IP on the next request.
 The DNS-over-HTTPS lookup adds approximately 5–20ms of latency (Cloudflare-internal).
 
 ### Automatic IPv4 Retry
@@ -225,7 +233,7 @@ The plugin still runs a localhost callback server and handles PKCE.
 1. Plugin fetches the proxy's client ID:
 
    ```text
-   GET https://onshape-oauth-proxy.fstab.workers.dev/config
+   GET https://oauth-proxy.example.com/config
    → { "client_id": "<ID>" }
    ```
 
@@ -242,7 +250,7 @@ The plugin still runs a localhost callback server and handles PKCE.
 7. Plugin POSTs to the proxy:
 
    ```text
-   POST https://onshape-oauth-proxy.fstab.workers.dev/token/exchange
+   POST https://oauth-proxy.example.com/token/exchange
    Content-Type: application/json
 
    { "code": "<CODE>", "redirect_uri": "http://localhost:<PORT>/callback", "code_verifier": "<VERIFIER>" }
@@ -260,13 +268,13 @@ The plugin still runs a localhost callback server and handles PKCE.
 9. Plugin saves tokens to the token file with `proxy_url` (not `client_secret`):
 
    ```json
-   { "access_token": "...", "refresh_token": "...", "client_id": "...", "proxy_url": "https://onshape-oauth-proxy.fstab.workers.dev" }
+   { "access_token": "...", "refresh_token": "...", "client_id": "...", "proxy_url": "https://oauth-proxy.example.com" }
    ```
 
 10. When the access token expires, the MCP server refreshes via the proxy:
 
     ```text
-    POST https://onshape-oauth-proxy.fstab.workers.dev/token/refresh
+    POST https://oauth-proxy.example.com/token/refresh
     Content-Type: application/json
 
     { "refresh_token": "<REFRESH_TOKEN>" }
@@ -274,7 +282,7 @@ The plugin still runs a localhost callback server and handles PKCE.
 
 The `redirect_uri` must be included in the exchange request because Onshape's token endpoint validates that it matches the URI used in the authorization step.
 
-### Direct Mode (Alternative)
+### Direct Mode (Recommended Default)
 
 The plugin also supports a "direct" mode where the user provides both `client_id` and `client_secret`.
 In this mode, the plugin exchanges tokens directly with Onshape (not via the proxy), and the token file includes `client_secret` instead of `proxy_url`.
@@ -285,7 +293,7 @@ The MCP server detects the mode from the token file and refreshes accordingly.
 ### Prerequisites
 
 - Node.js (for wrangler)
-- A Cloudflare account with the `fstab.net` zone
+- A Cloudflare account with a Workers subdomain or a domain you control
 - The Onshape OAuth application's client ID and secret
 
 ### Initial Setup
@@ -299,11 +307,9 @@ wrangler secret put ONSHAPE_CLIENT_SECRET
 
 Configure `ALLOWED_SOURCES` in the Cloudflare dashboard after the first deploy.
 
-### Custom Domain
-
-The `wrangler.toml` configures a route on `onshape-oauth-proxy.fstab.workers.dev`.
-The `fstab.net` zone must already be managed in Cloudflare.
-Cloudflare automatically provisions the SSL certificate for the custom domain.
+The checked-in `wrangler.toml` uses the deployer's `workers.dev` subdomain and
+does not assume a particular DNS zone or custom domain. Operators may configure
+their own custom domain independently.
 
 ### Deploy
 
@@ -332,20 +338,24 @@ ALLOWED_SOURCES=127.0.0.1
 
 ```sh
 # Health check
-curl https://onshape-oauth-proxy.fstab.workers.dev/health
+curl https://oauth-proxy.example.com/health
 
 # Token exchange (from an allowed source)
-curl -X POST https://onshape-oauth-proxy.fstab.workers.dev/token/exchange \
+curl -X POST https://oauth-proxy.example.com/token/exchange \
   -H 'Content-Type: application/json' \
   -d '{"code": "test-code", "redirect_uri": "http://localhost:18338/callback"}'
 
 # Token refresh (from an allowed source)
-curl -X POST https://onshape-oauth-proxy.fstab.workers.dev/token/refresh \
+curl -X POST https://oauth-proxy.example.com/token/refresh \
   -H 'Content-Type: application/json' \
   -d '{"refresh_token": "test-refresh-token"}'
+```
 
+Run the disallowed-source check from a network whose public IPv4 or IPv6 egress address is not matched directly, or through a hostname, by `ALLOWED_SOURCES`. The expected response has HTTP status 403 and a body containing `{ "error": "forbidden", "source_ip": "..." }`.
+
+```sh
 # Verify 403 from a disallowed source
-curl -X POST https://onshape-oauth-proxy.fstab.workers.dev/token/exchange \
+curl --include -X POST https://oauth-proxy.example.com/token/exchange \
   -H 'Content-Type: application/json' \
   -d '{"code": "test", "redirect_uri": "http://localhost:8080/callback"}'
 ```
@@ -410,7 +420,8 @@ Cloudflare KV free tier: 1,000 writes/day.
 Each auth flow uses ~3 KV writes (store state+PKCE, store tokens, delete tokens).
 Paid plan ($5/month): 1 million KV writes/month — sufficient for ~333,000 auth flows/month.
 
-The Onshape OAuth application would need `https://onshape-oauth-proxy.fstab.workers.dev/callback` registered as a redirect URI.
+The Onshape OAuth application would need
+`https://oauth-proxy.example.com/callback` registered as a redirect URI.
 
 ### Security Concern
 

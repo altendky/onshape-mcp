@@ -44,6 +44,10 @@ pub struct AuthConfig {
     /// OAuth 2.0 client secret (for OAuth auth).
     #[serde(default)]
     pub client_secret: Option<SecretString>,
+    /// Whether the direct credential pair was recovered from the token file.
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub direct_credentials_from_token_file: bool,
     /// OAuth token exchange proxy URL (for proxy-based OAuth auth).
     ///
     /// When set, the server uses this proxy for token refresh instead of
@@ -211,14 +215,20 @@ impl AuthInventory {
     #[allow(clippy::missing_const_for_fn)]
     pub fn from_config(config: &AuthConfig, token_status: TokenStatus) -> Self {
         // proxy_url can come from config OR from the token file.
-        let has_proxy_url = config.proxy_url.is_some()
-            || matches!(
-                &token_status,
+        let has_proxy_url = config
+            .proxy_url
+            .as_ref()
+            .is_some_and(|url| !url.trim().is_empty())
+            || match &token_status {
                 TokenStatus::Present {
-                    proxy_url: Some(_),
+                    proxy_url: Some(url),
                     ..
-                }
-            );
+                } => !url.trim().is_empty(),
+                TokenStatus::Absent
+                | TokenStatus::Present {
+                    proxy_url: None, ..
+                } => false,
+            };
 
         Self {
             has_access_key: config.access_key.is_some(),
@@ -254,8 +264,7 @@ pub enum ResolvedAuth {
     },
     /// OAuth client credentials are present but no tokens yet.
     ///
-    /// The user needs to complete the OAuth authorization flow
-    /// (e.g. via the `OpenCode` plugin) to obtain tokens.
+    /// The user needs to complete the OAuth authorization flow to obtain tokens.
     OAuthPending,
 }
 
@@ -370,7 +379,7 @@ fn not_configured_detail(method: AuthMethod, inventory: &AuthInventory) -> Strin
                 "No credentials configured".into()
             } else {
                 format!(
-                    "No complete credentials found. Missing: {}",
+                    "No complete credentials found. Missing: {}. Configure Onshape API keys, or configure your own OAuth client_id + client_secret and run `onshape-mcp auth login`; a self-hosted OAuth proxy is optional and must be configured explicitly.",
                     missing.join(", ")
                 )
             }
@@ -379,19 +388,19 @@ fn not_configured_detail(method: AuthMethod, inventory: &AuthInventory) -> Strin
             if inventory.has_proxy_url {
                 // proxy_url is set — this shouldn't reach NotConfigured, but
                 // handle gracefully.
-                "OAuth proxy configured but tokens not available".into()
+                "OAuth proxy configured but tokens are unavailable. Run `onshape-mcp auth login --proxy-url <self-hosted-proxy-url>`.".into()
             } else if !inventory.has_client_id && !inventory.has_client_secret {
-                "No credentials configured (set client_id + client_secret, or proxy_url)".into()
+                "OAuth is not configured. Set your own client_id + client_secret and run `onshape-mcp auth login`, or explicitly configure a self-hosted proxy URL.".into()
             } else if !inventory.has_client_id {
-                "Incomplete credentials: client_id is not configured".into()
+                "OAuth is incomplete: client_id is not configured. Set your own client_id and run `onshape-mcp auth login`.".into()
             } else {
-                "Incomplete credentials: client_secret is not configured (or set proxy_url)".into()
+                "OAuth is incomplete: client_secret is not configured. Set your own client_secret and run `onshape-mcp auth login`, or explicitly configure a self-hosted proxy URL.".into()
             }
         }
         // Basic and any future API-key-based methods
         _ => {
             if !inventory.has_access_key && !inventory.has_secret_key {
-                "No credentials configured".into()
+                "API keys are not configured. Set access_key + secret_key, or use direct OAuth with `onshape-mcp auth login`.".into()
             } else if !inventory.has_access_key {
                 "Incomplete credentials: access_key is not configured".into()
             } else {
@@ -425,6 +434,7 @@ impl Default for AuthConfig {
             secret_key: None,
             client_id: None,
             client_secret: None,
+            direct_credentials_from_token_file: false,
             proxy_url: None,
             method: AuthMethod::Auto,
             check_interval: DEFAULT_CHECK_INTERVAL,
@@ -812,13 +822,16 @@ mod tests {
     #[test]
     fn oauth_without_client_creds_returns_not_configured() {
         let result = resolve_auth(AuthMethod::OAuth, &inventory_nothing());
-        assert!(matches!(
-            result,
-            ResolvedAuth::NotConfigured {
-                configured_method: AuthMethod::OAuth,
-                ..
-            }
-        ));
+        let ResolvedAuth::NotConfigured {
+            configured_method: AuthMethod::OAuth,
+            detail,
+        } = result
+        else {
+            panic!("expected OAuth NotConfigured");
+        };
+        assert!(detail.contains("client_id + client_secret"));
+        assert!(detail.contains("onshape-mcp auth login"));
+        assert!(detail.contains("self-hosted proxy"));
     }
 
     #[test]
@@ -1391,6 +1404,22 @@ mod tests {
         };
         let inv = AuthInventory::from_config(&config, TokenStatus::Absent);
         assert!(inv.has_proxy_url);
+    }
+
+    #[test]
+    fn inventory_from_config_rejects_blank_proxy_urls() {
+        let config = AuthConfig {
+            proxy_url: Some("  ".into()),
+            ..AuthConfig::default()
+        };
+        let token_status = TokenStatus::Present {
+            expires_at: None,
+            proxy_url: Some(String::new()),
+        };
+
+        let inv = AuthInventory::from_config(&config, token_status);
+
+        assert!(!inv.has_proxy_url);
     }
 
     #[test]

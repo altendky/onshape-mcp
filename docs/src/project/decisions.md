@@ -12,7 +12,10 @@ Resolved design decisions and their rationale.
 
 ## Authentication Strategy
 
-**Decision:** API Keys initially, OAuth future; config file with permission checks; validation on startup + periodic. See [Authentication](authentication.md).
+**Decision:** API keys and OAuth are implemented. Local OAuth is direct-first
+with user-owned Onshape credentials. Proxy mode is optional, explicit, and
+self-hosted. Streamable HTTP OAuth is experimental and independently operated.
+See [Authentication](authentication.md).
 
 ## Error Handling Strategy
 
@@ -102,13 +105,17 @@ Tests call pure functions and assert on the returned Effect objects — no mock 
 **Decision:** `proxy_url` is an alternative to `client_secret` for OAuth auth resolution.
 
 The `AuthInventory` accepts `has_proxy_url` as sufficient for OAuth capability (even without `client_id` or `client_secret`).
-The proxy URL can come from either the `ONSHAPE_PROXY_URL` environment variable or the token file's `proxy_url` field.
-This enables zero-configuration proxy mode: the OpenCode plugin writes `proxy_url` into the token file, and the MCP server detects it automatically.
+The proxy URL can come from either `ONSHAPE_MCP_AUTH__PROXY_URL` or the token
+file's `proxy_url` field. Proxy login always requires an explicitly supplied
+self-hosted URL; there is no runtime default or project-provided public proxy.
 
 ## OAuth Dual Mode (Direct + Proxy)
 
 **Decision:** Support both direct and proxy OAuth modes simultaneously.
 
-The OpenCode auth plugin offers two auth methods: "Onshape OAuth (via proxy)" and "Onshape OAuth (direct)".
-The MCP server detects the mode from the token file (presence of `proxy_url` vs `client_secret`) and refreshes accordingly via a `RefreshMethod::Direct` / `RefreshMethod::Proxy` enum.
-Config env var (`ONSHAPE_PROXY_URL`) takes precedence over the token file.
+The OpenCode auth plugin offers direct OAuth first and an optional "self-hosted proxy" method second.
+The MCP server refreshes via a `RefreshMethod::Direct` / `RefreshMethod::Proxy`
+enum. Startup precedence is explicit configured proxy, explicit complete direct
+credentials, then persisted token-file metadata.
+When a pending server observes a newly written token file with complete refresh
+metadata, it adopts the mode used by that new login.

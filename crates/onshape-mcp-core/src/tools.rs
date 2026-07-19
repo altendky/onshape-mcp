@@ -1011,11 +1011,12 @@ pub struct ApiCallInput {
 /// Input schema for `onshape_auth_login`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AuthLoginInput {
-    /// Login mode: `"proxy"` (default) uses the OAuth proxy for token exchange;
-    /// `"direct"` exchanges tokens directly with Onshape using client credentials.
+    /// Login mode: `"direct"` (default) exchanges tokens directly with Onshape
+    /// using user-owned client credentials; `"proxy"` uses an explicitly
+    /// self-hosted OAuth proxy.
     #[serde(default)]
     pub mode: Option<String>,
-    /// OAuth proxy URL override. Only used in proxy mode.
+    /// Explicit self-hosted OAuth proxy URL. Required in proxy mode.
     #[serde(default)]
     pub proxy_url: Option<String>,
     /// OAuth 2.0 client ID. Required for direct mode.
@@ -1407,30 +1408,40 @@ fn call_auth_status(
     }
 }
 
-/// Default OAuth proxy URL used when no `proxy_url` is specified.
-pub const DEFAULT_PROXY_URL: &str = "https://onshape-oauth-proxy.fstab.workers.dev";
-
 fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolEffect {
     let input: AuthLoginInput = match parse_arguments(arguments) {
         Ok(input) => input,
         Err(e) => return tool_input_error(e.message),
     };
 
-    let mode_str = input.mode.as_deref().unwrap_or("proxy");
+    let mode_str = input.mode.as_deref().unwrap_or("direct");
 
     let mode = match mode_str {
         "proxy" => {
-            let proxy_url = input
-                .proxy_url
-                .unwrap_or_else(|| DEFAULT_PROXY_URL.to_string());
+            let Some(proxy_url) = input.proxy_url else {
+                return tool_input_error(
+                    "proxy_url is required for proxy mode; supply the URL of a self-hosted OAuth proxy",
+                );
+            };
+            let proxy_url = match crate::validate_proxy_url(&proxy_url) {
+                Ok(proxy_url) => proxy_url,
+                Err(error) => return tool_input_error(error),
+            };
             LoginMode::Proxy { proxy_url }
         }
         "direct" => {
-            let Some(client_id) = input.client_id else {
-                return tool_input_error("client_id is required for direct mode");
+            let Some(client_id) = input.client_id.filter(|id| !id.trim().is_empty()) else {
+                return tool_input_error(
+                    "client_id is required and must not be blank for direct mode",
+                );
             };
-            let Some(client_secret) = input.client_secret else {
-                return tool_input_error("client_secret is required for direct mode");
+            let Some(client_secret) = input
+                .client_secret
+                .filter(|secret| !secret.trim().is_empty())
+            else {
+                return tool_input_error(
+                    "client_secret is required and must not be blank for direct mode",
+                );
             };
             LoginMode::Direct {
                 client_id,
@@ -1439,7 +1450,7 @@ fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolEffect {
         }
         other => {
             return tool_input_error(format!(
-                "invalid mode \"{other}\": expected \"proxy\" (default) or \"direct\""
+                "invalid mode \"{other}\": expected \"direct\" (default) or \"proxy\""
             ));
         }
     };
@@ -3318,20 +3329,63 @@ mod tests {
     // ====================================================================
 
     #[test]
-    fn auth_login_default_mode_returns_proxy() {
+    fn auth_login_default_mode_returns_direct() {
         let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "client_id".to_string(),
+            Value::String("my-client-id".to_string()),
+        );
+        args.insert(
+            "client_secret".to_string(),
+            Value::String("my-client-secret".to_string()),
+        );
         let result = call_tool(
             "onshape_auth_login",
-            None,
+            Some(&args),
             &auth,
             &default_validation(),
             None,
         );
         let mode = assert_oauth_login_flow(result);
         assert!(
-            matches!(mode, LoginMode::Proxy { .. }),
-            "default mode should be Proxy"
+            matches!(mode, LoginMode::Direct { .. }),
+            "default mode should be Direct"
         );
+    }
+
+    #[test]
+    fn auth_login_proxy_mode_requires_url() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("mode".to_string(), Value::String("proxy".to_string()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
+        assert!(msg.contains("proxy_url"));
+        assert!(msg.contains("self-hosted"));
+    }
+
+    #[test]
+    fn auth_login_proxy_mode_rejects_blank_url() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("mode".to_string(), Value::String("proxy".to_string()));
+        args.insert("proxy_url".to_string(), Value::String("  ".to_string()));
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
+        assert!(msg.contains("proxy_url"));
     }
 
     #[test]
@@ -3357,6 +3411,36 @@ mod tests {
                 assert_eq!(proxy_url, "https://my-proxy.example.com");
             }
             LoginMode::Direct { .. } => panic!("expected Proxy, got Direct"),
+        }
+    }
+
+    #[test]
+    fn auth_login_proxy_mode_enforces_secure_transport() {
+        let auth = not_configured();
+        for proxy_url in ["http://proxy.example.com", "http://128.0.0.1"] {
+            let args = serde_json::json!({"mode": "proxy", "proxy_url": proxy_url});
+            let msg = assert_tool_error(call_tool(
+                "onshape_auth_login",
+                args.as_object(),
+                &auth,
+                &default_validation(),
+                None,
+            ));
+            assert!(msg.contains("https://"), "unexpected error: {msg}");
+        }
+
+        for proxy_url in ["http://localhost:8787", "http://127.8.9.10", "http://[::1]"] {
+            let args = serde_json::json!({"mode": "proxy", "proxy_url": proxy_url});
+            assert!(matches!(
+                assert_oauth_login_flow(call_tool(
+                    "onshape_auth_login",
+                    args.as_object(),
+                    &auth,
+                    &default_validation(),
+                    None,
+                )),
+                LoginMode::Proxy { .. }
+            ));
         }
     }
 
@@ -3429,6 +3513,71 @@ mod tests {
             None,
         ));
         assert!(msg.contains("client_secret"));
+    }
+
+    #[test]
+    fn auth_login_direct_mode_rejects_blank_client_id() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("client_id".to_string(), Value::String("  ".to_string()));
+        args.insert(
+            "client_secret".to_string(),
+            Value::String("secret".to_string()),
+        );
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
+        assert!(msg.contains("client_id"));
+        assert!(msg.contains("blank"));
+    }
+
+    #[test]
+    fn auth_login_direct_mode_rejects_blank_client_secret() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("client_id".to_string(), Value::String("client".to_string()));
+        args.insert(
+            "client_secret".to_string(),
+            Value::String("\t ".to_string()),
+        );
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
+        assert!(msg.contains("client_secret"));
+        assert!(msg.contains("blank"));
+    }
+
+    #[test]
+    fn auth_login_direct_mode_preserves_nonblank_client_secret() {
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert("client_id".to_string(), Value::String("client".to_string()));
+        args.insert(
+            "client_secret".to_string(),
+            Value::String(" secret with spaces ".to_string()),
+        );
+
+        let mode = assert_oauth_login_flow(call_tool(
+            "onshape_auth_login",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            None,
+        ));
+        let LoginMode::Direct { client_secret, .. } = mode else {
+            panic!("expected direct mode");
+        };
+        assert_eq!(client_secret, " secret with spaces ");
     }
 
     #[test]

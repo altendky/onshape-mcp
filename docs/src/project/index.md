@@ -1,6 +1,9 @@
 # Onshape MCP
 
-A Rust-based MCP (Model Context Protocol) server for Onshape integration. The project emphasizes testability through sans-IO design principles and comprehensive cross-platform support.
+A Rust-based MCP (Model Context Protocol) server for Onshape integration. Local
+stdio is the recommended and primary mode. Experimental Streamable HTTP remains
+available for self-hosting, but the project provides no public hosted MCP server
+or public OAuth proxy.
 
 ## Documentation
 
@@ -28,7 +31,7 @@ A Rust-based MCP (Model Context Protocol) server for Onshape integration. The pr
 - [OpenAPI Updates](openapi-updates.md) — Manual review checklist for vendored spec updates
 - [Release](release.md) — Distribution, versioning, publishing
 - [npm Wrapper](npm-wrapper.md) — npm package design for `npx` installation
-- [OAuth Proxy](oauth-proxy.md) — Cloudflare Worker token exchange proxy for OAuth2
+- [OAuth Proxy](oauth-proxy.md) — Optional self-hosted Cloudflare Worker software for local OAuth token exchange
 
 ### Knowledge Pipeline
 

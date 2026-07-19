@@ -12,7 +12,7 @@ use figment::providers::{Env, Format, Serialized, Toml};
 use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
 use secrecy::SecretString;
 
-use crate::oauth::{McpOAuthTokenFile, default_token_file_path};
+use crate::oauth::{absolute_env_path, default_token_file_path, load_token_file};
 
 /// The environment variable prefix used for all configuration.
 ///
@@ -33,7 +33,9 @@ pub const ENV_PREFIX: &str = "ONSHAPE_MCP_";
 /// Returns `None` if the platform config directory cannot be determined.
 #[must_use]
 pub fn default_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("onshape-mcp").join("config.toml"))
+    absolute_env_path(std::env::var_os("XDG_CONFIG_HOME"))
+        .or_else(dirs::config_dir)
+        .map(|dir| dir.join("onshape-mcp").join("config.toml"))
 }
 
 // ============================================================================
@@ -137,10 +139,10 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigLoadError> {
 /// during `opencode auth login`. This allows the MCP server to refresh tokens
 /// without requiring separate `client_id`/`client_secret` configuration.
 ///
-/// Only fills in fields that are `None` in the config — explicit config file,
-/// env var, or CLI values always take precedence.
+/// Recovers a complete pair when explicit configuration does not provide one.
+/// A complete token-file pair atomically replaces either partial explicit field,
+/// avoiding credentials assembled from different sources.
 fn merge_credentials_from_token_file(config: &mut AppConfig) {
-    // Only try if at least one OAuth field is missing
     if config.auth.client_id.is_some() && config.auth.client_secret.is_some() {
         return;
     }
@@ -153,50 +155,26 @@ fn merge_credentials_from_token_file(config: &mut AppConfig) {
         return;
     }
 
-    // Check permissions — warn if the file exists but has problems
-    if let Err(err) = check_file_permissions(&path) {
-        // TODO: replace eprintln! with tracing::warn! once tracing is available
-        // See: https://github.com/altendky/onshape-mcp/issues/73
-        eprintln!(
-            "Warning: token file {} has insecure permissions, skipping credential extraction: {err}",
-            path.display(),
-        );
-        return;
-    }
-
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
+    let token_file = match load_token_file(&path) {
+        Ok(token_file) => token_file,
         Err(err) => {
             // TODO: replace eprintln! with tracing::warn! once tracing is available
             // See: https://github.com/altendky/onshape-mcp/issues/73
             eprintln!(
-                "Warning: could not read token file {}: {err}",
+                "Warning: could not load token file {} for credential extraction: {err}",
                 path.display(),
             );
             return;
         }
     };
 
-    let token_file = match serde_json::from_str::<McpOAuthTokenFile>(&contents) {
-        Ok(d) => d,
-        Err(err) => {
-            // TODO: replace eprintln! with tracing::warn! once tracing is available
-            // See: https://github.com/altendky/onshape-mcp/issues/73
-            eprintln!(
-                "Warning: could not parse token file {}: {err}",
-                path.display(),
-            );
-            return;
-        }
-    };
-
-    if config.auth.client_id.is_none() {
-        config.auth.client_id = token_file.client_id;
-    }
-    if config.auth.client_secret.is_none()
-        && let Some(secret) = token_file.client_secret
+    if let (Some(client_id), Some(client_secret)) = (token_file.client_id, token_file.client_secret)
+        && !client_id.trim().is_empty()
+        && !client_secret.trim().is_empty()
     {
-        config.auth.client_secret = Some(SecretString::from(secret));
+        config.auth.client_id = Some(client_id);
+        config.auth.client_secret = Some(SecretString::from(client_secret));
+        config.auth.direct_credentials_from_token_file = true;
     }
 }
 
@@ -248,9 +226,10 @@ fn base_figment(config_path_override: Option<&Path>) -> Result<Figment, ConfigLo
 ///
 /// **Precedence** (lowest to highest):
 /// 1. Hardcoded defaults
-/// 2. Credentials file (OAuth `client_id`/`client_secret` only, written by `opencode auth login`)
-/// 3. Config file (TOML) — if it exists and has secure permissions
-/// 4. Environment variables (`ONSHAPE_MCP_` prefix, double underscore for nesting)
+/// 2. Config file (TOML) — if it exists and has secure permissions
+/// 3. Environment variables (`ONSHAPE_MCP_` prefix, double underscore for nesting)
+/// 4. A complete token-file OAuth credential pair when explicit configuration
+///    does not provide a complete pair
 ///
 /// # Arguments
 ///
@@ -317,9 +296,8 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
 
-    use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
-
     use super::*;
+    use onshape_mcp_core::config::{AppConfig, MIN_CHECK_INTERVAL};
 
     #[test]
     fn defaults_toml_deserializes_into_app_config() {
