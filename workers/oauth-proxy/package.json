@@ -10,8 +10,8 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250214.0",
-    "typescript": "^6.0.0",
+    "@cloudflare/workers-types": "^5.0.0",
+    "typescript": "^7.0.0",
     "vitest": "^4.0.0"
   },
   "dependencies": {
