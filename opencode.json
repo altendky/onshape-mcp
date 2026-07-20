@@ -14,7 +14,7 @@
     "onshape-npm-debug": {
       "type": "local",
       "command": ["node", "npm/onshape-mcp/bin.js"],
-      "environment": {
+      "env": {
         "ONSHAPE_MCP_NPM_COMMAND": "./target/debug/onshape-mcp"
       },
       "enabled": true
@@ -22,7 +22,7 @@
     "onshape-npm-release": {
       "type": "local",
       "command": ["node", "npm/onshape-mcp/bin.js"],
-      "environment": {
+      "env": {
         "ONSHAPE_MCP_NPM_COMMAND": "./target/release/onshape-mcp"
       },
       "enabled": false
