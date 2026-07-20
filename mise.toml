@@ -23,7 +23,7 @@ cargo-binstall = "latest"
 # compilation is used as a fallback on platforms without pre-built binaries
 # (macOS Intel). The lychee project dropped macOS Intel binaries after v0.15.1
 # (April 2024), so the aqua backend cannot cover all CI platforms.
-"cargo:lychee" = "0.24.0"
+"cargo:lychee" = "0.24.2"
 "cargo:mdbook" = "0.5.3"
 "npm:wrangler" = "4.101.0"
 "aqua:superfly/flyctl" = "0.4.71"

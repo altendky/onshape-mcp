@@ -136,7 +136,7 @@ checksum = "sha256:5fcbddde2d415704d2432bbe606a5767ddaf1ef4ee2c16b7828f8be2ed1e5
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.6/cargo-binstall-x86_64-pc-windows-msvc.zip"
 
 [[tools."cargo:lychee"]]
-version = "0.24.0"
+version = "0.24.2"
 backend = "cargo:lychee"
 
 [[tools."cargo:mdbook"]]
