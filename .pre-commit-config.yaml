@@ -19,7 +19,7 @@ repos:
       - id: markdownlint-cli2
 
   - repo: https://github.com/lycheeverse/lychee
-    rev: lychee-v0.24.0
+    rev: lychee-v0.24.2
     hooks:
       - id: lychee-system
         args: ["--no-progress", "--config=.lychee.toml"]
