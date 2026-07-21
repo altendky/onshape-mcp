@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Upgraded to rmcp 2.2 and the MCP 2025-11-25 model API; public Rust resource
+  and content types now use `Resource` and `ContentBlock`
+
 ### Added
 
 - Initial project documentation structure

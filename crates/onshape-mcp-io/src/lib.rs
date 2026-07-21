@@ -452,8 +452,7 @@ impl ServerHandler for OnshapeMcpServer {
             onshape_mcp_resources::ResourceResult::Immediate(Ok(read_result)) => Ok(read_result),
             onshape_mcp_resources::ResourceResult::Immediate(Err(
                 onshape_mcp_resources::ResourceError::NotFound(uri),
-            )) => Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
+            )) => Err(McpError::resource_not_found(
                 format!("Resource not found: {uri}"),
                 None::<serde_json::Value>,
             )),
@@ -628,11 +627,13 @@ async fn dispatch_tool_effect(
             ToolEffect::OAuthLoginFlow { mode } => {
                 // In HTTP mode, login_state is None — return informative message.
                 let Some(login_state) = login_state else {
-                    return Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-                        "Authentication is handled via the browser OAuth flow \
+                    return Ok(CallToolResult::success(vec![
+                        rmcp::model::ContentBlock::text(
+                            "Authentication is handled via the browser OAuth flow \
                          when connecting to this server. You do not need to \
                          run the login tool manually.",
-                    )]));
+                        ),
+                    ]));
                 };
                 return handle_oauth_login_flow(mode, login_state).await;
             }
@@ -662,11 +663,13 @@ async fn dispatch_tool_effect(
                 continuation,
             } => {
                 if !allow_file_writes {
-                    return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
-                        "File write operations are not supported over the HTTP transport. \
+                    return Ok(CallToolResult::error(vec![
+                        rmcp::model::ContentBlock::text(
+                            "File write operations are not supported over the HTTP transport. \
                          The onshape_screenshot tool's output_path parameter requires the \
                          stdio transport (local process).",
-                    )]));
+                        ),
+                    ]));
                 }
                 let results = write_files(&files).await;
 
@@ -684,11 +687,13 @@ async fn dispatch_tool_effect(
                 continuation,
             } => {
                 if !allow_file_reads {
-                    return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
-                        "File read operations are not supported over the HTTP transport. \
+                    return Ok(CallToolResult::error(vec![
+                        rmcp::model::ContentBlock::text(
+                            "File read operations are not supported over the HTTP transport. \
                          File references in onshape_api_call require the stdio transport \
                          (local process).",
-                    )]));
+                        ),
+                    ]));
                 }
                 let results = read_files(&reads).await;
 
@@ -820,7 +825,7 @@ fn resume_with_raw_response(
 
 /// Error response when credentials are not configured.
 fn not_configured_error() -> CallToolResult {
-    CallToolResult::error(vec![rmcp::model::Content::text(
+    CallToolResult::error(vec![rmcp::model::ContentBlock::text(
         "Cannot execute API call: credentials are not configured. Configure \
          Onshape API keys (access_key + secret_key), or configure your own OAuth \
          client_id + client_secret and run `onshape-mcp auth login`. To use an \
@@ -830,7 +835,7 @@ fn not_configured_error() -> CallToolResult {
 
 /// Error response when OAuth is pending (client creds present but no tokens).
 fn oauth_pending_error() -> CallToolResult {
-    CallToolResult::error(vec![rmcp::model::Content::text(
+    CallToolResult::error(vec![rmcp::model::ContentBlock::text(
         "Cannot execute API call: OAuth authorization is not complete. Run \
          `onshape-mcp auth login` for direct OAuth, or run it with \
          `--proxy-url <self-hosted-proxy-url>` for an explicitly self-hosted \
@@ -1218,19 +1223,19 @@ async fn handle_oauth_login_flow(
             login.set_active(handle.session);
             drop(login);
 
-            Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-                format!(
+            Ok(CallToolResult::success(vec![
+                rmcp::model::ContentBlock::text(format!(
                     "The OAuth authorization flow has started. You MUST present the \
                  following URL to the user and instruct them to open it in their \
                  browser to authorize:\n\n{authorize_url}\n\n\
                  After they authorize in the browser, the server will automatically \
                  detect the new tokens via the local callback.",
-                ),
-            )]))
+                )),
+            ]))
         }
-        Err(e) => Ok(CallToolResult::error(vec![rmcp::model::Content::text(
-            format!("Failed to start login flow: {e}"),
-        )])),
+        Err(e) => Ok(CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(format!("Failed to start login flow: {e}")),
+        ])),
     }
 }
 
@@ -2010,7 +2015,6 @@ mod tests {
 
     fn first_text(result: &CallToolResult) -> &str {
         result.content[0]
-            .raw
             .as_text()
             .expect("should contain text")
             .text
@@ -2186,10 +2190,7 @@ mod tests {
             panic!("should produce a done result");
         };
         assert_eq!(result.is_error, Some(false));
-        let text = result.content[0]
-            .raw
-            .as_text()
-            .expect("should be text content");
+        let text = result.content[0].as_text().expect("should be text content");
         let value: serde_json::Value = serde_json::from_str(&text.text)
             .expect("binary response metadata should be valid JSON");
         assert_eq!(value["encoding"], "base64");
@@ -3180,10 +3181,7 @@ mod tests {
         .expect("should not return protocol error");
 
         assert_eq!(result.is_error, Some(true));
-        let text = result.content[0]
-            .raw
-            .as_text()
-            .expect("should be text content");
+        let text = result.content[0].as_text().expect("should be text content");
         assert!(
             text.text.contains("not supported over the HTTP transport"),
             "unexpected error message: {}",

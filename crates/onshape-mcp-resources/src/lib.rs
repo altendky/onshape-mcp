@@ -18,9 +18,7 @@
 //!
 //! No Rust code changes are needed in either case.
 
-use rmcp::model::{
-    AnnotateAble, Annotated, RawResource, ReadResourceResult, ResourceContents, Role,
-};
+use rmcp::model::{Annotations, ReadResourceResult, Resource, ResourceContents, Role};
 
 // ============================================================================
 // Resource Entry (compile-time data structure)
@@ -83,18 +81,20 @@ pub enum ResourceError {
 /// marking them as intended for the assistant (LLM) with moderately high
 /// priority.
 #[must_use]
-pub fn list_resources() -> Vec<Annotated<RawResource>> {
+pub fn list_resources() -> Vec<Resource> {
     RESOURCES
         .iter()
         .map(|entry| {
-            RawResource::new(entry.uri, entry.name)
+            Resource::new(entry.uri, entry.name)
                 .with_title(entry.title)
                 .with_description(entry.description)
                 .with_mime_type("text/markdown")
-                .with_size(u32::try_from(entry.content.len()).unwrap_or(u32::MAX))
-                .no_annotation()
-                .with_audience(vec![Role::Assistant])
-                .with_priority(0.8)
+                .with_size(u64::try_from(entry.content.len()).unwrap_or(u64::MAX))
+                .with_annotations(
+                    Annotations::default()
+                        .with_audience(vec![Role::Assistant])
+                        .with_priority(0.8),
+                )
         })
         .collect()
 }
@@ -193,7 +193,14 @@ mod tests {
     fn list_resources_sets_mime_type() {
         let resources = list_resources();
         for resource in &resources {
-            assert_eq!(resource.raw.mime_type.as_deref(), Some("text/markdown"));
+            assert_eq!(resource.mime_type.as_deref(), Some("text/markdown"));
+        }
+    }
+
+    #[test]
+    fn list_resources_sets_content_size() {
+        for (resource, entry) in list_resources().iter().zip(RESOURCES) {
+            assert_eq!(resource.size, u64::try_from(entry.content.len()).ok());
         }
     }
 
@@ -213,6 +220,7 @@ mod tests {
                 ResourceContents::BlobResourceContents { .. } => {
                     panic!("expected text content, got blob");
                 }
+                _ => panic!("expected text content"),
             }
         }
     }

@@ -158,10 +158,14 @@ impl McpTestClient {
     }
 
     fn initialize(&mut self) -> serde_json::Value {
+        self.initialize_with_protocol("2025-11-25")
+    }
+
+    fn initialize_with_protocol(&mut self, protocol_version: &str) -> serde_json::Value {
         let response = self.send_request(
             "initialize",
             &serde_json::json!({
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": protocol_version,
                 "capabilities": {},
                 "clientInfo": {
                     "name": "test-client",
@@ -256,6 +260,7 @@ fn mcp_initialization_returns_server_info() {
 
     // Verify server info in result
     let result = &response["result"];
+    assert_eq!(result["protocolVersion"], "2025-11-25");
     assert_eq!(
         result["serverInfo"]["name"], "onshape-mcp",
         "unexpected server name"
@@ -272,6 +277,17 @@ fn mcp_initialization_returns_server_info() {
         result["capabilities"]["tools"].is_object(),
         "tools capability should be enabled"
     );
+
+    client.shutdown();
+}
+
+#[test]
+fn mcp_initialization_negotiates_legacy_protocol_version() {
+    let mut client = McpTestClient::spawn();
+    let response = client.initialize_with_protocol("2024-11-05");
+
+    assert!(response["error"].is_null(), "unexpected error: {response}");
+    assert_eq!(response["result"]["protocolVersion"], "2024-11-05");
 
     client.shutdown();
 }
@@ -303,6 +319,7 @@ fn tools_call_get_started_returns_instructions() {
         1,
         "onshape_mcp_get_started should return exactly one content item"
     );
+    assert_eq!(content[0]["type"], "text");
     let text = content[0]["text"]
         .as_str()
         .expect("text should be a string");
@@ -343,6 +360,7 @@ fn call_auth_status(client: &mut McpTestClient) -> serde_json::Value {
         .as_array()
         .expect("content should be an array");
     assert!(!content.is_empty(), "content should not be empty");
+    assert_eq!(content[0]["type"], "text");
 
     let text = content[0]["text"]
         .as_str()
@@ -1143,6 +1161,11 @@ fn resources_list_returns_insight_resources() {
         .expect("should have insights:shaded-views resource");
     assert_eq!(shaded_views["name"], "shaded-views");
     assert_eq!(shaded_views["mimeType"], "text/markdown");
+    assert_eq!(shaded_views["annotations"]["priority"], 0.8);
+    assert!(
+        shaded_views["size"].as_u64().is_some_and(|size| size > 0),
+        "resource size should be a positive integer"
+    );
     assert!(
         shaded_views["annotations"]["audience"]
             .as_array()
@@ -1212,6 +1235,7 @@ fn resources_read_returns_error_for_unknown_uri() {
         response["error"].is_object(),
         "should return an error for unknown URI"
     );
+    assert_eq!(response["error"]["code"], -32002);
     let error_message = response["error"]["message"]
         .as_str()
         .expect("error message should be a string");
