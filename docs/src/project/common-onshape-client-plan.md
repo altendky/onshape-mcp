@@ -124,7 +124,7 @@ what decision or dependency is missing.
 ### MCP-Specific
 
 - `crates/onshape-mcp-core/src/tools.rs`
-- Tool definitions, `ToolEffect`, continuations, `CallToolResult`, `rmcp::Content`,
+- Tool definitions, `ToolEffect`, continuations, `CallToolResult`, `rmcp::model::ContentBlock`,
   screenshot file effects, and auth status UX.
 - MCP `file_refs` path validation, local file reads, and file-content injection.
   Common upload/request helpers should model binary data, not local file paths.
