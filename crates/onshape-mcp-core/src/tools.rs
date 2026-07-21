@@ -22,7 +22,7 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 
 use rmcp::{
     ErrorData,
-    model::{CallToolResult, Content, ErrorCode, Tool, ToolAnnotations},
+    model::{CallToolResult, ContentBlock, ErrorCode, Tool, ToolAnnotations},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -267,7 +267,7 @@ pub enum IoResult<'a> {
 /// (typically an LLM) can act on — as opposed to protocol-level
 /// `Err(ErrorData)` which signals handler/infrastructure breakage.
 fn tool_input_error(message: impl Into<String>) -> ToolEffect {
-    ToolEffect::Done(Ok(CallToolResult::error(vec![Content::text(
+    ToolEffect::Done(Ok(CallToolResult::error(vec![ContentBlock::text(
         message.into(),
     )])))
 }
@@ -338,7 +338,7 @@ pub fn process_api_response(
     if is_success {
         // Try to parse as JSON for nice formatting
         let content = if let Ok(json_val) = serde_json::from_str::<Value>(body_text) {
-            Content::json(&json_val).map_err(|e| {
+            ContentBlock::json(&json_val).map_err(|e| {
                 ErrorData::new(
                     ErrorCode::INTERNAL_ERROR,
                     format!("failed to serialize API response: {e}"),
@@ -346,12 +346,12 @@ pub fn process_api_response(
                 )
             })?
         } else {
-            Content::text(body_text)
+            ContentBlock::text(body_text)
         };
 
         Ok(CallToolResult::success(vec![content]))
     } else {
-        let content = Content::text(format!("API error (HTTP {status}): {body_text}"));
+        let content = ContentBlock::text(format!("API error (HTTP {status}): {body_text}"));
         Ok(CallToolResult::error(vec![content]))
     }
 }
@@ -385,7 +385,7 @@ fn binary_api_response_content(
     headers: &[(String, String)],
     body: &[u8],
     is_error: bool,
-) -> Result<Content, ErrorData> {
+) -> Result<ContentBlock, ErrorData> {
     let engine = base64::engine::general_purpose::STANDARD;
     let mut response = serde_json::json!({
         "status": status,
@@ -410,7 +410,7 @@ fn binary_api_response_content(
         );
     }
 
-    Content::json(&response).map_err(|e| {
+    ContentBlock::json(&response).map_err(|e| {
         ErrorData::new(
             ErrorCode::INTERNAL_ERROR,
             format!("failed to serialize binary API response metadata: {e}"),
@@ -477,7 +477,7 @@ pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, 
         ) => {
             let Some(result) = results.first() else {
                 return (
-                    ToolEffect::Done(Ok(CallToolResult::error(vec![Content::text(
+                    ToolEffect::Done(Ok(CallToolResult::error(vec![ContentBlock::text(
                         "internal error: no file write results",
                     )]))),
                     vec![],
@@ -681,7 +681,7 @@ fn resume_auth_validation(
             message: Some("Credentials validated successfully".into()),
         };
         let result = AuthStatusResult::new(resolved_auth, Some(&valid_state), now);
-        let tool_effect = match Content::json(&result) {
+        let tool_effect = match ContentBlock::json(&result) {
             Ok(c) => ToolEffect::Done(Ok(CallToolResult::success(vec![c]))),
             Err(e) => ToolEffect::Done(Err(e)),
         };
@@ -693,7 +693,7 @@ fn resume_auth_validation(
             message: Some("API returned 401 Unauthorized — credentials are invalid".into()),
         };
         let result = AuthStatusResult::new(resolved_auth, Some(&invalid_state), now);
-        let tool_effect = match Content::json(&result) {
+        let tool_effect = match ContentBlock::json(&result) {
             Ok(c) => ToolEffect::Done(Ok(CallToolResult::success(vec![c]))),
             Err(e) => ToolEffect::Done(Err(e)),
         };
@@ -704,14 +704,14 @@ fn resume_auth_validation(
     } else {
         // Unexpected status — don't update validation state.
         let result = AuthStatusResult::new(resolved_auth, None, now);
-        let mut auth_result = match Content::json(&result) {
+        let mut auth_result = match ContentBlock::json(&result) {
             Ok(c) => CallToolResult::success(vec![c]),
             Err(e) => {
                 return (ToolEffect::Done(Err(e)), vec![]);
             }
         };
         // Add a note about the unexpected status.
-        auth_result.content.push(Content::text(format!(
+        auth_result.content.push(ContentBlock::text(format!(
             "Warning: credential validation returned unexpected HTTP {status}"
         )));
         (ToolEffect::Done(Ok(auth_result)), vec![])
@@ -731,9 +731,9 @@ fn resume_screenshot_response(
     if !(200..300).contains(&status) {
         let body = String::from_utf8_lossy(body);
         return (
-            ToolEffect::Done(Ok(CallToolResult::error(vec![Content::text(format!(
-                "Shaded views API error (HTTP {status}): {body}"
-            ))]))),
+            ToolEffect::Done(Ok(CallToolResult::error(vec![ContentBlock::text(
+                format!("Shaded views API error (HTTP {status}): {body}"),
+            )]))),
             vec![],
         );
     }
@@ -1355,7 +1355,7 @@ fn tool_error_lookup_def() -> Tool {
 // ============================================================================
 
 fn call_get_started() -> CallToolResult {
-    CallToolResult::success(vec![Content::text(crate::instructions())])
+    CallToolResult::success(vec![ContentBlock::text(crate::instructions())])
 }
 
 fn call_auth_status(
@@ -1373,7 +1373,7 @@ fn call_auth_status(
         // Return cached validation state — no API call needed.
         let now = chrono::Utc::now();
         let result = AuthStatusResult::new(resolved_auth, Some(validation), now);
-        let content = match Content::json(&result) {
+        let content = match ContentBlock::json(&result) {
             Ok(c) => c,
             Err(e) => return ToolEffect::Done(Err(e)),
         };
@@ -1464,7 +1464,7 @@ fn call_api_search(
 ) -> Result<CallToolResult, ErrorData> {
     let input: ApiSearchInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return Ok(CallToolResult::error(vec![Content::text(e.message)])),
+        Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e.message)])),
     };
     let filters = SearchFilters {
         method: input.method,
@@ -1472,7 +1472,7 @@ fn call_api_search(
     };
     let results = spec.search(&input.query, &filters);
 
-    let content = Content::json(&results).map_err(|e| {
+    let content = ContentBlock::json(&results).map_err(|e| {
         ErrorData::new(
             ErrorCode::INTERNAL_ERROR,
             format!("failed to serialize search results: {e}"),
@@ -1489,16 +1489,18 @@ fn call_api_explain(
 ) -> Result<CallToolResult, ErrorData> {
     let input: ApiExplainInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return Ok(CallToolResult::error(vec![Content::text(e.message)])),
+        Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e.message)])),
     };
     let detail = match spec.explain(&input.endpoint) {
         Ok(d) => d,
         Err(e) => {
-            return Ok(CallToolResult::error(vec![Content::text(format!("{e}"))]));
+            return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "{e}"
+            ))]));
         }
     };
 
-    let content = Content::json(&detail).map_err(|e| {
+    let content = ContentBlock::json(&detail).map_err(|e| {
         ErrorData::new(
             ErrorCode::INTERNAL_ERROR,
             format!("failed to serialize endpoint detail: {e}"),
@@ -1629,7 +1631,7 @@ fn call_list_resources() -> CallToolResult {
         );
     }
 
-    CallToolResult::success(vec![Content::text(output)])
+    CallToolResult::success(vec![ContentBlock::text(output)])
 }
 
 fn call_api_schema(
@@ -1638,16 +1640,18 @@ fn call_api_schema(
 ) -> Result<CallToolResult, ErrorData> {
     let input: ApiSchemaInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return Ok(CallToolResult::error(vec![Content::text(e.message)])),
+        Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e.message)])),
     };
     let detail = match spec.lookup_schema(&input.schema) {
         Ok(d) => d,
         Err(e) => {
-            return Ok(CallToolResult::error(vec![Content::text(format!("{e}"))]));
+            return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "{e}"
+            ))]));
         }
     };
 
-    let content = Content::json(&detail).map_err(|e| {
+    let content = ContentBlock::json(&detail).map_err(|e| {
         ErrorData::new(
             ErrorCode::INTERNAL_ERROR,
             format!("failed to serialize schema detail: {e}"),
@@ -1661,7 +1665,7 @@ fn call_api_schema(
 fn call_read_resource(arguments: Option<&Map<String, Value>>) -> CallToolResult {
     let input: ReadResourceInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return CallToolResult::error(vec![Content::text(e.message)]),
+        Err(e) => return CallToolResult::error(vec![ContentBlock::text(e.message)]),
     };
 
     let entry = onshape_mcp_resources::RESOURCES
@@ -1669,13 +1673,13 @@ fn call_read_resource(arguments: Option<&Map<String, Value>>) -> CallToolResult 
         .find(|e| e.uri == input.uri);
 
     if let Some(entry) = entry {
-        CallToolResult::success(vec![Content::text(entry.content)])
+        CallToolResult::success(vec![ContentBlock::text(entry.content)])
     } else {
         let available: Vec<&str> = onshape_mcp_resources::RESOURCES
             .iter()
             .map(|e| e.uri)
             .collect();
-        CallToolResult::error(vec![Content::text(format!(
+        CallToolResult::error(vec![ContentBlock::text(format!(
             "Resource not found: {}. Available URIs: {}",
             input.uri,
             available.join(", ")
@@ -1716,11 +1720,11 @@ fn error_enum_map() -> &'static HashMap<String, String> {
 fn call_error_lookup(arguments: Option<&Map<String, Value>>) -> CallToolResult {
     let input: ErrorLookupInput = match parse_arguments(arguments) {
         Ok(input) => input,
-        Err(e) => return CallToolResult::error(vec![Content::text(e.message)]),
+        Err(e) => return CallToolResult::error(vec![ContentBlock::text(e.message)]),
     };
 
     if input.values.is_empty() {
-        return CallToolResult::error(vec![Content::text(
+        return CallToolResult::error(vec![ContentBlock::text(
             "No enum values provided. Pass one or more ErrorStringEnum names \
              (e.g., [\"FILLET_FAILED\", \"SWEEP_PATH_FAILED\"]).",
         )]);
@@ -1737,7 +1741,7 @@ fn call_error_lookup(arguments: Option<&Map<String, Value>>) -> CallToolResult {
         }
     }
 
-    CallToolResult::success(vec![Content::text(output)])
+    CallToolResult::success(vec![ContentBlock::text(output)])
 }
 
 // ============================================================================
@@ -2001,9 +2005,9 @@ fn format_screenshot_result(
                 path.display()
             );
             CallToolResult::success(vec![
-                Content::json(&structured)
-                    .unwrap_or_else(|_| Content::text(structured.to_string())),
-                Content::text(summary),
+                ContentBlock::json(&structured)
+                    .unwrap_or_else(|_| ContentBlock::text(structured.to_string())),
+                ContentBlock::text(summary),
             ])
         }
         FileWriteResult::Error { path, message } => {
@@ -2019,9 +2023,9 @@ fn format_screenshot_result(
                 path.display()
             );
             CallToolResult::error(vec![
-                Content::json(&structured)
-                    .unwrap_or_else(|_| Content::text(structured.to_string())),
-                Content::text(summary),
+                ContentBlock::json(&structured)
+                    .unwrap_or_else(|_| ContentBlock::text(structured.to_string())),
+                ContentBlock::text(summary),
             ])
         }
     }
@@ -2301,7 +2305,7 @@ mod tests {
         assert_eq!(call_result.content.len(), 1);
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_configured");
     }
@@ -2320,7 +2324,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_validated");
     }
@@ -2339,7 +2343,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_configured");
         assert!(
@@ -2363,7 +2367,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_configured");
         assert!(
@@ -2403,7 +2407,7 @@ mod tests {
         ));
         assert_eq!(call_result.is_error, Some(false));
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_configured");
     }
@@ -2437,7 +2441,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_configured");
         assert_eq!(value["auth_method"], "oauth");
@@ -2457,7 +2461,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_configured");
         assert_eq!(value["auth_method"], "oauth");
@@ -2482,7 +2486,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_validated");
         assert_eq!(value["auth_method"], "oauth");
@@ -2505,7 +2509,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_configured");
         assert!(
@@ -2532,7 +2536,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "not_configured");
         assert!(
@@ -2562,7 +2566,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let results: Vec<Value> = serde_json::from_str(&text.text).expect("should be JSON array");
         assert_eq!(results.len(), 3);
     }
@@ -2584,7 +2588,7 @@ mod tests {
         let call_result = assert_done_ok(result);
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let results: Vec<Value> = serde_json::from_str(&text.text).expect("should be JSON array");
         assert_eq!(results.len(), 3);
     }
@@ -2627,7 +2631,7 @@ mod tests {
         let call_result = assert_done_ok(result);
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let detail: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(detail["operation_id"], "getDocuments");
         assert_eq!(detail["method"], "GET");
@@ -2862,10 +2866,7 @@ mod tests {
         let result = process_api_response(200, &headers, &[0xff]).expect("should succeed");
 
         assert_eq!(result.is_error, Some(false));
-        let text = result.content[0]
-            .raw
-            .as_text()
-            .expect("should be text content");
+        let text = result.content[0].as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], 200);
         assert_eq!(value["contentType"], "application/octet-stream");
@@ -3007,7 +3008,7 @@ mod tests {
         let call_result = assert_done_ok(tool_effect);
         assert_eq!(call_result.is_error, Some(false));
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "valid");
 
@@ -3049,7 +3050,7 @@ mod tests {
         let call_result = assert_done_ok(tool_effect);
         assert_eq!(call_result.is_error, Some(false));
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "invalid");
 
@@ -3102,7 +3103,7 @@ mod tests {
         let result = call_tool("onshape_auth_status", None, &auth, &validation, None);
         let call_result = assert_done_ok(result);
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(value["status"], "valid");
     }
@@ -3123,7 +3124,6 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let text = call_result.content[0]
-            .raw
             .as_text()
             .expect("should be text content");
         assert!(
@@ -3156,7 +3156,6 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let text = call_result.content[0]
-            .raw
             .as_text()
             .expect("should be text content");
         assert!(
@@ -3186,11 +3185,13 @@ mod tests {
         );
         let result = assert_done_ok(result);
         assert_eq!(result.is_error, Some(true));
-        let text = result.content.first().expect("should have content");
-        let text = match text.raw {
-            rmcp::model::RawContent::Text(ref t) => &t.text,
-            _ => panic!("expected text content"),
-        };
+        let text = &result
+            .content
+            .first()
+            .expect("should have content")
+            .as_text()
+            .expect("expected text content")
+            .text;
         assert!(
             text.contains("not found"),
             "error should mention not found: {text}",
@@ -3222,11 +3223,13 @@ mod tests {
         );
         let result = assert_done_ok(result);
         assert_eq!(result.is_error, Some(false));
-        let text = result.content.first().expect("should have content");
-        let text = match text.raw {
-            rmcp::model::RawContent::Text(ref t) => &t.text,
-            _ => panic!("expected text content"),
-        };
+        let text = &result
+            .content
+            .first()
+            .expect("should have content")
+            .as_text()
+            .expect("expected text content")
+            .text;
         assert!(
             text.contains("FILLET_FAILED"),
             "result should contain the enum name: {text}",
@@ -3255,11 +3258,13 @@ mod tests {
         );
         let result = assert_done_ok(result);
         assert_eq!(result.is_error, Some(false));
-        let text = result.content.first().expect("should have content");
-        let text = match text.raw {
-            rmcp::model::RawContent::Text(ref t) => &t.text,
-            _ => panic!("expected text content"),
-        };
+        let text = &result
+            .content
+            .first()
+            .expect("should have content")
+            .as_text()
+            .expect("expected text content")
+            .text;
         assert!(
             text.contains("unknown"),
             "unknown enum should be marked as such: {text}",
@@ -3303,11 +3308,13 @@ mod tests {
         );
         let result = assert_done_ok(result);
         assert_eq!(result.is_error, Some(false));
-        let text = result.content.first().expect("should have content");
-        let text = match text.raw {
-            rmcp::model::RawContent::Text(ref t) => &t.text,
-            _ => panic!("expected text content"),
-        };
+        let text = &result
+            .content
+            .first()
+            .expect("should have content")
+            .as_text()
+            .expect("expected text content")
+            .text;
         // All three should be in the output
         assert!(
             text.contains("FILLET_FAILED"),
@@ -4305,7 +4312,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let detail: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(detail["name"], "BTMFeature-134");
         assert_eq!(detail["discriminator_property"], "btType");
@@ -4335,7 +4342,7 @@ mod tests {
         assert_eq!(call_result.is_error, Some(false));
 
         let content = &call_result.content[0];
-        let text = content.raw.as_text().expect("should be text content");
+        let text = content.as_text().expect("should be text content");
         let detail: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
         assert_eq!(detail["parent"], "BTMFeature-134");
 
