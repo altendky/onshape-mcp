@@ -36,6 +36,7 @@ const NPM_PACKAGES = [
 const INTERNAL_CRATES = [
   "onshape-client-core",
   "onshape-client-io",
+  "onshape-openapi",
   "onshape-mcp-core",
   "onshape-mcp-io",
   "onshape-mcp-resources",
