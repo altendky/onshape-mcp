@@ -11,30 +11,56 @@ on:
         description: "Release version (e.g., 0.5.0)"
         type: string
         required: true
+      release-tag:
+        description: "Existing tag to use for the GitHub Release (e.g., v0.5.0)"
+        type: string
+        required: true
+      artifact-run-id:
+        description: "Run containing binary artifacts; empty uses the current run"
+        type: string
+        default: ""
 
 jobs:
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
+    concurrency:
+      group: github-release-${{ inputs.release-tag }}
+      cancel-in-progress: false
     permissions:
+      actions: read
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.publish && inputs.release-tag || github.sha }}
 
       - name: Generate library matrix
         id: library
         uses: ./.github/actions/library
 
       - name: Download binary artifacts
+        if: inputs.artifact-run-id == ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: binary-*
           path: binaries
 
+      - name: Download recovery binary artifacts
+        if: inputs.artifact-run-id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: binary-*
+          path: binaries
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.artifact-run-id }}
+
       - name: Package release archives
         shell: bash
         env:
           PLATFORMS: ${{ steps.library.outputs.matrix }}
+          SOURCE_REF: ${{ inputs.publish && inputs.release-tag || github.sha }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -56,11 +82,34 @@ jobs:
             chmod +x "$staging_dir/${binary_name}"
             cp LICENSE-MIT LICENSE-APACHE "$staging_dir/"
 
+            source_date_epoch=$(git log -1 --format=%ct "$SOURCE_REF")
+            touch -d "@${source_date_epoch}" \
+              "$staging_dir" \
+              "$staging_dir/${binary_name}" \
+              "$staging_dir/LICENSE-MIT" \
+              "$staging_dir/LICENSE-APACHE"
+
             # Create archive
             if [[ "$archive_format" == "tar.gz" ]]; then
-              tar -czf "dist/release/${archive_name}.tar.gz" -C dist/staging "$archive_name"
+              tar \
+                --sort=name \
+                --mtime="@${source_date_epoch}" \
+                --owner=0 \
+                --group=0 \
+                --numeric-owner \
+                -cf - \
+                -C dist/staging \
+                "$archive_name" \
+                | gzip -n > "dist/release/${archive_name}.tar.gz"
             elif [[ "$archive_format" == "zip" ]]; then
-              (cd dist/staging && zip -r "../release/${archive_name}.zip" "$archive_name")
+              (
+                cd dist/staging
+                zip -X "../release/${archive_name}.zip" \
+                  "$archive_name/" \
+                  "$archive_name/${binary_name}" \
+                  "$archive_name/LICENSE-MIT" \
+                  "$archive_name/LICENSE-APACHE"
+              )
             else
               echo "ERROR: Unknown archive format '${archive_format}' for ${rust_target}" >&2
               exit 1
@@ -93,7 +142,7 @@ jobs:
         if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.release-tag }}
           VERSION: ${{ inputs.version }}
         shell: bash
         run: |
@@ -104,8 +153,51 @@ jobs:
           done
           assets+=("dist/SHA256SUMS")
 
-          echo "Creating release ${TAG} with ${#assets[@]} assets..."
-          gh release create "$TAG" \
-            --title "v${VERSION}" \
-            --generate-notes \
-            "${assets[@]}"
+          if ! release=$(gh release view "$TAG" --json isDraft,assets 2>/dev/null); then
+            echo "Creating release ${TAG} with ${#assets[@]} assets..."
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "v${VERSION}" \
+              --generate-notes \
+              "${assets[@]}"
+            exit 0
+          fi
+
+          echo "Release ${TAG} already exists; verifying assets..."
+          existing_dir="$RUNNER_TEMP/existing-release"
+          mkdir -p "$existing_dir"
+
+          for asset in "${assets[@]}"; do
+            name=$(basename "$asset")
+            existing="$existing_dir/$name"
+            asset_count=$(jq --arg name "$name" \
+              '[.assets[] | select(.name == $name)] | length' <<< "$release")
+            if [[ "$asset_count" == "0" ]]; then
+              echo "Uploading missing asset $name..."
+              gh release upload "$TAG" "$asset"
+              continue
+            elif [[ "$asset_count" != "1" ]]; then
+              echo "ERROR: Release has $asset_count assets named $name" >&2
+              exit 1
+            fi
+
+            gh release download "$TAG" --pattern "$name" --dir "$existing_dir"
+
+            expected=$(sha256sum "$asset" | cut -d' ' -f1)
+            actual=$(sha256sum "$existing" | cut -d' ' -f1)
+            if [[ "$actual" != "$expected" ]]; then
+              echo "ERROR: Existing release asset $name has different contents" >&2
+              exit 1
+            fi
+            echo "Asset $name already exists with matching SHA-256."
+          done
+
+          if [[ $(jq -r '.isDraft' <<< "$release") == "true" ]]; then
+            echo "Publishing recovered draft release $TAG..."
+            gh release edit "$TAG" --draft=false
+          fi
+
+          if [[ $(gh release view "$TAG" --json isDraft --jq '.isDraft') != "false" ]]; then
+            echo "ERROR: Release $TAG is still a draft" >&2
+            exit 1
+          fi
