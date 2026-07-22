@@ -1,0 +1,4 @@
+changelog:
+  exclude:
+    authors:
+      - "altendky-renovate[bot]"

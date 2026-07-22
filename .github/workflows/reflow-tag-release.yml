@@ -53,7 +53,9 @@ jobs:
 
       - name: Create and push tag
         if: steps.check.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
         run: |
-          version="${{ steps.check.outputs.version }}"
-          git tag "v${version}"
-          git push origin "v${version}"
+          node scripts/release-changelog.js extract "$VERSION" > /dev/null
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"

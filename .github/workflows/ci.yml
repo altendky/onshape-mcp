@@ -60,7 +60,7 @@ jobs:
   checks:
     name: checks
     if: ${{ !cancelled() }}
-    needs: [mise, pre-commit, rust, coverage, npm, error-enums]
+    needs: [mise, pre-commit, rust, coverage, npm, version, error-enums]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1

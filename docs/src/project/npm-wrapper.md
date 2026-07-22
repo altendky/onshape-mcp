@@ -142,12 +142,14 @@ For Rust-side stdio buffering considerations, see [#37](https://github.com/alten
 
 ## Versioning Strategy
 
-All npm packages use **lockstep versioning** with the Cargo version:
+All release packages in `npm/` use **lockstep versioning** with the Cargo version:
 
 - Cargo.toml version: `0.1.0`
 - All npm packages: `0.1.0`
 
-This ensures consistency and simplifies the release process.
+This ensures consistency and simplifies the release process. The private,
+independently versioned `workers/oauth-proxy` package is not an npm release
+artifact and is intentionally excluded from version discovery.
 
 ### Enforcement
 

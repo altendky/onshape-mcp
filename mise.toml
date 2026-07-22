@@ -86,6 +86,9 @@ sed -i "s/^version = \".*\"/version = \"${version}\"/" Cargo.toml
 # Propagate to all workspace deps, Cargo.lock, npm packages
 node scripts/sync-versions.js
 
+# Move Unreleased notes into the dated release section
+node scripts/release-changelog.js finalize "$version"
+
 # Commit and push
 git add -A
 git commit -m "Release v${version}"

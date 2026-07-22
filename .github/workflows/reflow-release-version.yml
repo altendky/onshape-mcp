@@ -36,7 +36,23 @@ jobs:
           echo "Cargo.toml version: $version"
 
       - name: Check version sync
-        run: node scripts/sync-versions.js --check
+        run: |
+          node --test scripts/release-changelog.test.js
+          node --test scripts/sync-versions.test.js
+          node scripts/sync-versions.js --check
+
+      - name: Validate release changelog
+        env:
+          REF_NAME: ${{ github.head_ref || github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          if [[ "$REF_TYPE" == "tag" || "$REF_NAME" == "release/v${VERSION}" ]]; then
+            node scripts/release-changelog.js extract "$VERSION" > /dev/null
+          else
+            node scripts/release-changelog.js validate-if-present "$VERSION"
+          fi
 
       - name: Verify tag matches Cargo.toml version
         if: inputs.git-tag != ''

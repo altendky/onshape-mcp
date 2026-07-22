@@ -89,6 +89,12 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare curated release notes
+        if: inputs.publish
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node scripts/release-changelog.js extract "$VERSION" > dist/release-notes.md
+
       - name: Create GitHub Release
         if: inputs.publish
         env:
@@ -108,4 +114,5 @@ jobs:
           gh release create "$TAG" \
             --title "v${VERSION}" \
             --generate-notes \
+            --notes-file dist/release-notes.md \
             "${assets[@]}"

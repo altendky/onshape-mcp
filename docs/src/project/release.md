@@ -49,7 +49,12 @@ All steps run on every trigger. The `release-config` job determines whether each
 
 The authoritative version is `[workspace.package].version` in the root `Cargo.toml`.
 All crate `Cargo.toml` files inherit this version via `version.workspace = true`.
-The `[workspace.dependencies]` internal crate version entries, `Cargo.lock`, and all npm `package.json` files are synced to this version via `scripts/sync-versions.js`, enforced by a pre-commit hook.
+Every path-based `[workspace.dependencies]` version, `Cargo.lock`, and every npm
+package and lockfile in an immediate package directory under `npm/` is discovered
+and synced to this version via `scripts/sync-versions.js`. The private
+`workers/oauth-proxy` package is independently versioned and intentionally
+excluded from discovery. The pre-commit hook auto-syncs relevant manifest edits;
+CI runs check mode on every PR and is the universal enforcement layer.
 
 ### Staging Version Format
 
@@ -196,7 +201,8 @@ Steps:
 4. Creates branch `release/v{version}`
 5. Updates `[workspace.package].version` in root `Cargo.toml`
 6. Runs `node scripts/sync-versions.js` (propagates to workspace deps, Cargo.lock, all npm packages)
-7. Commits, pushes, opens PR with `enqueue` label
+7. Moves the current `Unreleased` changelog content into a dated release section
+8. Commits, pushes, opens PR with `enqueue` label
 
 ### Auto-Tag Workflow (`reflow-tag-release.yml`)
 
@@ -204,12 +210,18 @@ A reusable workflow called from `ci.yml` as the `tag-release` job, gated on `nee
 
 The `tag-release` job only runs on pushes to `main` (`if: github.ref == 'refs/heads/main'`). Outputs a `tagged` boolean so downstream jobs know whether a tag was created.
 
+Immediately before creating a new stable tag, the workflow independently
+extracts the matching curated changelog section. A stable version that reaches
+`main` without finalized release notes therefore fails before tag creation,
+regardless of its source branch.
+
 Steps:
 
 1. Read version from `Cargo.toml` (via `cargo metadata`)
 2. If version contains `-` → exit (pre-release / dev version, not a release commit)
 3. If tag `v{version}` already exists → exit (idempotent)
-4. Create and push tag `v{version}` (triggers `ci.yml` publish pipeline)
+4. Require an extractable changelog section for `v{version}`
+5. Create and push tag `v{version}` (triggers `ci.yml` publish pipeline)
 
 ### Post-Release Workflow (`reflow-post-release.yml`)
 
@@ -287,7 +299,12 @@ build ────────────────┼──► release-npm
                             build, release-npm, cargo-publish)
 ```
 
-All quality jobs (`pre-commit`, `rust`, `coverage`, `npm`) must pass the `checks` gate before any publishing can begin. `build` and `version` start immediately in parallel. `release-config` depends on `version` and makes a single mode decision. `cargo-publish` and `release-npm` both depend on `release-config` and `checks`; `release-npm` also depends on `build`. `publish-release` waits for everything.
+All validation jobs aggregated by `checks`, including version synchronization,
+must pass before tagging or publishing can begin. `build` and `version` start
+immediately in parallel. `release-config` depends on `version` and makes a single
+mode decision. `cargo-publish` and `release-npm` both depend on `release-config`
+and `checks`; `release-npm` also depends on `build`. `publish-release` waits for
+everything.
 
 ### Release-Config Job
 
@@ -319,6 +336,12 @@ Packages release archives and creates a GitHub Release. Parameterized by `publis
 
 ### GitHub Release Contents
 
+The curated changelog section for the release is prepended to GitHub-generated
+release notes. This keeps material dependency changes represented in the curated
+notes even when their Renovate pull requests are excluded from generated notes.
+Generated release notes include all merged pull requests except those authored
+by `altendky-renovate[bot]`, as configured in `.github/release.yml`.
+
 | Asset | Description |
 | ----- | ----------- |
 | Platform archives (5) | Binary + `LICENSE-MIT` + `LICENSE-APACHE` per platform |
@@ -335,41 +358,19 @@ Artifacts are shared across workflow runs via GitHub Actions upload/download.
 
 ## Crate Naming and Publish Order
 
-All workspace crates are published to crates.io.
-The naming follows Rust ecosystem conventions: `-proto` suffix for sans-IO protocol crates (following the pattern established by `quinn-proto`, `hickory-proto`, etc.), with the clean base name for the IO layer.
+All publishable workspace crates are released to crates.io. The publish script
+uses Cargo metadata to discover the current crate set and topologically sort its
+internal dependencies, so the order does not require manual maintenance.
 
-Crate names are scoped under `onshape-mcp-*` to group them on crates.io (which has no organization or namespace mechanism — all crate names share a flat global namespace).
-If the client crates mature into a general-purpose Onshape SDK, they can be renamed to drop the `mcp` scoping.
+The current workspace crates are:
 
-### Naming Scheme
-
-| Side | Sans-IO | IO |
-| ---- | ------- | -- |
-| MCP server | `onshape-mcp-proto` | `onshape-mcp` (lib.rs + main.rs) |
-| Onshape API | `onshape-mcp-client-proto` | `onshape-mcp-client` |
-
-The MCP server binary and IO library are merged into a single crate (`onshape-mcp`) following the quinn model — `quinn-proto` for the sans-IO layer, `quinn` for the IO layer and public API.
-Rust crates can have both `lib.rs` and `main.rs`; the library is usable as a dependency while `cargo install` builds the binary.
-
-The tracing crates are standalone (not Onshape-specific).
-See [Open Questions](open-questions.md#tracing-crate-naming) for the naming decision.
-
-### Full Crate List
-
-Publish order follows the dependency chain (leaves first):
-
-| Order | Crate | Current name | Description |
-| ----- | ----- | ------------ | ----------- |
-| 1 | `tracing-*-macros` | `tracing-sansio-macros` | Proc-macro for tracing capture (name TBD) |
-| 2 | `tracing-*` | `tracing-sansio` | Sans-IO tracing capture library (name TBD) |
-| 3 | `onshape-mcp-client-proto` | `onshape-client-core` | Sans-IO Onshape API types/logic |
-| 4 | `onshape-mcp-client` | (planned) | Onshape API HTTP client |
-| 5 | `onshape-mcp-proto` | `onshape-mcp-core` | Sans-IO MCP server protocol logic |
-| 6 | `onshape-mcp` | `onshape-mcp` + `onshape-mcp-io` | MCP server IO + binary (merged) |
-
-The exact order may vary as dependencies evolve.
-Only crates that exist and are workspace members at the time of release are published.
-The rename from current names to target names is a prerequisite for the first release.
+- `onshape-client-core`
+- `onshape-client-io`
+- `onshape-openapi`
+- `onshape-mcp-resources`
+- `onshape-mcp-core`
+- `onshape-mcp-io`
+- `onshape-mcp`
 
 ## Checksums
 

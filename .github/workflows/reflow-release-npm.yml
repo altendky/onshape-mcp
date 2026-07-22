@@ -72,6 +72,18 @@ jobs:
           echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
           echo "Platform directories: $dirs"
 
+      - name: Verify npm publish inventory
+        shell: bash
+        env:
+          PLATFORM_DIRS: ${{ steps.platform-dirs.outputs.dirs }}
+        run: |
+          platform_packages=()
+          for package_dir in $PLATFORM_DIRS; do
+            platform_packages+=("$(basename "$package_dir")")
+          done
+          node scripts/sync-versions.js --check-npm-publish-inventory \
+            onshape-mcp opencode-auth "${platform_packages[@]}"
+
       - name: Update package.json files to target version
         shell: bash
         env:

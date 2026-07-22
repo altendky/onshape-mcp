@@ -170,7 +170,8 @@ The CI uses reusable workflows for visual grouping in the GitHub Actions UI. Eac
 │    build:                                                         │
 │      uses: ./.github/workflows/reflow-release-build.yml          │
 │                                                                   │
-│    checks: (needs: pre-commit, rust, coverage, npm)               │
+│    checks: (needs: mise, pre-commit, rust, coverage, npm,         │
+│                   version, error-enums)                            │
 │      re-actors/alls-green — gates release jobs on all quality     │
 │      checks passing                                               │
 │                                                                   │
