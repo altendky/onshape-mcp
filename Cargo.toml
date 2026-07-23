@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.5.1"
+version = "0.5.2-dev.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -15,12 +15,12 @@ categories = ["development-tools", "api-bindings"]
 
 [workspace.dependencies]
 # Internal crates
-onshape-client-core = { path = "crates/onshape-client-core", version = "0.5.1" }
-onshape-client-io = { path = "crates/onshape-client-io", version = "0.5.1" }
-onshape-openapi = { path = "crates/onshape-openapi", version = "0.5.1" }
-onshape-mcp-core = { path = "crates/onshape-mcp-core", version = "0.5.1" }
-onshape-mcp-io = { path = "crates/onshape-mcp-io", version = "0.5.1" }
-onshape-mcp-resources = { path = "crates/onshape-mcp-resources", version = "0.5.1" }
+onshape-client-core = { path = "crates/onshape-client-core", version = "0.5.2-dev.0" }
+onshape-client-io = { path = "crates/onshape-client-io", version = "0.5.2-dev.0" }
+onshape-openapi = { path = "crates/onshape-openapi", version = "0.5.2-dev.0" }
+onshape-mcp-core = { path = "crates/onshape-mcp-core", version = "0.5.2-dev.0" }
+onshape-mcp-io = { path = "crates/onshape-mcp-io", version = "0.5.2-dev.0" }
+onshape-mcp-resources = { path = "crates/onshape-mcp-resources", version = "0.5.2-dev.0" }
 
 # External dependencies
 axum = "0.8"
