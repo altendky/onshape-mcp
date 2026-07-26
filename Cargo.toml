@@ -24,7 +24,7 @@ onshape-mcp-resources = { path = "crates/onshape-mcp-resources", version = "0.5.
 
 # External dependencies
 axum = "0.8"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
