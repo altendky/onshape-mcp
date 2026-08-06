@@ -147,7 +147,7 @@ version = "0.24.2"
 backend = "cargo:lychee"
 
 [[tools."cargo:mdbook"]]
-version = "0.5.3"
+version = "0.5.4"
 backend = "cargo:mdbook"
 
 [[tools."github:nextest-rs/nextest"]]
