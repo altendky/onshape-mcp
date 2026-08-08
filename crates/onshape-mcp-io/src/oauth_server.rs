@@ -312,14 +312,11 @@ impl OAuthServerState {
 
         eprintln!("[oauth] refreshing Onshape tokens for user {user_id}");
 
-        // Build OAuth client using server's Onshape app credentials.
-        // Use RequestBody auth (client_secret_post) — Onshape requires
-        // credentials in the POST body, not HTTP Basic auth.
+        // The shared client configures Onshape's required request-body authentication.
         let onshape_client = onshape_oauth_client(
             &self.onshape_client_id,
             self.onshape_client_secret.expose_secret(),
-        )
-        .set_auth_type(oauth2::AuthType::RequestBody);
+        );
 
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -801,13 +798,11 @@ async fn exchange_onshape_code(
 > {
     eprintln!("[oauth] callback: exchanging Onshape authorization code for tokens");
 
-    // Use RequestBody (client_secret_post) auth — Onshape requires credentials
-    // in the POST body rather than an HTTP Basic Authorization header.
+    // The shared client configures Onshape's required request-body authentication.
     let onshape_client = onshape_oauth_client(
         &state.onshape_client_id,
         state.onshape_client_secret.expose_secret(),
-    )
-    .set_auth_type(oauth2::AuthType::RequestBody);
+    );
 
     let callback_url = state.url_with_path(&["oauth", "callback"]);
     let redirect_url = oauth2::RedirectUrl::new(callback_url).map_err(|e| {
