@@ -245,9 +245,10 @@ pub type OnshapeOAuthClient = BasicClient<
 
 /// Creates a configured [`OnshapeOAuthClient`] for Onshape OAuth 2.0.
 ///
-/// Sets the authorization and token endpoints to the Onshape URLs.
-/// The returned client is ready for authorization code exchanges and
-/// token refresh operations — but performs no I/O itself.
+/// Sets the authorization and token endpoints to the Onshape URLs and uses
+/// request-body client authentication, as required by Onshape's token endpoint.
+/// The returned client is ready for authorization code exchanges and token
+/// refresh operations — but performs no I/O itself.
 ///
 /// # Arguments
 ///
@@ -259,6 +260,7 @@ pub fn onshape_oauth_client(client_id: &str, client_secret: &str) -> OnshapeOAut
         .set_client_secret(ClientSecret::new(client_secret.to_string()))
         .set_auth_uri(onshape_auth_url())
         .set_token_uri(onshape_token_url())
+        .set_auth_type(oauth2::AuthType::RequestBody)
 }
 
 // ============================================================================
@@ -805,8 +807,9 @@ mod tests {
     }
 
     #[test]
-    fn onshape_oauth_client_builds_successfully() {
-        let _client = onshape_oauth_client("test-client-id", "test-client-secret");
+    fn onshape_oauth_client_uses_request_body_authentication() {
+        let client = onshape_oauth_client("test-client-id", "test-client-secret");
+        assert!(matches!(client.auth_type(), oauth2::AuthType::RequestBody));
     }
 
     #[test]
