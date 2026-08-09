@@ -27,9 +27,10 @@ use rand::RngExt;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use onshape_client_core::oauth::onshape_oauth_client;
+use onshape_mcp_core::ValidationState;
 
 // ============================================================================
 // Types
@@ -44,6 +45,29 @@ pub(crate) struct UserOnshapeTokens {
     access_token: SecretString,
     refresh_token: SecretString,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Clone, Debug)]
+struct UserCredentials {
+    tokens: Option<UserOnshapeTokens>,
+    validation: Arc<Mutex<ValidationState>>,
+}
+
+impl UserCredentials {
+    fn new(tokens: UserOnshapeTokens) -> Self {
+        Self {
+            tokens: Some(tokens),
+            validation: Arc::new(Mutex::new(ValidationState::default())),
+        }
+    }
+
+    #[cfg(test)]
+    fn without_tokens() -> Self {
+        Self {
+            tokens: None,
+            validation: Arc::new(Mutex::new(ValidationState::default())),
+        }
+    }
 }
 
 impl UserOnshapeTokens {
@@ -85,6 +109,8 @@ pub(crate) struct UserContext {
     pub user_id: String,
     /// The user's Onshape tokens for API calls.
     pub onshape_tokens: UserOnshapeTokens,
+    /// Validation state associated with this credential generation.
+    pub validation: Arc<Mutex<ValidationState>>,
 }
 
 /// Pending authorization state — stored between `/oauth/authorize` and
@@ -154,8 +180,8 @@ pub(crate) struct OAuthServerState {
     tokens: RwLock<HashMap<String, IssuedToken>>,
     /// Issued refresh tokens → user mapping (separate from access tokens).
     refresh_tokens: RwLock<HashMap<String, IssuedToken>>,
-    /// User Onshape tokens (keyed by Onshape user ID).
-    pub(crate) user_tokens: RwLock<HashMap<String, UserOnshapeTokens>>,
+    /// User credentials and generation-scoped validation (keyed by Onshape user ID).
+    user_credentials: RwLock<HashMap<String, UserCredentials>>,
     /// Per-user locks for serializing Onshape token refresh operations.
     ///
     /// Prevents concurrent refreshes for the same user from consuming the
@@ -231,7 +257,7 @@ impl OAuthServerState {
             auth_codes: RwLock::new(HashMap::new()),
             tokens: RwLock::new(HashMap::new()),
             refresh_tokens: RwLock::new(HashMap::new()),
-            user_tokens: RwLock::new(HashMap::new()),
+            user_credentials: RwLock::new(HashMap::new()),
             refresh_locks: RwLock::new(HashMap::new()),
             allowed_users: allowed_user_ids.into_iter().collect(),
             onshape_client_id,
@@ -268,11 +294,43 @@ impl OAuthServerState {
         if chrono::Utc::now() > expires_at {
             return None;
         }
-        let onshape_tokens = self.user_tokens.read().await.get(&user_id)?.clone();
+        let credentials = self.user_credentials.read().await.get(&user_id)?.clone();
         Some(UserContext {
             user_id,
-            onshape_tokens,
+            onshape_tokens: credentials.tokens?,
+            validation: credentials.validation,
         })
+    }
+
+    /// Return the runtime validation state shared by this user's MCP requests.
+    #[cfg(test)]
+    pub(crate) async fn validation_for_user(&self, user_id: &str) -> Arc<Mutex<ValidationState>> {
+        let mut credentials = self.user_credentials.write().await;
+        Arc::clone(
+            &credentials
+                .entry(user_id.to_string())
+                .or_insert_with(UserCredentials::without_tokens)
+                .validation,
+        )
+    }
+
+    /// Store refreshed credentials while preserving the active validation slot.
+    async fn store_refreshed_user_tokens(&self, user_id: &str, tokens: UserOnshapeTokens) {
+        let mut credentials = self.user_credentials.write().await;
+        credentials
+            .entry(user_id.to_string())
+            .and_modify(|credentials| credentials.tokens = Some(tokens.clone()))
+            .or_insert_with(|| UserCredentials::new(tokens));
+    }
+
+    /// Store explicitly reauthorized credentials and invalidate old validation.
+    async fn replace_reauthorized_user_tokens(&self, user_id: &str, tokens: UserOnshapeTokens) {
+        let lock = self.get_user_refresh_lock(user_id).await;
+        let _guard = lock.lock().await;
+        self.user_credentials
+            .write()
+            .await
+            .insert(user_id.to_string(), UserCredentials::new(tokens));
     }
 
     /// Refresh a user's Onshape tokens using the server's client credentials.
@@ -295,11 +353,11 @@ impl OAuthServerState {
 
         // Re-read tokens — they may have been refreshed while we waited.
         let current_tokens = self
-            .user_tokens
+            .user_credentials
             .read()
             .await
             .get(user_id)
-            .cloned()
+            .and_then(|credentials| credentials.tokens.clone())
             .ok_or(UserTokenRefreshError::UserNotFound)?;
 
         // Double-check: skip if another request already refreshed.
@@ -371,10 +429,8 @@ impl OAuthServerState {
         );
 
         // Update stored tokens.
-        self.user_tokens
-            .write()
-            .await
-            .insert(user_id.to_string(), new_tokens.clone());
+        self.store_refreshed_user_tokens(user_id, new_tokens.clone())
+            .await;
 
         eprintln!("[oauth] Onshape token refresh succeeded for user {user_id}");
 
@@ -966,14 +1022,16 @@ async fn onshape_callback(
         .refresh_token()
         .map(|t| t.secret().clone())
         .unwrap_or_default();
-    state.user_tokens.write().await.insert(
-        session_info.id.clone(),
-        UserOnshapeTokens::new(
-            SecretString::from(access_token),
-            SecretString::from(refresh_token),
-            expires_at,
-        ),
-    );
+    state
+        .replace_reauthorized_user_tokens(
+            &session_info.id,
+            UserOnshapeTokens::new(
+                SecretString::from(access_token),
+                SecretString::from(refresh_token),
+                expires_at,
+            ),
+        )
+        .await;
 
     // Issue an MCP authorization code.
     let mcp_code = random_hex(32);
@@ -1410,12 +1468,17 @@ pub(crate) fn oauth_router(state: Arc<OAuthServerState>) -> Router {
 #[allow(clippy::expect_used, clippy::panic, clippy::similar_names)]
 mod tests {
     use super::*;
+    use onshape_mcp_core::{ValidationState, ValidationStatus};
     use sha2::Digest as _;
 
     /// Helper: create a test `OAuthServerState` with a single allowed user.
     fn test_state() -> OAuthServerState {
+        test_state_with_public_url("https://example.com")
+    }
+
+    fn test_state_with_public_url(public_url: &str) -> OAuthServerState {
         OAuthServerState::new(
-            url::Url::parse("https://example.com").expect("valid test URL"),
+            url::Url::parse(public_url).expect("valid test URL"),
             "onshape-client-id".to_string(),
             SecretString::from("onshape-client-secret"),
             vec!["allowed-user-1".to_string()],
@@ -1455,14 +1518,16 @@ mod tests {
             },
         );
         // Also insert user tokens so validate_token can find them.
-        state.user_tokens.write().await.insert(
-            user_id.to_string(),
-            UserOnshapeTokens::new(
-                SecretString::from("onshape-access-token"),
-                SecretString::from("onshape-refresh-token"),
-                Some(now + chrono::Duration::hours(1)),
-            ),
-        );
+        state
+            .store_refreshed_user_tokens(
+                user_id,
+                UserOnshapeTokens::new(
+                    SecretString::from("onshape-access-token"),
+                    SecretString::from("onshape-refresh-token"),
+                    Some(now + chrono::Duration::hours(1)),
+                ),
+            )
+            .await;
         token
     }
 
@@ -1480,6 +1545,167 @@ mod tests {
         assert!(result.is_some());
         let ctx = result.expect("should be Some");
         assert_eq!(ctx.user_id, "allowed-user-1");
+    }
+
+    #[tokio::test]
+    async fn reauthorizing_user_tokens_resets_cached_validation() {
+        let state = test_state();
+        let validation = state.validation_for_user("allowed-user-1").await;
+        *validation.lock().await = ValidationState {
+            status: ValidationStatus::Invalid,
+            last_check: Some(chrono::Utc::now()),
+            message: Some("old credentials were rejected".to_string()),
+        };
+
+        state
+            .replace_reauthorized_user_tokens(
+                "allowed-user-1",
+                UserOnshapeTokens::new(
+                    SecretString::from("new-access-token"),
+                    SecretString::from("new-refresh-token"),
+                    Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+                ),
+            )
+            .await;
+
+        let replacement = state.validation_for_user("allowed-user-1").await;
+        assert!(!Arc::ptr_eq(&validation, &replacement));
+        assert_eq!(*replacement.lock().await, ValidationState::default());
+    }
+
+    #[tokio::test]
+    async fn refreshing_user_tokens_preserves_active_validation_slot() {
+        let state = test_state();
+        let active_validation = state.validation_for_user("allowed-user-1").await;
+        *active_validation.lock().await = ValidationState {
+            status: ValidationStatus::Invalid,
+            last_check: Some(chrono::Utc::now()),
+            message: Some("credentials required refresh".to_string()),
+        };
+
+        state
+            .store_refreshed_user_tokens(
+                "allowed-user-1",
+                UserOnshapeTokens::new(
+                    SecretString::from("refreshed-access-token"),
+                    SecretString::from("refreshed-refresh-token"),
+                    Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+                ),
+            )
+            .await;
+
+        *active_validation.lock().await = ValidationState {
+            status: ValidationStatus::Valid,
+            last_check: Some(chrono::Utc::now()),
+            message: Some("refreshed credentials validated".to_string()),
+        };
+
+        let next_request_validation = state.validation_for_user("allowed-user-1").await;
+        assert!(Arc::ptr_eq(&active_validation, &next_request_validation));
+        assert_eq!(
+            next_request_validation.lock().await.status,
+            ValidationStatus::Valid
+        );
+    }
+
+    #[tokio::test]
+    async fn reauthorization_waits_for_active_refresh_and_wins() {
+        let state = Arc::new(test_state());
+        state
+            .store_refreshed_user_tokens(
+                "allowed-user-1",
+                UserOnshapeTokens::new(
+                    SecretString::from("old-access-token"),
+                    SecretString::from("old-refresh-token"),
+                    None,
+                ),
+            )
+            .await;
+
+        let refresh_lock = state.get_user_refresh_lock("allowed-user-1").await;
+        let refresh_guard = refresh_lock.lock().await;
+        let reauthorizing_state = Arc::clone(&state);
+        let reauthorization = tokio::spawn(async move {
+            reauthorizing_state
+                .replace_reauthorized_user_tokens(
+                    "allowed-user-1",
+                    UserOnshapeTokens::new(
+                        SecretString::from("reauthorized-access-token"),
+                        SecretString::from("reauthorized-refresh-token"),
+                        None,
+                    ),
+                )
+                .await;
+        });
+
+        tokio::task::yield_now().await;
+        assert!(!reauthorization.is_finished());
+        state
+            .store_refreshed_user_tokens(
+                "allowed-user-1",
+                UserOnshapeTokens::new(
+                    SecretString::from("stale-refreshed-access-token"),
+                    SecretString::from("stale-refreshed-refresh-token"),
+                    None,
+                ),
+            )
+            .await;
+        drop(refresh_guard);
+        reauthorization
+            .await
+            .expect("reauthorization task should complete");
+
+        let access_token = {
+            let credentials = state.user_credentials.read().await;
+            credentials["allowed-user-1"]
+                .tokens
+                .as_ref()
+                .expect("reauthorized tokens should be stored")
+                .access_token()
+                .expose_secret()
+                .to_string()
+        };
+        assert_eq!(access_token, "reauthorized-access-token");
+    }
+
+    #[tokio::test]
+    async fn stale_request_cannot_update_reauthorized_validation() {
+        let state = test_state();
+        let token = insert_access_token(&state, "allowed-user-1", "client-1").await;
+        let stale_context = state
+            .validate_token(&token)
+            .await
+            .expect("initial credentials should authenticate");
+
+        state
+            .replace_reauthorized_user_tokens(
+                "allowed-user-1",
+                UserOnshapeTokens::new(
+                    SecretString::from("reauthorized-access-token"),
+                    SecretString::from("reauthorized-refresh-token"),
+                    None,
+                ),
+            )
+            .await;
+        let current_context = state
+            .validate_token(&token)
+            .await
+            .expect("reauthorized credentials should authenticate");
+        assert!(!Arc::ptr_eq(
+            &stale_context.validation,
+            &current_context.validation
+        ));
+
+        *stale_context.validation.lock().await = ValidationState {
+            status: ValidationStatus::Invalid,
+            last_check: Some(chrono::Utc::now()),
+            message: Some("stale request completed after reauthorization".to_string()),
+        };
+
+        assert_eq!(
+            *current_context.validation.lock().await,
+            ValidationState::default()
+        );
     }
 
     #[tokio::test]
@@ -1847,14 +2073,16 @@ mod tests {
         );
 
         // Insert user tokens so the token issuance can succeed.
-        state.user_tokens.write().await.insert(
-            "allowed-user-1".to_string(),
-            UserOnshapeTokens::new(
-                SecretString::from("onshape-at"),
-                SecretString::from("onshape-rt"),
-                None,
-            ),
-        );
+        state
+            .store_refreshed_user_tokens(
+                "allowed-user-1",
+                UserOnshapeTokens::new(
+                    SecretString::from("onshape-at"),
+                    SecretString::from("onshape-rt"),
+                    None,
+                ),
+            )
+            .await;
 
         // Correct verifier should succeed.
         let req = TokenRequest {
@@ -2020,10 +2248,12 @@ mod tests {
             },
         );
         // Need user tokens for the lookup.
-        state.user_tokens.write().await.insert(
-            "allowed-user-1".to_string(),
-            UserOnshapeTokens::new(SecretString::from("at"), SecretString::from("rt"), None),
-        );
+        state
+            .store_refreshed_user_tokens(
+                "allowed-user-1",
+                UserOnshapeTokens::new(SecretString::from("at"), SecretString::from("rt"), None),
+            )
+            .await;
 
         // Client B should NOT be able to use client A's refresh token.
         let req = TokenRequest {
@@ -2059,10 +2289,12 @@ mod tests {
                 expires_at: now + chrono::Duration::days(30),
             },
         );
-        state.user_tokens.write().await.insert(
-            "allowed-user-1".to_string(),
-            UserOnshapeTokens::new(SecretString::from("at"), SecretString::from("rt"), None),
-        );
+        state
+            .store_refreshed_user_tokens(
+                "allowed-user-1",
+                UserOnshapeTokens::new(SecretString::from("at"), SecretString::from("rt"), None),
+            )
+            .await;
 
         let req = TokenRequest {
             grant_type: "refresh_token".to_string(),
@@ -2153,14 +2385,16 @@ mod tests {
         let (client_id, client_secret) = register_test_client(&state).await;
 
         // Set up user tokens so the grant can succeed.
-        state.user_tokens.write().await.insert(
-            "allowed-user-1".to_string(),
-            UserOnshapeTokens::new(
-                SecretString::from("onshape-at"),
-                SecretString::from("onshape-rt"),
-                None,
-            ),
-        );
+        state
+            .store_refreshed_user_tokens(
+                "allowed-user-1",
+                UserOnshapeTokens::new(
+                    SecretString::from("onshape-at"),
+                    SecretString::from("onshape-rt"),
+                    None,
+                ),
+            )
+            .await;
 
         // First auth code grant — issues initial tokens.
         let code1 = random_hex(32);
@@ -2276,6 +2510,369 @@ mod tests {
         let state = Arc::new(test_state());
         let app = oauth_router(state);
         app.oneshot(req).await.expect("request should not fail")
+    }
+
+    fn mcp_test_router(state: Arc<OAuthServerState>) -> Router {
+        use rmcp::transport::streamable_http_server::{
+            StreamableHttpService, session::local::LocalSessionManager,
+        };
+
+        let config = Arc::new(onshape_mcp_core::config::AppConfig::default());
+        let spec = Arc::new(
+            onshape_openapi::OpenApiSpec::from_json_with_server_url_fallback(
+                crate::OPENAPI_SPEC_JSON,
+                crate::OPENAPI_SERVER_URL_FALLBACK,
+            )
+            .expect("embedded OpenAPI spec should parse"),
+        );
+        let api_state = Arc::new(tokio::sync::Mutex::new(crate::ApiState::NotConfigured {
+            configured_method: onshape_client_core::auth::AuthMethod::OAuth,
+            detail: "HTTP test uses per-user credentials".to_string(),
+        }));
+        let info = onshape_mcp_core::server_info("onshape-mcp-test", "0.0.0");
+        let server_config = crate::streamable_http_server_config(
+            &state.public_url,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .expect("test public URL should produce an HTTP server config");
+
+        let factory_state = Arc::clone(&state);
+        let service = StreamableHttpService::new(
+            move || {
+                Ok(crate::OnshapeMcpServer::from_shared_state(
+                    info.clone(),
+                    Arc::clone(&config),
+                    Arc::clone(&spec),
+                    Arc::clone(&api_state),
+                    Arc::clone(&factory_state),
+                ))
+            },
+            Arc::new(LocalSessionManager::default()),
+            server_config,
+        );
+
+        Router::new()
+            .nest_service("/mcp", service)
+            .layer(middleware::from_fn_with_state(state, auth_middleware))
+    }
+
+    fn modern_meta() -> serde_json::Value {
+        serde_json::json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {
+                "name": "streamable-http-test",
+                "version": "0.0.0"
+            }
+        })
+    }
+
+    fn mcp_request(
+        token: &str,
+        protocol_version: &str,
+        method: &str,
+        name: Option<&str>,
+        session_id: Option<&str>,
+        body: &serde_json::Value,
+    ) -> http::Request<axum::body::Body> {
+        let mut builder = http::Request::builder()
+            .method(http::Method::POST)
+            .uri("/mcp")
+            .header(http::header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .header(http::header::ACCEPT, "application/json, text/event-stream")
+            .header(http::header::HOST, "example.com")
+            .header("Mcp-Protocol-Version", protocol_version)
+            .header("Mcp-Method", method);
+        if let Some(name) = name {
+            builder = builder.header("Mcp-Name", name);
+        }
+        if let Some(session_id) = session_id {
+            builder = builder.header("Mcp-Session-Id", session_id);
+        }
+        builder
+            .body(axum::body::Body::from(body.to_string()))
+            .expect("valid MCP request")
+    }
+
+    fn mcp_request_with_host(
+        host: &str,
+        token: &str,
+        protocol_version: &str,
+        method: &str,
+        name: Option<&str>,
+        session_id: Option<&str>,
+        body: &serde_json::Value,
+    ) -> http::Request<axum::body::Body> {
+        let mut request = mcp_request(token, protocol_version, method, name, session_id, body);
+        request.headers_mut().insert(
+            http::header::HOST,
+            http::HeaderValue::from_str(host).expect("valid test Host header"),
+        );
+        request
+    }
+
+    async fn mcp_json_response(
+        app: &Router,
+        request: http::Request<axum::body::Body>,
+    ) -> (http::StatusCode, http::HeaderMap, serde_json::Value) {
+        use tower::ServiceExt as _;
+
+        let response = app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("MCP request should not fail");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("MCP response body should be readable");
+        let body_text = String::from_utf8_lossy(&body);
+        let json_text = body_text
+            .lines()
+            .find_map(|line| line.strip_prefix("data: ").filter(|data| !data.is_empty()))
+            .unwrap_or(&body_text);
+        let value = serde_json::from_str(json_text).unwrap_or_else(|error| {
+            panic!("MCP response should be JSON: {error}; body={body_text}")
+        });
+        (status, headers, value)
+    }
+
+    async fn set_validation(state: &OAuthServerState, user_id: &str, status: ValidationStatus) {
+        *state.validation_for_user(user_id).await.lock().await = ValidationState {
+            status,
+            last_check: Some(chrono::Utc::now()),
+            message: Some(format!("{user_id} validation")),
+        };
+    }
+
+    fn auth_status_request(id: u64, meta: Option<serde_json::Value>) -> serde_json::Value {
+        let mut params = serde_json::json!({
+            "name": "onshape_auth_status",
+            "arguments": {"validate": false}
+        });
+        if let Some(meta) = meta {
+            params["_meta"] = meta;
+        }
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": params
+        })
+    }
+
+    fn auth_status(response: &serde_json::Value) -> serde_json::Value {
+        serde_json::from_str(
+            response["result"]["content"][0]["text"]
+                .as_str()
+                .expect("auth status should return JSON text"),
+        )
+        .expect("auth status text should be valid JSON")
+    }
+
+    #[tokio::test]
+    async fn streamable_http_modern_requests_share_validation_and_isolate_users() {
+        let state = Arc::new(test_state());
+        let user_one_token = insert_access_token(&state, "allowed-user-1", "client-1").await;
+        let user_two_token = insert_access_token(&state, "allowed-user-2", "client-2").await;
+        set_validation(&state, "allowed-user-1", ValidationStatus::Invalid).await;
+        set_validation(&state, "allowed-user-2", ValidationStatus::Valid).await;
+        let app = mcp_test_router(Arc::clone(&state));
+
+        for id in [1, 2] {
+            let (status, headers, response) = mcp_json_response(
+                &app,
+                mcp_request(
+                    &user_one_token,
+                    "2026-07-28",
+                    "tools/call",
+                    Some("onshape_auth_status"),
+                    None,
+                    &auth_status_request(id, Some(modern_meta())),
+                ),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK);
+            assert!(!headers.contains_key("Mcp-Session-Id"));
+            assert_eq!(auth_status(&response)["status"], "invalid");
+        }
+
+        let (_, _, response) = mcp_json_response(
+            &app,
+            mcp_request(
+                &user_two_token,
+                "2026-07-28",
+                "tools/call",
+                Some("onshape_auth_status"),
+                None,
+                &auth_status_request(3, Some(modern_meta())),
+            ),
+        )
+        .await;
+        assert_eq!(auth_status(&response)["status"], "valid");
+    }
+
+    #[tokio::test]
+    async fn streamable_http_allows_public_host_and_rejects_unrelated_host() {
+        use tower::ServiceExt as _;
+
+        let state = Arc::new(test_state());
+        let token = insert_access_token(&state, "allowed-user-1", "client-1").await;
+        let app = mcp_test_router(Arc::clone(&state));
+
+        let (status, _, _) = mcp_json_response(
+            &app,
+            mcp_request(
+                &token,
+                "2026-07-28",
+                "tools/call",
+                Some("onshape_auth_status"),
+                None,
+                &auth_status_request(1, Some(modern_meta())),
+            ),
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::OK);
+
+        let mut unrelated_host = mcp_request(
+            &token,
+            "2026-07-28",
+            "tools/call",
+            Some("onshape_auth_status"),
+            None,
+            &auth_status_request(2, Some(modern_meta())),
+        );
+        unrelated_host.headers_mut().insert(
+            http::header::HOST,
+            http::HeaderValue::from_static("unrelated.example"),
+        );
+        let response = app
+            .oneshot(unrelated_host)
+            .await
+            .expect("unrelated host request should return a response");
+        assert_eq!(response.status(), http::StatusCode::FORBIDDEN);
+    }
+
+    async fn assert_port_specific_host_allowlist(
+        public_url: &str,
+        matching_host: &str,
+        missing_port_host: &str,
+        wrong_port_host: &str,
+    ) {
+        use tower::ServiceExt as _;
+
+        let state = Arc::new(test_state_with_public_url(public_url));
+        let token = insert_access_token(&state, "allowed-user-1", "client-1").await;
+        let app = mcp_test_router(Arc::clone(&state));
+
+        for (id, host, expected) in [
+            (1, matching_host, http::StatusCode::OK),
+            (2, missing_port_host, http::StatusCode::FORBIDDEN),
+            (3, wrong_port_host, http::StatusCode::FORBIDDEN),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(mcp_request_with_host(
+                    host,
+                    &token,
+                    "2026-07-28",
+                    "tools/call",
+                    Some("onshape_auth_status"),
+                    None,
+                    &auth_status_request(id, Some(modern_meta())),
+                ))
+                .await
+                .expect("host allowlist test should return a response");
+            assert_eq!(response.status(), expected, "unexpected status for {host}");
+        }
+    }
+
+    #[tokio::test]
+    async fn streamable_http_domain_host_requires_configured_non_default_port() {
+        assert_port_specific_host_allowlist(
+            "https://mcp.example.com:8443",
+            "mcp.example.com:8443",
+            "mcp.example.com",
+            "mcp.example.com:9443",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn streamable_http_bracketed_ipv6_host_requires_configured_non_default_port() {
+        assert_port_specific_host_allowlist(
+            "https://[2001:db8::1]:8443",
+            "[2001:db8::1]:8443",
+            "[2001:db8::1]",
+            "[2001:db8::1]:9443",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn streamable_http_legacy_initialized_session_uses_authenticated_user_context() {
+        use tower::ServiceExt as _;
+
+        let state = Arc::new(test_state());
+        let token = insert_access_token(&state, "allowed-user-1", "client-1").await;
+        set_validation(&state, "allowed-user-1", ValidationStatus::Invalid).await;
+        let app = mcp_test_router(Arc::clone(&state));
+
+        let initialize = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "legacy-http-test", "version": "0.0.0"}
+            }
+        });
+        let (status, headers, response) = mcp_json_response(
+            &app,
+            mcp_request(&token, "2025-11-25", "initialize", None, None, &initialize),
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::OK);
+        assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
+        let session_id = headers
+            .get("Mcp-Session-Id")
+            .and_then(|value| value.to_str().ok())
+            .expect("legacy initialize should create a session");
+
+        let initialized = mcp_request(
+            &token,
+            "2025-11-25",
+            "notifications/initialized",
+            None,
+            Some(session_id),
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            }),
+        );
+        let initialized_response = app
+            .clone()
+            .oneshot(initialized)
+            .await
+            .expect("initialized notification should not fail");
+        assert_eq!(initialized_response.status(), http::StatusCode::ACCEPTED);
+
+        let (_, _, response) = mcp_json_response(
+            &app,
+            mcp_request(
+                &token,
+                "2025-11-25",
+                "tools/call",
+                Some("onshape_auth_status"),
+                Some(session_id),
+                &auth_status_request(2, None),
+            ),
+        )
+        .await;
+        assert_eq!(auth_status(&response)["status"], "invalid");
     }
 
     /// Helper: build an OPTIONS preflight request for `path` with an

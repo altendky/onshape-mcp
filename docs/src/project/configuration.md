@@ -84,6 +84,17 @@ users. These settings are implemented but experimental; no public deployment
 is provided, and ChatGPT failure is tracked in
 [#546](https://github.com/altendky/onshape-mcp/issues/546).
 
+The Streamable HTTP transport validates the request `Host` against the exact
+authority configured by `public_url` to prevent DNS rebinding.
+A reverse proxy must preserve the incoming `Host` or rewrite it to that
+authority, including any non-default port; otherwise rmcp returns HTTP 403.
+For example, an Nginx proxy for the configuration above can use
+`proxy_set_header Host mcp.example.com;` (or
+`proxy_set_header Host mcp.example.com:8443;` when that port is part of
+`public_url`).
+Other proxies need the equivalent setting; do not forward an upstream
+authority such as `127.0.0.1:8080` as `Host`.
+
 ## Environment Variables
 
 All environment variables use the `ONSHAPE_MCP_` prefix.

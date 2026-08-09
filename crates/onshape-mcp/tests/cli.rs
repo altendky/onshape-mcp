@@ -147,6 +147,29 @@ impl McpTestClient {
         }
     }
 
+    fn send_modern_request(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+    ) -> serde_json::Value {
+        let mut params = params
+            .as_object()
+            .cloned()
+            .expect("modern request params should be an object");
+        params.insert(
+            "_meta".to_string(),
+            serde_json::json!({
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {
+                    "name": "test-client",
+                    "version": "0.0.1"
+                }
+            }),
+        );
+        self.send_request(method, &params.into())
+    }
+
     fn send_notification(&mut self, method: &str) {
         let notification = serde_json::json!({
             "jsonrpc": "2.0",
@@ -288,6 +311,61 @@ fn mcp_initialization_negotiates_legacy_protocol_version() {
 
     assert!(response["error"].is_null(), "unexpected error: {response}");
     assert_eq!(response["result"]["protocolVersion"], "2024-11-05");
+
+    client.shutdown();
+}
+
+#[test]
+fn modern_discovery_and_results_include_protocol_metadata() {
+    let mut client = McpTestClient::spawn();
+
+    let discovery = client.send_modern_request("server/discover", &serde_json::json!({}));
+    assert!(
+        discovery["error"].is_null(),
+        "unexpected discovery error: {discovery}"
+    );
+    assert_eq!(discovery["result"]["resultType"], "complete");
+    assert_eq!(discovery["result"]["ttlMs"], 3_600_000);
+    assert_eq!(discovery["result"]["cacheScope"], "public");
+    assert!(
+        discovery["result"]["supportedVersions"]
+            .as_array()
+            .is_some_and(|versions| versions.iter().any(|version| version == "2026-07-28"))
+    );
+    assert_eq!(
+        discovery["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "onshape-mcp"
+    );
+
+    let tools = client.send_modern_request("tools/list", &serde_json::json!({}));
+    assert!(tools["error"].is_null(), "unexpected tools error: {tools}");
+    assert_eq!(tools["result"]["resultType"], "complete");
+    assert_eq!(tools["result"]["ttlMs"], 3_600_000);
+    assert_eq!(tools["result"]["cacheScope"], "public");
+
+    let resource = client.send_modern_request(
+        "resources/read",
+        &serde_json::json!({"uri": "insights:shaded-views"}),
+    );
+    assert!(
+        resource["error"].is_null(),
+        "unexpected resource error: {resource}"
+    );
+    assert_eq!(resource["result"]["resultType"], "complete");
+    assert_eq!(resource["result"]["ttlMs"], 3_600_000);
+    assert_eq!(resource["result"]["cacheScope"], "public");
+
+    client.shutdown();
+}
+
+#[test]
+fn legacy_results_omit_result_type() {
+    let mut client = McpTestClient::spawn();
+    client.initialize();
+
+    let tools = client.send_request("tools/list", &serde_json::json!({}));
+    assert!(tools["error"].is_null(), "unexpected tools error: {tools}");
+    assert!(tools["result"].get("resultType").is_none());
 
     client.shutdown();
 }
@@ -1242,6 +1320,25 @@ fn resources_read_returns_error_for_unknown_uri() {
     assert!(
         error_message.contains("not found"),
         "error should mention not found, got: {error_message}"
+    );
+
+    client.shutdown();
+}
+
+#[test]
+fn modern_resources_read_uses_invalid_params_for_unknown_uri() {
+    let mut client = McpTestClient::spawn();
+
+    let response = client.send_modern_request(
+        "resources/read",
+        &serde_json::json!({"uri": "nonexistent:nothing"}),
+    );
+
+    assert_eq!(response["error"]["code"], -32602);
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("not found"))
     );
 
     client.shutdown();

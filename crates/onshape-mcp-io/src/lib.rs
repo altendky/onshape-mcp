@@ -22,8 +22,9 @@ use oauth2_reqwest::ReqwestClient;
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResult, ErrorCode, ListResourcesResult, ListToolsResult,
-        PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, ServerInfo,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverResult,
+        ErrorCode, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+        ReadResourceRequestParams, ReadResourceResponse, ServerInfo,
     },
     service::{RequestContext, RoleServer},
     transport::stdio,
@@ -53,6 +54,9 @@ const OPENAPI_SPEC_JSON: &str =
 
 /// MCP compatibility fallback for embedded specs that predate an explicit server URL.
 const OPENAPI_SERVER_URL_FALLBACK: &str = "https://cad.onshape.com/api/v6";
+
+/// Tool and resource definitions are immutable for the lifetime of a process.
+const STATIC_MCP_CACHE_TTL_MS: u64 = 3_600_000;
 
 /// Default refresh margin: start proactive refresh 60 seconds before expiry.
 pub(crate) const REFRESH_MARGIN_SECS: i64 = 60;
@@ -355,10 +359,33 @@ pub struct OnshapeMcpServer {
     config: Arc<AppConfig>,
     spec: Arc<OpenApiSpec>,
     api_state: Arc<tokio::sync::Mutex<ApiState>>,
-    validation: Arc<tokio::sync::Mutex<ValidationState>>,
+    validation: ValidationStore,
     login_state: Arc<tokio::sync::Mutex<login::LoginState>>,
     /// Shared OAuth server state for per-user token refresh (HTTP transport only).
     oauth_state: Option<Arc<oauth_server::OAuthServerState>>,
+}
+
+type SharedValidation = Arc<tokio::sync::Mutex<ValidationState>>;
+
+enum ValidationStore {
+    Shared(SharedValidation),
+    PerUser,
+}
+
+impl ValidationStore {
+    fn shared(&self) -> Option<SharedValidation> {
+        match self {
+            Self::Shared(validation) => Some(Arc::clone(validation)),
+            Self::PerUser => None,
+        }
+    }
+
+    fn for_user(&self, user: &oauth_server::UserContext) -> Option<SharedValidation> {
+        match self {
+            Self::Shared(_) => None,
+            Self::PerUser => Some(Arc::clone(&user.validation)),
+        }
+    }
 }
 
 impl OnshapeMcpServer {
@@ -389,7 +416,9 @@ impl OnshapeMcpServer {
             config: Arc::new(config),
             spec: Arc::new(spec),
             api_state: Arc::new(tokio::sync::Mutex::new(api_state)),
-            validation: Arc::new(tokio::sync::Mutex::new(ValidationState::default())),
+            validation: ValidationStore::Shared(Arc::new(tokio::sync::Mutex::new(
+                ValidationState::default(),
+            ))),
             login_state: Arc::new(tokio::sync::Mutex::new(login::LoginState::new())),
             oauth_state: None,
         })
@@ -403,17 +432,16 @@ impl OnshapeMcpServer {
         config: Arc<AppConfig>,
         spec: Arc<OpenApiSpec>,
         api_state: Arc<tokio::sync::Mutex<ApiState>>,
-        validation: Arc<tokio::sync::Mutex<ValidationState>>,
-        oauth_state: Option<Arc<oauth_server::OAuthServerState>>,
+        oauth_state: Arc<oauth_server::OAuthServerState>,
     ) -> Self {
         Self {
             info,
             config,
             spec,
             api_state,
-            validation,
+            validation: ValidationStore::PerUser,
             login_state: Arc::new(tokio::sync::Mutex::new(login::LoginState::new())),
-            oauth_state,
+            oauth_state: Some(oauth_state),
         }
     }
 }
@@ -423,13 +451,27 @@ impl ServerHandler for OnshapeMcpServer {
         self.info.clone()
     }
 
+    fn discover(
+        &self,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<DiscoverResult, McpError>> + Send + '_ {
+        std::future::ready(Ok(DiscoverResult::from_server_info(
+            self.supported_protocol_versions().into_owned(),
+            self.get_info(),
+        )
+        .with_ttl_ms(STATIC_MCP_CACHE_TTL_MS)
+        .with_cache_scope(CacheScope::Public)))
+    }
+
     fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         // Core returns Vec<Tool> directly - no conversion needed
-        std::future::ready(Ok(ListToolsResult::with_all_items(tools::list_tools())))
+        std::future::ready(Ok(ListToolsResult::with_all_items(tools::list_tools())
+            .with_ttl_ms(STATIC_MCP_CACHE_TTL_MS)
+            .with_cache_scope(CacheScope::Public)))
     }
 
     fn list_resources(
@@ -439,17 +481,21 @@ impl ServerHandler for OnshapeMcpServer {
     ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
         std::future::ready(Ok(ListResourcesResult::with_all_items(
             onshape_mcp_resources::list_resources(),
-        )))
+        )
+        .with_ttl_ms(STATIC_MCP_CACHE_TTL_MS)
+        .with_cache_scope(CacheScope::Public)))
     }
 
     fn read_resource(
         &self,
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<ReadResourceResponse, McpError>> + Send + '_ {
         let result = onshape_mcp_resources::read_resource(&request.uri);
         std::future::ready(match result {
-            onshape_mcp_resources::ResourceResult::Immediate(Ok(read_result)) => Ok(read_result),
+            onshape_mcp_resources::ResourceResult::Immediate(Ok(read_result)) => {
+                Ok(read_result.into())
+            }
             onshape_mcp_resources::ResourceResult::Immediate(Err(
                 onshape_mcp_resources::ResourceError::NotFound(uri),
             )) => Err(McpError::resource_not_found(
@@ -464,7 +510,7 @@ impl ServerHandler for OnshapeMcpServer {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         // Check if we're in HTTP mode by looking for UserContext in the
         // request extensions (injected by the auth middleware via the
         // Streamable HTTP transport's `http::request::Parts`).
@@ -475,11 +521,14 @@ impl ServerHandler for OnshapeMcpServer {
             .cloned();
 
         if let Some(user_ctx) = user_ctx {
-            return self.call_tool_http(request, &user_ctx).await;
+            return self
+                .call_tool_http(request, &user_ctx)
+                .await
+                .map(Into::into);
         }
 
         // stdio mode: use shared credentials (existing path).
-        self.call_tool_stdio(request).await
+        self.call_tool_stdio(request).await.map(Into::into)
     }
 }
 
@@ -496,7 +545,10 @@ impl OnshapeMcpServer {
     ) -> Result<CallToolResult, McpError> {
         // Lock state to derive resolved auth and potentially execute API requests.
         let mut state = self.api_state.lock().await;
-        let validation = self.validation.lock().await;
+        let validation_state = self.validation.shared().ok_or_else(|| {
+            McpError::internal_error("stdio server is missing shared validation state", None)
+        })?;
+        let validation = validation_state.lock().await;
         let resolved_auth = state.resolved_auth();
 
         // Dispatch through core with the resolved auth and validation state.
@@ -517,7 +569,7 @@ impl OnshapeMcpServer {
         dispatch_tool_effect(
             result,
             &mut state,
-            &self.validation,
+            &validation_state,
             Some(&self.login_state),
             true, // stdio: file writes allowed
             true, // stdio: file reads allowed
@@ -531,7 +583,10 @@ impl OnshapeMcpServer {
         request: CallToolRequestParams,
         user_ctx: &oauth_server::UserContext,
     ) -> Result<CallToolResult, McpError> {
-        let validation = self.validation.lock().await;
+        let validation_state = self.validation.for_user(user_ctx).ok_or_else(|| {
+            McpError::internal_error("HTTP server is missing per-user validation state", None)
+        })?;
+        let validation = validation_state.lock().await;
 
         // In HTTP mode, we present OAuthReady with the user's token expiry.
         let resolved_auth = ResolvedAuth::OAuthReady {
@@ -583,7 +638,15 @@ impl OnshapeMcpServer {
             ApiState::Basic(client)
         };
 
-        dispatch_tool_effect(result, &mut api_state, &self.validation, None, false, false).await
+        dispatch_tool_effect(
+            result,
+            &mut api_state,
+            &validation_state,
+            None,
+            false,
+            false,
+        )
+        .await
     }
 }
 
@@ -1788,11 +1851,15 @@ pub async fn run(
             timeout: server.config.api.timeout,
         }
     });
+    let watcher_validation = server
+        .validation
+        .shared()
+        .ok_or("stdio server is missing shared validation state")?;
     let watcher_handle = watcher_ctx.map(|ctx| {
         watcher::spawn_token_watcher(
             ctx,
             Arc::clone(&server.api_state),
-            Arc::clone(&server.validation),
+            Arc::clone(&watcher_validation),
         )
     });
 
@@ -1810,6 +1877,27 @@ pub async fn run(
 // ============================================================================
 // HTTP Transport Entry Point
 // ============================================================================
+
+fn streamable_http_server_config(
+    public_url: &url::Url,
+    cancellation_token: tokio_util::sync::CancellationToken,
+) -> Result<rmcp::transport::streamable_http_server::StreamableHttpServerConfig, &'static str> {
+    let host = match public_url.host() {
+        Some(url::Host::Domain(host)) => host.to_string(),
+        Some(url::Host::Ipv4(host)) => host.to_string(),
+        Some(url::Host::Ipv6(host)) => format!("[{host}]"),
+        None => return Err("http.public_url must include a host"),
+    };
+    let authority = public_url
+        .port()
+        .map_or_else(|| host.clone(), |port| format!("{host}:{port}"));
+
+    Ok(
+        rmcp::transport::streamable_http_server::StreamableHttpServerConfig::default()
+            .with_allowed_hosts([authority])
+            .with_cancellation_token(cancellation_token),
+    )
+}
 
 /// Runs the MCP server over Streamable HTTP transport.
 ///
@@ -1836,7 +1924,7 @@ pub async fn run_http(
 
     use axum::{Router, middleware};
     use rmcp::transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+        StreamableHttpService, session::local::LocalSessionManager,
     };
     use tokio_util::sync::CancellationToken;
 
@@ -1918,8 +2006,8 @@ pub async fn run_http(
 
     // Build the MCP service factory.
     //
-    // Each session gets a fresh `OnshapeMcpServer` instance with its own
-    // `ValidationState`. In HTTP mode, per-user credentials come from the
+    // Each request gets a fresh `OnshapeMcpServer` instance under the modern
+    // stateless lifecycle. In HTTP mode, per-user credentials come from the
     // `UserContext` in the request extensions (set by auth middleware),
     // not from the shared `api_state`.
     let api_state = Arc::new(tokio::sync::Mutex::new(ApiState::NotConfigured {
@@ -1928,9 +2016,7 @@ pub async fn run_http(
     }));
 
     let cancellation_token = CancellationToken::new();
-
-    let mcp_config =
-        StreamableHttpServerConfig::default().with_cancellation_token(cancellation_token.clone());
+    let mcp_config = streamable_http_server_config(&public_url, cancellation_token.clone())?;
 
     let factory_info = info.clone();
     let factory_config = Arc::clone(&config);
@@ -1940,17 +2026,12 @@ pub async fn run_http(
 
     let mcp_service = StreamableHttpService::new(
         move || {
-            // Each session gets its own ValidationState so that one user's
-            // API response status does not overwrite another user's view.
-            let per_session_validation =
-                Arc::new(tokio::sync::Mutex::new(ValidationState::default()));
             Ok(OnshapeMcpServer::from_shared_state(
                 factory_info.clone(),
                 Arc::clone(&factory_config),
                 Arc::clone(&factory_spec),
                 Arc::clone(&factory_api_state),
-                per_session_validation,
-                Some(Arc::clone(&factory_oauth_state)),
+                Arc::clone(&factory_oauth_state),
             ))
         },
         Arc::new(LocalSessionManager::default()),
@@ -2019,6 +2100,43 @@ mod tests {
             .expect("should contain text")
             .text
             .as_str()
+    }
+
+    #[tokio::test]
+    async fn per_user_validation_survives_fresh_handlers_without_cross_user_leaks() {
+        let state = oauth_server::OAuthServerState::new(
+            url::Url::parse("https://example.com").expect("valid test URL"),
+            "client-id".to_string(),
+            SecretString::from("client-secret"),
+            vec!["user-1".to_string(), "user-2".to_string()],
+        );
+
+        let first = state.validation_for_user("user-1").await;
+        let second = state.validation_for_user("user-1").await;
+        let other = state.validation_for_user("user-2").await;
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &other));
+    }
+
+    #[test]
+    fn streamable_http_server_config_formats_domain_host_with_non_default_port() {
+        let public_url = url::Url::parse("https://mcp.example.com:8443").expect("valid test URL");
+        let config =
+            streamable_http_server_config(&public_url, tokio_util::sync::CancellationToken::new())
+                .expect("public URL should produce an HTTP server config");
+
+        assert_eq!(config.allowed_hosts, ["mcp.example.com:8443"]);
+    }
+
+    #[test]
+    fn streamable_http_server_config_formats_bracketed_ipv6_host_with_non_default_port() {
+        let public_url = url::Url::parse("https://[2001:db8::1]:8443").expect("valid test URL");
+        let config =
+            streamable_http_server_config(&public_url, tokio_util::sync::CancellationToken::new())
+                .expect("public URL should produce an HTTP server config");
+
+        assert_eq!(config.allowed_hosts, ["[2001:db8::1]:8443"]);
     }
 
     #[test]

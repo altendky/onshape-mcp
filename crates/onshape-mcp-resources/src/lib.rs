@@ -18,7 +18,9 @@
 //!
 //! No Rust code changes are needed in either case.
 
-use rmcp::model::{Annotations, ReadResourceResult, Resource, ResourceContents, Role};
+use rmcp::model::{Annotations, CacheScope, ReadResourceResult, Resource, ResourceContents, Role};
+
+const STATIC_RESOURCE_CACHE_TTL_MS: u64 = 3_600_000;
 
 // ============================================================================
 // Resource Entry (compile-time data structure)
@@ -112,6 +114,8 @@ pub fn read_resource(uri: &str) -> ResourceResult {
             ReadResourceResult::new(vec![
                 ResourceContents::text(entry.content, entry.uri).with_mime_type("text/markdown"),
             ])
+            .with_ttl_ms(STATIC_RESOURCE_CACHE_TTL_MS)
+            .with_cache_scope(CacheScope::Public)
         })
         .ok_or_else(|| ResourceError::NotFound(uri.into()));
 
@@ -212,6 +216,8 @@ mod tests {
                 panic!("expected Immediate(Ok(...)) for URI {}", entry.uri);
             };
             assert_eq!(read_result.contents.len(), 1);
+            assert_eq!(read_result.ttl_ms, Some(STATIC_RESOURCE_CACHE_TTL_MS));
+            assert_eq!(read_result.cache_scope, Some(CacheScope::Public));
             match &read_result.contents[0] {
                 ResourceContents::TextResourceContents { uri, text, .. } => {
                     assert_eq!(uri, entry.uri);
