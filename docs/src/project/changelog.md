@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Upgraded to rmcp 2.2 and the MCP 2025-11-25 model API; public Rust resource
-  and content types now use `Resource` and `ContentBlock`
+- Upgraded to rmcp 3.1 and MCP 2026-07-28, including stateless discovery,
+  MRTR-aware server responses, result discriminators, and cache hints; public
+  Rust resource and content types use `Resource` and `ContentBlock`
 
 ### Added
 
