@@ -10,7 +10,7 @@ locked = true
 [tools]
 node = "24"
 python = "3.14.5"
-"pipx:pre-commit" = "4.6.1"
+"pipx:pre-commit" = "4.6.2"
 # Non-core tools: use explicit backend prefix (aqua:/github:) for Renovate compatibility
 "aqua:taiki-e/cargo-llvm-cov" = "0.8.7"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
