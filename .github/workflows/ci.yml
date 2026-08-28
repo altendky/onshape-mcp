@@ -6,49 +6,59 @@ on:
     tags: ["v*"]
   pull_request:
     branches: ["**"]
+  repository_dispatch:
+    types: [recover-release]
 
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow_ref, github.event.pull_request.number) || github.event_name == 'repository_dispatch' && format('{0}-recovery-{1}', github.workflow_ref, github.event.client_payload.release_tag) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name != 'repository_dispatch' }}
 
 jobs:
   mise:
     name: Mise
+    if: github.event_name != 'repository_dispatch'
     uses: ./.github/workflows/reflow-mise.yml
 
   pre-commit:
     name: Pre-commit
+    if: github.event_name != 'repository_dispatch'
     uses: ./.github/workflows/reflow-pre-commit.yml
 
   rust:
     name: Rust
+    if: github.event_name != 'repository_dispatch'
     uses: ./.github/workflows/reflow-rust.yml
     secrets: inherit
 
   coverage:
     name: Coverage
+    if: github.event_name != 'repository_dispatch'
     uses: ./.github/workflows/reflow-coverage.yml
     permissions:
       id-token: write
 
   npm:
     name: npm
+    if: github.event_name != 'repository_dispatch'
     uses: ./.github/workflows/reflow-npm.yml
     permissions:
       id-token: write
 
   version:
     name: Version
+    if: github.event_name != 'repository_dispatch'
     uses: ./.github/workflows/reflow-release-version.yml
     with:
       git-tag: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
   build:
     name: Build
+    if: github.event_name != 'repository_dispatch'
     uses: ./.github/workflows/reflow-release-build.yml
 
   error-enums:
     name: Error enums
+    if: github.event_name != 'repository_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -59,7 +69,7 @@ jobs:
 
   checks:
     name: checks
-    if: ${{ !cancelled() }}
+    if: ${{ github.event_name != 'repository_dispatch' && !cancelled() }}
     needs: [mise, pre-commit, rust, coverage, npm, error-enums]
     runs-on: ubuntu-latest
     steps:
@@ -69,7 +79,7 @@ jobs:
 
   tag-release:
     name: Tag release
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name != 'repository_dispatch' && github.ref == 'refs/heads/main'
     needs: [checks]
     concurrency:
       group: release
@@ -79,13 +89,14 @@ jobs:
 
   post-release:
     name: Post-release PR
-    if: github.ref == 'refs/heads/main' && needs.tag-release.outputs.tagged == 'true'
+    if: github.event_name != 'repository_dispatch' && github.ref == 'refs/heads/main' && needs.tag-release.outputs.tagged == 'true'
     needs: [tag-release]
     uses: ./.github/workflows/reflow-post-release.yml
     secrets: inherit
 
   release-config:
     name: Release config
+    if: github.event_name != 'repository_dispatch'
     needs: [version]
     runs-on: ubuntu-latest
     outputs:
@@ -127,6 +138,7 @@ jobs:
 
   release-npm:
     name: Release npm
+    if: github.event_name != 'repository_dispatch'
     needs: [release-config, version, build, checks]
     uses: ./.github/workflows/reflow-release-npm.yml
     permissions:
@@ -140,6 +152,7 @@ jobs:
 
   cargo-publish:
     name: Publish crates
+    if: github.event_name != 'repository_dispatch'
     needs: [release-config, checks]
     runs-on: ubuntu-latest
     permissions:
@@ -169,17 +182,20 @@ jobs:
 
   publish-release:
     name: GitHub Release
+    if: github.event_name != 'repository_dispatch'
     needs: [release-config, version, build, release-npm, cargo-publish]
     uses: ./.github/workflows/reflow-publish-release.yml
     permissions:
+      actions: read
       contents: write
     with:
       publish: ${{ needs.release-config.outputs.publish == 'true' }}
       version: ${{ needs.version.outputs.version }}
+      release-tag: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
 
   all:
     name: all
-    if: ${{ !cancelled() }}
+    if: ${{ github.event_name != 'repository_dispatch' && !cancelled() }}
     needs: [checks, tag-release, post-release, release-npm, cargo-publish, publish-release]
     runs-on: ubuntu-latest
     steps:
@@ -187,3 +203,15 @@ jobs:
         with:
           allowed-skips: tag-release, post-release
           jobs: ${{ toJSON(needs) }}
+
+  recover-release:
+    name: Recover release
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'recover-release'
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/reflow-recover-release.yml
+    with:
+      release-tag: ${{ github.event.client_payload.release_tag }}
+      source-run-id: ${{ github.event.client_payload.source_run_id }}
