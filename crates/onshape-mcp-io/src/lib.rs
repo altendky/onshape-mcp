@@ -2102,6 +2102,52 @@ mod tests {
             .as_str()
     }
 
+    fn embedded_openapi_spec() -> OpenApiSpec {
+        OpenApiSpec::from_json_with_server_url_fallback(
+            OPENAPI_SPEC_JSON,
+            OPENAPI_SERVER_URL_FALLBACK,
+        )
+        .expect("embedded OpenAPI spec should parse")
+    }
+
+    #[test]
+    fn embedded_openapi_endpoint_explanations_retain_local_guidance() {
+        let spec = embedded_openapi_spec();
+        let create = spec
+            .explain("createDocument")
+            .expect("createDocument should exist");
+        assert!(create.description.contains("semantically required"));
+        assert!(create.description.contains("opaque ID"));
+        assert!(create.description.contains("isPublic=true"));
+
+        let update = spec
+            .explain("updateConfiguration")
+            .expect("updateConfiguration should exist");
+        assert!(update.description.contains("opaque server-owned identity"));
+        assert!(update.description.contains("Never synthesize IDs"));
+    }
+
+    #[test]
+    fn embedded_openapi_schema_explanations_retain_local_guidance() {
+        let spec = embedded_openapi_spec();
+        let document = spec
+            .lookup_schema("BTDocumentParams")
+            .expect("BTDocumentParams should exist");
+        assert_eq!(
+            document.properties["parentId"]["description"],
+            "Opaque ID of this document's parent folder. Supply the folder ID, not its name or path."
+        );
+
+        let node = spec
+            .lookup_schema("BTMNode-19")
+            .expect("BTMNode-19 should exist");
+        let description = node.properties["nodeId"]["description"]
+            .as_str()
+            .expect("nodeId should have guidance");
+        assert!(description.contains("Opaque server-owned BTObjectId"));
+        assert!(description.contains("never synthesize"));
+    }
+
     #[tokio::test]
     async fn per_user_validation_survives_fresh_handlers_without_cross_user_leaks() {
         let state = oauth_server::OAuthServerState::new(

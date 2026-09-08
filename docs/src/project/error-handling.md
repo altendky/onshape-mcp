@@ -48,13 +48,17 @@ pub enum OnshapeApiError {
 
 ## Error Context
 
-All errors include context for debugging:
+Typed internal errors may include context for debugging:
 
 | Field | Description |
 | ------- | ------------- |
 | `request_id` | Onshape request ID from response headers |
 | `endpoint` | API endpoint called |
 | `timestamp` | When the error occurred |
+
+The generic `onshape_api_call` response intentionally does not expose request IDs,
+free-form upstream messages, or other identifiers. Its non-2xx output is rebuilt
+from an allowlist as documented in [MCP Tools](mcp-tools.md#onshape_api_call).
 
 ## MCP Error Mapping
 
@@ -70,7 +74,7 @@ Hybrid approach: standard JSON-RPC codes where they fit, custom codes for action
 | `ServerError` | `-32603` | Internal error |
 | `CadOperationFailed` | `-32603` | Internal error |
 
-All MCP errors include structured `data` field:
+Higher-level typed MCP errors may include a structured `data` field:
 
 ```json
 {

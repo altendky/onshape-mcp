@@ -55,6 +55,10 @@ jobs:
 
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4
 
+      - run: python scripts/apply-openapi-overlays.py --check
+
+      - run: python scripts/test-generate-error-enums-cli.py
+
       - run: python scripts/generate-error-enums.py --check
 
   checks:
