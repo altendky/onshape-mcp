@@ -123,7 +123,14 @@ else
 		# Anchor to end-of-day since STABLE_RELEASE_DATE is date-only (no time).
 		# This ensures the grace period is at least GRACE_PERIOD_HOURS from the
 		# actual release moment, at the cost of up to ~24h extra tolerance.
-		if is_within_grace_period "${STABLE_RELEASE_DATE}T23:59:59Z" "$GRACE_PERIOD_HOURS"; then
+		# Temporary exception while publication of the official Rust 1.98.1 images is
+		# blocked upstream: https://github.com/docker-library/official-images/pull/22200
+		# Remove this branch after rust:1.98.1-alpine is published.
+		if [ "$RUSTUP_STABLE" = "1.98.1" ] && [ "$PREV_VERSION" = "1.98.0" ]; then
+			echo "::warning::Using previous version ${PREV_VERSION} while the official Rust ${RUSTUP_STABLE} images are pending upstream"
+			RESOLVED_STABLE="$PREV_VERSION"
+			STABLE_DOCKER_AVAILABLE="true"
+		elif is_within_grace_period "${STABLE_RELEASE_DATE}T23:59:59Z" "$GRACE_PERIOD_HOURS"; then
 			echo "::warning::Using previous version ${PREV_VERSION} (stable ${RUSTUP_STABLE} released ${STABLE_RELEASE_DATE}, within ${GRACE_PERIOD_HOURS}h grace period)"
 			RESOLVED_STABLE="$PREV_VERSION"
 			STABLE_DOCKER_AVAILABLE="true"
