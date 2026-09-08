@@ -280,13 +280,32 @@ Invoke an Onshape API endpoint with structured parameters. Path parameters are n
 | `path_params` | `object` | No | Path parameters (e.g., `{"did": "abc123"}`) |
 | `query_params` | `object` | No | Query parameters (e.g., `{"q": "robot arm", "limit": "10"}`) |
 | `header_params` | `object` | No | Header parameters (e.g., `{"Accept": "application/octet-stream"}`) |
-| `body` | `any` | No | Request body (for POST/PUT/PATCH endpoints) |
+| `body` | `any JSON value` | No | Request body for POST/PUT/PATCH endpoints; legacy serialized JSON strings are also accepted |
 | `file_refs` | `array` | No | File content to inject into multipart or JSON request body fields |
 
-**Output:** The API response content. JSON responses are returned as JSON content;
-text responses are returned as text. Binary responses are returned as JSON metadata
-with `encoding: "base64"`, `byteLength`, `contentType` when present, and the
-base64-encoded `body`.
+**Output:** The API response content. Successful JSON responses are returned as
+JSON content; successful text responses are returned as text. Successful binary
+responses are returned as JSON metadata with `encoding: "base64"`, `byteLength`,
+`contentType` when present, and the base64-encoded `body`. Non-2xx responses omit
+the payload and report the HTTP status, a status-derived category and transient
+classification, bounded numeric `Retry-After` guidance when applicable, and only
+exact error codes recognized from Onshape's bundled enums. For non-2xx responses,
+free-form messages, identifiers, unknown fields, arbitrary code strings,
+credentials, and echoed request content are not returned. Successful response
+payload forwarding is unchanged.
+
+An optional `severity` is emitted only when top-level `featureStatus`,
+`statusType`, or `level` contains an exact fixed severity value. Numeric
+`errorCode` fields are ignored because that field has different meanings across
+Onshape schemas.
+
+The status-derived signal is reported as `transient`, not `retryable`. A transient
+response does not prove that replaying a request is safe: a mutating operation may
+have succeeded before a gateway error occurred. Verify the resulting Onshape state
+before replaying writes. `retry_after_seconds` is emitted only for transient errors
+(`408`, `425`, `429`, `500`, and `502` through `504`) and only from an ASCII
+digit-only `Retry-After` value no greater than 24 hours. In particular, `501` is
+not classified as transient.
 
 `header_params` can set request headers such as `Accept`. If no `Accept` is
 provided, the server selects one from the endpoint's declared OpenAPI response
@@ -294,6 +313,26 @@ media types, preferring JSON when available and otherwise using the declared
 binary/media type. Authentication remains executor-owned; caller-supplied
 `Authorization` headers are ignored and replaced with the configured Onshape
 credentials.
+
+#### Creating a Document
+
+For `createDocument`, pass `body` directly as this JSON object shape:
+
+```json
+{"name":"<nonempty name>","description":"<description>","parentId":"<opaque folder ID>","isPublic":true}
+```
+
+Legacy callers may instead pass one serialized JSON string, but must not encode
+that string a second time. The `name` field is semantically required and must not
+be blank even though `BTDocumentParams` does not mark it OpenAPI-required.
+`parentId` accepts the destination folder's opaque ID, not its name or path;
+spaces in a folder name therefore require no special treatment. Free accounts
+must set `isPublic` to `true`.
+
+For normal document creation, omit `ownerId`, `ownerEmail`, `ownerType`,
+`projectId`, debugging/internal fields, and optional fields with `null` values
+unless they are deliberately needed. The MCP server does not apply defaults
+declared by the OpenAPI schema.
 
 **Effect Pattern:** This tool uses the effects-as-data pattern. The core crate validates the request and produces an `ApiRequest` effect, which the I/O layer executes. This keeps the core crate sans-IO.
 

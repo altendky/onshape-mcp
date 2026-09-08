@@ -22,6 +22,13 @@ IDs, schema names, paths, or request/response shapes.
 - Pretty-print it into `crates/onshape-mcp-io/onshape-openapi.json`
 - Confirm the source and license are still covered by
   `crates/onshape-mcp-io/ONSHAPE-API-LICENSE`
+- Run `python scripts/apply-openapi-overlays.py`. This reapplies local guidance
+  by stable operation/schema/property identifiers. If it reports upstream drift,
+  review the changed upstream text and update `scripts/openapi-overlays.json`;
+  do not restore guidance with untracked hand edits to the vendored JSON.
+- Run `python scripts/generate-error-enums.py` to synchronize the safe diagnostic
+  code allowlist with the updated `GBTErrorStringEnum` and
+  `BTAppElementErrorCode` schemas
 
 ### Summarize Spec Drift
 
@@ -66,6 +73,24 @@ IDs, schema names, paths, or request/response shapes.
 - `cargo fmt --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo nextest run --all-features`
+- `python scripts/apply-openapi-overlays.py --check`
+- `python scripts/generate-error-enums.py --check`
+
+## FeatureScript Error Source Updates
+
+`scripts/generate-error-enums.py` fetches `errorstringenum.gen.fs` from an
+immutable commit of `javawizard/onshape-std-library-mirror` and verifies its
+SHA-256 digest. The mutable `without-versions` branch is discovery-only.
+
+To update intentionally:
+
+1. Resolve the desired upstream revision to a full commit SHA and review it.
+2. Update `MIRROR_COMMIT` and `MIRROR_SOURCE_SHA256` in the generator.
+3. Run `python scripts/generate-error-enums.py`.
+4. Review message mapping and count changes together with the generated diff,
+   then update `EXPECTED_MESSAGE_COUNT` or `EXPECTED_SAFE_CODE_COUNT` only when
+   those changes are intentional.
+5. Run both generator and overlay `--check` commands above.
 
 ## Automation Follow-Up
 

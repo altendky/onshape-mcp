@@ -306,6 +306,325 @@ fn header_params_to_header_map(params: &HashMap<String, String>) -> Result<Heade
     Ok(headers)
 }
 
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn safe_diagnostic_field_name(name: &str) -> &str {
+    match name {
+        "body"
+        | "code"
+        | "description"
+        | "details"
+        | "elements"
+        | "error"
+        | "errorCode"
+        | "forceExportRules"
+        | "generateUnknownMessages"
+        | "isEmptyContent"
+        | "isPublic"
+        | "message"
+        | "moreInfoUrl"
+        | "name"
+        | "notes"
+        | "notRevisionManaged"
+        | "oldClientNotes"
+        | "ownerEmail"
+        | "ownerId"
+        | "ownerType"
+        | "parentId"
+        | "projectId"
+        | "requestId"
+        | "retryable"
+        | "status"
+        | "statusCode"
+        | "statusMsg"
+        | "tags" => name,
+        _ => "<unrecognized field>",
+    }
+}
+
+fn json_shape(value: &Value) -> String {
+    match value {
+        Value::Object(fields) => {
+            let mut fields: Vec<_> = fields
+                .iter()
+                .map(|(name, value)| {
+                    format!(
+                        "{}: {}",
+                        safe_diagnostic_field_name(name),
+                        json_type_name(value)
+                    )
+                })
+                .collect();
+            fields.sort();
+            fields.dedup();
+            if fields.is_empty() {
+                "object with no fields".to_string()
+            } else {
+                format!("object with fields {{{}}}", fields.join(", "))
+            }
+        }
+        Value::Array(items) => {
+            let mut item_types: Vec<_> = items.iter().map(json_type_name).collect();
+            item_types.sort_unstable();
+            item_types.dedup();
+            if item_types.is_empty() {
+                "array with no items".to_string()
+            } else {
+                format!("array with item types {{{}}}", item_types.join(", "))
+            }
+        }
+        _ => json_type_name(value).to_string(),
+    }
+}
+
+const CREATE_DOCUMENT_STRING_FIELDS: &[&str] = &[
+    "description",
+    "notes",
+    "oldClientNotes",
+    "ownerEmail",
+    "ownerId",
+    "parentId",
+    "projectId",
+];
+const CREATE_DOCUMENT_BOOLEAN_FIELDS: &[&str] = &[
+    "forceExportRules",
+    "generateUnknownMessages",
+    "isEmptyContent",
+    "isPublic",
+    "notRevisionManaged",
+];
+
+fn create_document_invalid_fields(fields: &Map<String, Value>) -> Vec<String> {
+    let mut invalid = Vec::new();
+    for field in CREATE_DOCUMENT_STRING_FIELDS {
+        if let Some(value) = fields.get(*field)
+            && !value.is_null()
+            && !value.is_string()
+        {
+            invalid.push(format!(
+                "{field} must be string or null, received {}",
+                json_type_name(value)
+            ));
+        }
+    }
+    for field in CREATE_DOCUMENT_BOOLEAN_FIELDS {
+        if let Some(value) = fields.get(*field)
+            && !value.is_null()
+            && !value.is_boolean()
+        {
+            invalid.push(format!(
+                "{field} must be boolean or null, received {}",
+                json_type_name(value)
+            ));
+        }
+    }
+    if let Some(value) = fields.get("ownerType")
+        && !value.is_null()
+        && !value
+            .as_number()
+            .is_some_and(|number| number.is_i64() || number.is_u64())
+    {
+        invalid.push(format!(
+            "ownerType must be integer or null, received {}",
+            json_type_name(value)
+        ));
+    }
+    if let Some(value) = fields.get("elements")
+        && !value.is_null()
+        && !value.is_array()
+    {
+        invalid.push(format!(
+            "elements must be array or null, received {}",
+            json_type_name(value)
+        ));
+    }
+    if let Some(value) = fields.get("tags")
+        && !value.is_null()
+    {
+        match value.as_array() {
+            Some(tags) if tags.iter().all(Value::is_string) => {}
+            Some(_) => invalid.push("tags must contain only strings".to_string()),
+            None => invalid.push(format!(
+                "tags must be array or null, received {}",
+                json_type_name(value)
+            )),
+        }
+    }
+    invalid
+}
+
+fn validate_create_document_body(body: Option<&Value>) -> Result<(), String> {
+    let Some(body) = body else {
+        return Err("createDocument requires a body containing a non-blank name".to_string());
+    };
+    let Some(fields) = body.as_object() else {
+        let double_encoded = body.as_str().is_some_and(|text| {
+            serde_json::from_str::<Value>(text).is_ok_and(|decoded| decoded.is_object())
+        });
+        let hint = if double_encoded {
+            "; the parsed body is a string containing JSON, so it is double-encoded"
+        } else {
+            ""
+        };
+        return Err(format!(
+            "createDocument body must parse directly to a JSON object; received {}{hint}",
+            json_shape(body)
+        ));
+    };
+
+    match fields.get("name") {
+        None => {
+            return Err(format!(
+                "createDocument body is missing the semantically required name field; received {}",
+                json_shape(body)
+            ));
+        }
+        Some(Value::String(name)) if name.trim().is_empty() => {
+            return Err(format!(
+                "createDocument name must not be blank; received {}",
+                json_shape(body)
+            ));
+        }
+        Some(Value::String(_)) => {}
+        Some(value) => {
+            return Err(format!(
+                "createDocument field name must be a string; received {} in {}",
+                json_type_name(value),
+                json_shape(body)
+            ));
+        }
+    }
+
+    let mut invalid = create_document_invalid_fields(fields);
+
+    if invalid.is_empty() {
+        Ok(())
+    } else {
+        invalid.sort();
+        Err(format!(
+            "invalid createDocument body fields: {}; received {}",
+            invalid.join("; "),
+            json_shape(body)
+        ))
+    }
+}
+
+fn validate_create_document_body_before_file_injection(
+    body: Option<&Value>,
+    file_refs: &[FileReference],
+) -> Result<(), String> {
+    if file_refs.is_empty() {
+        return validate_create_document_body(body);
+    }
+
+    let Some(body) = body else {
+        return validate_create_document_body(None);
+    };
+    let mut pending_body = body.clone();
+    if let Some(fields) = pending_body.as_object_mut() {
+        for file_ref in file_refs {
+            if file_ref.field == "name" {
+                fields.insert(
+                    "name".to_string(),
+                    Value::String("pending file_ref".to_string()),
+                );
+            } else {
+                fields.remove(&file_ref.field);
+            }
+        }
+    }
+    validate_create_document_body(Some(&pending_body))
+}
+
+const fn http_error_category(status: u16) -> &'static str {
+    match status {
+        400 | 422 => "invalid_request",
+        401 => "authentication",
+        403 => "permission",
+        404 => "not_found",
+        408 => "timeout",
+        409 => "conflict",
+        429 => "rate_limited",
+        502..=504 => "service_unavailable",
+        400..=499 => "client_error",
+        500..=599 => "server_error",
+        _ => "http_error",
+    }
+}
+
+const fn http_error_is_transient(status: u16) -> bool {
+    matches!(status, 408 | 425 | 429 | 500 | 502..=504)
+}
+
+fn retry_after_seconds(headers: &[(String, String)]) -> Option<u64> {
+    const MAX_RETRY_AFTER_SECONDS: u64 = 86_400;
+
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))
+        .map(|(_, value)| value.trim_matches([' ', '\t']))
+        .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds <= MAX_RETRY_AFTER_SECONDS)
+}
+
+fn safe_onshape_error_code(body: &Value) -> Option<&str> {
+    let fields = body.as_object()?;
+    ["statusEnum", "errorValue", "errorCode", "code"]
+        .iter()
+        .filter_map(|field| fields.get(*field).and_then(Value::as_str))
+        .find(|code| safe_error_code_set().contains(*code))
+}
+
+fn safe_onshape_error_severity(body: &Value) -> Option<&'static str> {
+    let fields = body.as_object()?;
+    ["featureStatus", "statusType", "level"]
+        .iter()
+        .filter_map(|field| fields.get(*field).and_then(Value::as_str))
+        .find_map(|severity| match severity {
+            "OK" => Some("ok"),
+            "INFO" => Some("info"),
+            "WARNING" => Some("warning"),
+            "ERROR" => Some("error"),
+            "UNKNOWN" => Some("unknown"),
+            _ => None,
+        })
+}
+
+fn sanitized_api_error(status: u16, headers: &[(String, String)], body: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let transient = http_error_is_transient(status);
+    let mut detail = format!(
+        "API error (HTTP {status}): category={}; transient={transient}",
+        http_error_category(status)
+    );
+
+    if let Ok(body) = serde_json::from_slice::<Value>(body) {
+        if let Some(code) = safe_onshape_error_code(&body) {
+            let _ = write!(detail, "; error_code={code}");
+        }
+        if let Some(severity) = safe_onshape_error_severity(&body) {
+            let _ = write!(detail, "; severity={severity}");
+        }
+    }
+    if transient && let Some(seconds) = retry_after_seconds(headers) {
+        let _ = write!(detail, "; retry_after_seconds={seconds}");
+    }
+
+    detail
+}
+
 /// Convert a raw HTTP response from the Onshape API into a [`CallToolResult`].
 ///
 /// # Arguments
@@ -323,37 +642,36 @@ pub fn process_api_response(
     body: &[u8],
 ) -> Result<CallToolResult, ErrorData> {
     let is_success = (200..300).contains(&status);
+    if !is_success {
+        return Ok(CallToolResult::error(vec![ContentBlock::text(
+            sanitized_api_error(status, headers, body),
+        )]));
+    }
+
     let body_text = match std::str::from_utf8(body) {
         Ok(text) if response_content_type(headers).is_none_or(content_type_is_textual) => text,
         _ => {
-            let content = binary_api_response_content(status, headers, body, !is_success)?;
-            return Ok(if is_success {
-                CallToolResult::success(vec![content])
-            } else {
-                CallToolResult::error(vec![content])
-            });
+            let content = binary_api_response_content(status, headers, body)?;
+            return Ok(CallToolResult::success(vec![content]));
         }
     };
 
-    if is_success {
-        // Try to parse as JSON for nice formatting
-        let content = if let Ok(json_val) = serde_json::from_str::<Value>(body_text) {
-            ContentBlock::json(&json_val).map_err(|e| {
-                ErrorData::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    format!("failed to serialize API response: {e}"),
-                    None,
-                )
-            })?
-        } else {
-            ContentBlock::text(body_text)
-        };
-
-        Ok(CallToolResult::success(vec![content]))
+    // Try to parse as JSON for nice formatting
+    let content = if let Ok(json_val) = serde_json::from_str::<Value>(body_text) {
+        // LCOV_EXCL_START — serde_json::Value is always serializable as JSON content.
+        ContentBlock::json(&json_val).map_err(|e| {
+            ErrorData::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("failed to serialize API response: {e}"),
+                None,
+            )
+        })?
+        // LCOV_EXCL_STOP
     } else {
-        let content = ContentBlock::text(format!("API error (HTTP {status}): {body_text}"));
-        Ok(CallToolResult::error(vec![content]))
-    }
+        ContentBlock::text(body_text)
+    };
+
+    Ok(CallToolResult::success(vec![content]))
 }
 
 fn response_content_type(headers: &[(String, String)]) -> Option<&str> {
@@ -384,15 +702,17 @@ fn binary_api_response_content(
     status: u16,
     headers: &[(String, String)],
     body: &[u8],
-    is_error: bool,
 ) -> Result<ContentBlock, ErrorData> {
     let engine = base64::engine::general_purpose::STANDARD;
     let mut response = serde_json::json!({
         "status": status,
-        "encoding": "base64",
         "byteLength": body.len(),
-        "body": engine.encode(body),
     });
+
+    if let Some(response) = response.as_object_mut() {
+        response.insert("encoding".to_string(), Value::String("base64".to_string()));
+        response.insert("body".to_string(), Value::String(engine.encode(body)));
+    }
 
     if let Some(content_type) = response_content_type(headers)
         && let Some(response) = response.as_object_mut()
@@ -400,13 +720,6 @@ fn binary_api_response_content(
         response.insert(
             "contentType".to_string(),
             Value::String(content_type.to_string()),
-        );
-    }
-
-    if is_error && let Some(response) = response.as_object_mut() {
-        response.insert(
-            "error".to_string(),
-            Value::String(format!("API error (HTTP {status})")),
         );
     }
 
@@ -570,10 +883,23 @@ fn resume_inject_files(
         }
     }
 
+    if is_create_document_request(&request) {
+        let body = request.body.as_ref().and_then(RequestBody::as_json);
+        if let Err(message) = validate_create_document_body(body) {
+            return tool_input_error(message);
+        }
+    }
+
     ToolEffect::ApiRequest {
         request,
         continuation: Continuation::FormatApiResponse,
     }
+}
+
+fn is_create_document_request(request: &ApiRequest) -> bool {
+    request.method == http::Method::POST
+        && request.path == "/documents"
+        && matches!(request.body.as_ref(), Some(RequestBody::Json(_)))
 }
 
 /// Inject a single file reference into a JSON object field.
@@ -990,10 +1316,11 @@ pub struct ApiCallInput {
     /// Header parameters (e.g., `{"Accept": "application/octet-stream"}`).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub header_params: HashMap<String, String>,
-    /// JSON string for the request body (for POST/PUT/PATCH endpoints).
-    /// Use `onshape_api_explain` to see the expected schema for each endpoint.
+    /// JSON value for the request body (for POST/PUT/PATCH endpoints).
+    /// Legacy serialized JSON strings are also accepted for compatibility. Use
+    /// `onshape_api_explain` to see the expected schema for each endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub body: Option<String>,
+    pub body: Option<Value>,
     /// File references for fields whose content should be read from disk.
     ///
     /// Each reference specifies a file path, a body field name, and an encoding.
@@ -1002,7 +1329,7 @@ pub struct ApiCallInput {
     ///
     /// Example: to upload a file via `uploadFileCreateElement`, pass the metadata
     /// fields in `body` and use `file_refs` for the binary content:
-    /// `body: "{\"formatName\": \"PARASOLID\"}"`,
+    /// `body: {"formatName": "PARASOLID"}`,
     /// `file_refs: [{"path": "/tmp/part.x_t", "field": "file", "encoding": "raw_bytes"}]`
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub file_refs: Vec<FileReference>,
@@ -1512,22 +1839,37 @@ fn call_api_explain(
 }
 
 fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolEffect {
+    if arguments
+        .and_then(|arguments| arguments.get("body"))
+        .is_some_and(Value::is_null)
+    {
+        return tool_input_error("body must not be JSON null; omit it instead");
+    }
+
     let input: ApiCallInput = match parse_arguments(arguments) {
         Ok(input) => input,
         Err(e) => return tool_input_error(e.message),
     };
 
-    let body: Option<Value> = match input.body.as_deref().map(serde_json::from_str).transpose() {
-        Ok(v) => v,
-        Err(e) => {
-            return tool_input_error(format!("invalid body JSON: {e}"));
-        }
+    let body = match input.body {
+        Some(Value::String(serialized)) => match serde_json::from_str(&serialized) {
+            Ok(body) => Some(body),
+            Err(e) => return tool_input_error(format!("invalid body JSON: {e}")),
+        },
+        body => body,
     };
 
     if body == Some(Value::Null) {
         return tool_input_error(
             "body parsed as JSON null; omit the body field instead of passing \"null\"",
         );
+    }
+
+    if input.endpoint == "createDocument"
+        && let Err(message) =
+            validate_create_document_body_before_file_injection(body.as_ref(), &input.file_refs)
+    {
+        return tool_input_error(message);
     }
 
     // Validate file reference paths and field names before building the request.
@@ -1713,6 +2055,31 @@ fn error_enum_map() -> &'static HashMap<String, String> {
         enums
             .iter()
             .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
+            .collect()
+    })
+}
+
+/// Versioned safe error-code values generated from `FeatureScript` and the
+/// bundled `OpenAPI` `GBTErrorStringEnum` schema.
+#[allow(clippy::expect_used)]
+fn safe_error_code_set() -> &'static std::collections::HashSet<String> {
+    use std::sync::OnceLock;
+
+    static SET: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
+    SET.get_or_init(|| {
+        let parsed: Value =
+            serde_json::from_str(ERROR_ENUMS_JSON).expect("embedded error-enums.json is valid");
+        parsed
+            .get("safe_codes")
+            .and_then(Value::as_array)
+            .expect("error-enums.json has a 'safe_codes' array")
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .expect("safe_codes contains only strings")
+                    .to_string()
+            })
             .collect()
     })
 }
@@ -2114,6 +2481,20 @@ mod tests {
                                 }
                             ],
                             "responses": { "200": {} }
+                        },
+                        "post": {
+                            "operationId": "createDocument",
+                            "summary": "Create document",
+                            "tags": ["Document"],
+                            "requestBody": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": { "type": "object" }
+                                    }
+                                },
+                                "required": true
+                            },
+                            "responses": { "200": {} }
                         }
                     },
                     "/documents/{did}": {
@@ -2250,6 +2631,27 @@ mod tests {
     fn list_tools_includes_api_call() {
         let tools = list_tools();
         assert!(tools.iter().any(|t| t.name == "onshape_api_call"));
+    }
+
+    #[test]
+    fn api_call_schema_allows_direct_json_values() {
+        let tool = tool_api_call_def();
+        let body_schema = &tool.input_schema["properties"]["body"];
+        assert!(
+            body_schema.as_bool() == Some(true)
+                || body_schema
+                    .get("anyOf")
+                    .and_then(Value::as_array)
+                    .is_some_and(|variants| variants.iter().any(|variant| variant == true))
+                || body_schema.as_object().is_some_and(|schema| {
+                    [
+                        "$ref", "allOf", "anyOf", "const", "enum", "not", "oneOf", "type",
+                    ]
+                    .iter()
+                    .all(|keyword| !schema.contains_key(*keyword))
+                }),
+            "body schema should allow direct JSON values: {body_schema}"
+        );
     }
 
     #[test]
@@ -2568,7 +2970,7 @@ mod tests {
         let content = &call_result.content[0];
         let text = content.as_text().expect("should be text content");
         let results: Vec<Value> = serde_json::from_str(&text.text).expect("should be JSON array");
-        assert_eq!(results.len(), 3);
+        assert_eq!(results.len(), 4);
     }
 
     #[test]
@@ -2590,7 +2992,7 @@ mod tests {
         let content = &call_result.content[0];
         let text = content.as_text().expect("should be text content");
         let results: Vec<Value> = serde_json::from_str(&text.text).expect("should be JSON array");
-        assert_eq!(results.len(), 3);
+        assert_eq!(results.len(), 4);
     }
 
     #[test]
@@ -2762,6 +3164,35 @@ mod tests {
     }
 
     #[test]
+    fn api_call_with_direct_object_body_returns_request() {
+        let auth = not_configured();
+        let spec = test_spec();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("searchDocuments".to_string()),
+        );
+        args.insert(
+            "body".to_string(),
+            serde_json::json!({"rawQuery": "cabinets", "limit": 5}),
+        );
+
+        let (request, _) = assert_api_request(call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        let body = request
+            .body
+            .and_then(|body| body.as_json().cloned())
+            .expect("request should have a JSON body");
+        assert_eq!(body["rawQuery"], "cabinets");
+        assert_eq!(body["limit"], 5);
+    }
+
+    #[test]
     fn api_call_with_invalid_body_json_returns_error() {
         let auth = not_configured();
         let spec = test_spec();
@@ -2807,6 +3238,27 @@ mod tests {
     }
 
     #[test]
+    fn api_call_with_direct_null_body_returns_error() {
+        let auth = not_configured();
+        let spec = test_spec();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("searchDocuments".to_string()),
+        );
+        args.insert("body".to_string(), Value::Null);
+
+        let msg = assert_tool_error(call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(msg.contains("JSON null"));
+    }
+
+    #[test]
     fn api_call_with_body_for_get_endpoint_passes_through() {
         let auth = not_configured();
         let spec = test_spec();
@@ -2840,6 +3292,255 @@ mod tests {
         );
     }
 
+    fn call_create_document(body: Option<Value>) -> ToolEffect {
+        let auth = not_configured();
+        let spec = test_spec();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("createDocument".to_string()),
+        );
+        if let Some(body) = body {
+            args.insert("body".to_string(), body);
+        }
+        call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        )
+    }
+
+    #[test]
+    fn create_document_accepts_direct_object_body() {
+        let body = serde_json::json!({
+            "name": "Document name",
+            "description": "Description",
+            "parentId": "opaque-folder-id",
+            "isPublic": true
+        });
+        let (request, _) = assert_api_request(call_create_document(Some(body)));
+        let body = request
+            .body
+            .and_then(|body| body.as_json().cloned())
+            .expect("should have JSON body");
+        assert_eq!(body["name"], "Document name");
+        assert_eq!(body["parentId"], "opaque-folder-id");
+    }
+
+    #[test]
+    fn create_document_accepts_legacy_serialized_body() {
+        let body = r#"{"name":"Document name","isPublic":true}"#;
+        let (request, _) =
+            assert_api_request(call_create_document(Some(Value::String(body.to_string()))));
+        let body = request
+            .body
+            .and_then(|body| body.as_json().cloned())
+            .expect("should have JSON body");
+        assert_eq!(body["name"], "Document name");
+        assert_eq!(body["isPublic"], true);
+    }
+
+    #[test]
+    fn create_document_rejects_missing_body_and_name() {
+        let missing_body = assert_tool_error(call_create_document(None));
+        assert!(missing_body.contains("requires a body"));
+
+        let empty = assert_tool_error(call_create_document(Some(serde_json::json!({}))));
+        assert!(empty.contains("object with no fields"));
+
+        let missing_name = assert_tool_error(call_create_document(Some(Value::String(
+            r#"{"description":"private description"}"#.to_string(),
+        ))));
+        assert!(missing_name.contains("missing the semantically required name"));
+        assert!(missing_name.contains("description: string"));
+        assert!(!missing_name.contains("private description"));
+    }
+
+    #[test]
+    fn create_document_rejects_blank_name_without_echoing_it() {
+        let message = assert_tool_error(call_create_document(Some(Value::String(
+            r#"{"name":"  \t"}"#.to_string(),
+        ))));
+        assert!(message.contains("name must not be blank"));
+        assert!(!message.contains("\\t"));
+    }
+
+    #[test]
+    fn create_document_rejects_non_object_and_double_encoded_bodies() {
+        for body in ["[]", "[1]", "true", "42"] {
+            let message =
+                assert_tool_error(call_create_document(Some(Value::String(body.to_string()))));
+            assert!(message.contains("must parse directly to a JSON object"));
+        }
+
+        let secret = "private document name";
+        let object_json = serde_json::to_string(&serde_json::json!({"name": secret}))
+            .expect("should encode object");
+        let double_encoded =
+            serde_json::to_string(&object_json).expect("should encode JSON string");
+        let message = assert_tool_error(call_create_document(Some(Value::String(double_encoded))));
+        assert!(message.contains("double-encoded"));
+        assert!(!message.contains(secret));
+    }
+
+    #[test]
+    fn create_document_rejects_incorrect_document_param_types() {
+        let cases = [
+            ("name", "null", "name must be a string"),
+            ("description", "false", "description must be string or null"),
+            ("isPublic", "\"true\"", "isPublic must be boolean or null"),
+            ("ownerType", "1.5", "ownerType must be integer or null"),
+            ("elements", "{}", "elements must be array or null"),
+            ("tags", "[\"ok\", 3]", "tags must contain only strings"),
+            ("tags", "{}", "tags must be array or null"),
+        ];
+
+        for (field, value, expected) in cases {
+            let body = format!(r#"{{"name":"private name","{field}":{value}}}"#);
+            let message = assert_tool_error(call_create_document(Some(Value::String(body))));
+            assert!(message.contains(expected), "message was: {message}");
+            assert!(!message.contains("private name"));
+        }
+    }
+
+    #[test]
+    fn create_document_allows_null_optional_and_unknown_fields() {
+        let body = r#"{"name":"Document","description":null,"isPublic":null,"ownerType":null,"elements":null,"tags":null,"deliberateExtension":{"value":1}}"#;
+        assert_api_request(call_create_document(Some(Value::String(body.to_string()))));
+    }
+
+    #[test]
+    fn create_document_validation_does_not_echo_unknown_fields() {
+        let message = assert_tool_error(call_create_document(Some(serde_json::json!({
+            "name": null,
+            "private field name": "private field value"
+        }))));
+        assert!(message.contains("<unrecognized field>: string"));
+        assert!(!message.contains("private field name"));
+        assert!(!message.contains("private field value"));
+    }
+
+    #[test]
+    fn create_document_with_file_refs_still_requires_a_body() {
+        let auth = not_configured();
+        let spec = test_spec();
+        let mut args = serde_json::json!({
+            "endpoint": "createDocument",
+            "file_refs": [{
+                "path": "/tmp/document-name.txt",
+                "field": "name",
+                "encoding": "text_utf8"
+            }]
+        });
+        let message = assert_tool_error(call_tool(
+            "onshape_api_call",
+            args.as_object(),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(message.contains("requires a body"));
+
+        args["body"] = Value::Bool(true);
+        let message = assert_tool_error(call_tool(
+            "onshape_api_call",
+            args.as_object(),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        ));
+        assert!(message.contains("must parse directly to a JSON object"));
+    }
+
+    fn inject_create_document_field_with_body(body: &str, field: &str, data: &[u8]) -> ToolEffect {
+        let spec = test_spec();
+        let auth = not_configured();
+        let mut args = Map::new();
+        args.insert(
+            "endpoint".to_string(),
+            Value::String("createDocument".to_string()),
+        );
+        args.insert("body".to_string(), Value::String(body.to_string()));
+        args.insert(
+            "file_refs".to_string(),
+            serde_json::json!([{
+                "path": "/tmp/create-document-field.txt",
+                "field": field,
+                "encoding": "text_utf8"
+            }]),
+        );
+
+        let effect = call_tool(
+            "onshape_api_call",
+            Some(&args),
+            &auth,
+            &default_validation(),
+            Some(&spec),
+        );
+        let (_, continuation) = assert_read_files(effect);
+        assert!(matches!(
+            &continuation,
+            Continuation::InjectFilesIntoRequest { .. }
+        ));
+        let results = [FileReadResult::Success {
+            path: PathBuf::from("/tmp/create-document-field.txt"),
+            data: data.to_vec(),
+        }];
+        resume(continuation, IoResult::FileReadResults(&results)).0
+    }
+
+    fn inject_create_document_field(field: &str, data: &[u8]) -> ToolEffect {
+        inject_create_document_field_with_body(
+            r#"{"name":"initial private name","isPublic":true,"ownerType":0}"#,
+            field,
+            data,
+        )
+    }
+
+    #[test]
+    fn create_document_revalidates_blank_name_after_file_injection() {
+        let injected = " \t ";
+        let message = assert_tool_error(inject_create_document_field("name", injected.as_bytes()));
+        assert!(message.contains("name must not be blank"));
+        assert!(!message.contains("initial private name"));
+        assert!(!message.contains(injected));
+    }
+
+    #[test]
+    fn create_document_revalidates_typed_fields_after_file_injection() {
+        let injected = "private injected field value";
+        for (field, expected) in [
+            ("isPublic", "isPublic must be boolean or null"),
+            ("ownerType", "ownerType must be integer or null"),
+        ] {
+            let message =
+                assert_tool_error(inject_create_document_field(field, injected.as_bytes()));
+            assert!(message.contains(expected), "message was: {message}");
+            assert!(!message.contains("initial private name"));
+            assert!(!message.contains(injected));
+        }
+    }
+
+    #[test]
+    fn create_document_accepts_valid_string_file_injection() {
+        let injected = "Injected document name";
+        let (request, continuation) = assert_api_request(inject_create_document_field_with_body(
+            r#"{"isPublic":true,"ownerType":0}"#,
+            "name",
+            injected.as_bytes(),
+        ));
+        assert!(matches!(continuation, Continuation::FormatApiResponse));
+        let body = request
+            .body
+            .and_then(|body| body.as_json().cloned())
+            .expect("should have JSON body");
+        assert_eq!(body["name"], injected);
+        assert_eq!(body["isPublic"], true);
+        assert_eq!(body["ownerType"], 0);
+    }
+
     // --- process_api_response tests ---
 
     #[test]
@@ -2847,6 +3548,10 @@ mod tests {
         let body = r#"{"id": "abc123", "name": "Test"}"#;
         let result = process_api_response(200, &[], body.as_bytes()).expect("should succeed");
         assert_eq!(result.is_error, Some(false));
+        let text = result.content[0].as_text().expect("should be text content");
+        let value: Value = serde_json::from_str(&text.text).expect("should be valid JSON");
+        assert_eq!(value["id"], "abc123");
+        assert_eq!(value["name"], "Test");
     }
 
     #[test]
@@ -2854,6 +3559,8 @@ mod tests {
         let result =
             process_api_response(200, &[], b"plain text response").expect("should succeed");
         assert_eq!(result.is_error, Some(false));
+        let text = result.content[0].as_text().expect("should be text content");
+        assert_eq!(text.text, "plain text response");
     }
 
     #[test]
@@ -2879,6 +3586,221 @@ mod tests {
     fn process_api_response_error() {
         let result = process_api_response(404, &[], b"Not found").expect("should succeed");
         assert_eq!(result.is_error, Some(true));
+        let text = result.content[0].as_text().expect("should be text content");
+        assert_eq!(
+            text.text,
+            "API error (HTTP 404): category=not_found; transient=false"
+        );
+        assert!(!text.text.contains("Not found"));
+    }
+
+    #[test]
+    fn process_api_response_uses_status_categories_without_payloads() {
+        for (status, category) in [
+            (401, "authentication"),
+            (408, "timeout"),
+            (409, "conflict"),
+            (418, "client_error"),
+            (600, "http_error"),
+        ] {
+            let result = process_api_response(status, &[], b"private payload")
+                .expect("should produce a sanitized error");
+            let text = result.content[0].as_text().expect("should be text content");
+            assert!(text.text.contains(&format!("category={category}")));
+            assert!(!text.text.contains("private payload"));
+        }
+    }
+
+    #[test]
+    fn process_api_response_error_retains_allowlisted_onshape_code() {
+        let body = br#"{"statusEnum":"CANNOT_BE_EMPTY","statusType":"ERROR","statusMsg":"private document name is invalid","details":{"parentId":"private-folder-id"},"accessKey":"private-access-key","private document name as key":"private value"}"#;
+        let result = process_api_response(
+            400,
+            &[("content-type".to_string(), "application/json".to_string())],
+            body,
+        )
+        .expect("should succeed");
+        let text = result.content[0].as_text().expect("should be text content");
+        assert_eq!(
+            text.text,
+            "API error (HTTP 400): category=invalid_request; transient=false; \
+             error_code=CANNOT_BE_EMPTY; severity=error"
+        );
+        assert!(!text.text.contains("private document name"));
+        assert!(!text.text.contains("private-folder-id"));
+        assert!(!text.text.contains("private-access-key"));
+        assert!(!text.text.contains("private value"));
+        assert!(!text.text.contains("accessKey"));
+        assert!(!text.text.contains("details"));
+        assert!(!text.text.contains("statusMsg"));
+    }
+
+    #[test]
+    fn generated_safe_codes_include_openapi_only_values_and_all_message_codes() {
+        let safe_codes = safe_error_code_set();
+        assert_eq!(error_enum_map().len(), 1_723);
+        assert_eq!(safe_codes.len(), 1_779);
+        assert!(safe_codes.contains("CUSTOM_ERROR"));
+        assert!(safe_codes.contains("CONFIG_INCORRECT_PARAMETER_TYPE"));
+        assert!(safe_codes.contains("TRANSACTION_CONFLICT"));
+        assert!(
+            error_enum_map()
+                .keys()
+                .all(|code| safe_codes.contains(code)),
+            "every message-bearing FeatureScript code must remain safe"
+        );
+    }
+
+    #[test]
+    fn process_api_response_retains_representative_openapi_only_codes() {
+        for code in ["CUSTOM_ERROR", "CONFIG_INCORRECT_PARAMETER_TYPE"] {
+            let body = serde_json::json!({
+                "statusEnum": code,
+                "statusMsg": "private document name and private-id"
+            });
+            let result = process_api_response(400, &[], body.to_string().as_bytes())
+                .expect("should succeed");
+            let text = result.content[0].as_text().expect("should be text content");
+            assert_eq!(
+                text.text,
+                format!(
+                    "API error (HTTP 400): category=invalid_request; transient=false; \
+                     error_code={code}"
+                )
+            );
+            assert!(!text.text.contains("private document name"));
+            assert!(!text.text.contains("private-id"));
+        }
+    }
+
+    #[test]
+    fn process_api_response_error_rejects_unrecognized_code_and_all_payload_content() {
+        let body = br#"{"errorCode":"PRIVATE_PROJECT_123","message":"Bearer private-token","ownerId":"private-owner-id","secret-key-name":"secret-value","nested":{"statusEnum":"CANNOT_BE_EMPTY"}}"#;
+        let result = process_api_response(403, &[], body).expect("should succeed");
+        let text = result.content[0].as_text().expect("should be text content");
+        assert_eq!(
+            text.text,
+            "API error (HTTP 403): category=permission; transient=false"
+        );
+        for private_content in [
+            "PRIVATE_PROJECT_123",
+            "private-token",
+            "private-owner-id",
+            "secret-key-name",
+            "secret-value",
+            "CANNOT_BE_EMPTY",
+            "errorCode",
+            "ownerId",
+        ] {
+            assert!(!text.text.contains(private_content));
+        }
+    }
+
+    #[test]
+    fn process_api_response_does_not_treat_numeric_error_code_as_severity() {
+        let body = br#"{"errorCode":3,"errorDescription":"private failure"}"#;
+        let result = process_api_response(400, &[], body).expect("should succeed");
+        let text = result.content[0].as_text().expect("should be text content");
+        assert_eq!(
+            text.text,
+            "API error (HTTP 400): category=invalid_request; transient=false"
+        );
+        assert!(!text.text.contains("severity"));
+        assert!(!text.text.contains("private failure"));
+    }
+
+    #[test]
+    fn process_api_response_only_retains_fixed_severity_values() {
+        let unknown =
+            process_api_response(400, &[], br#"{"level":"UNKNOWN"}"#).expect("should succeed");
+        let unknown = unknown.content[0]
+            .as_text()
+            .expect("should be text content");
+        assert!(unknown.text.ends_with("severity=unknown"));
+
+        let custom = process_api_response(400, &[], br#"{"level":"private severity"}"#)
+            .expect("should succeed");
+        let custom = custom.content[0].as_text().expect("should be text content");
+        assert!(!custom.text.contains("severity="));
+        assert!(!custom.text.contains("private severity"));
+    }
+
+    #[test]
+    fn process_api_response_rate_limit_retains_bounded_retry_guidance() {
+        let headers = [("Retry-After".to_string(), " \t30\t ".to_string())];
+        let result = process_api_response(429, &headers, b"private response").expect("should work");
+        let text = result.content[0].as_text().expect("should be text content");
+        assert_eq!(
+            text.text,
+            "API error (HTTP 429): category=rate_limited; transient=true; \
+             retry_after_seconds=30"
+        );
+        assert!(!text.text.contains("private response"));
+    }
+
+    #[test]
+    fn process_api_response_ignores_unsafe_retry_after_values() {
+        for retry_after in [
+            "Wed, 21 Oct 2015 07:28:00 GMT",
+            "86401",
+            "+30",
+            "-1",
+            "\u{a0}30",
+            "secret",
+        ] {
+            let headers = [("retry-after".to_string(), retry_after.to_string())];
+            let result = process_api_response(503, &headers, b"ignored").expect("should work");
+            let text = result.content[0].as_text().expect("should be text content");
+            assert_eq!(
+                text.text,
+                "API error (HTTP 503): category=service_unavailable; transient=true"
+            );
+            assert!(!text.text.contains(retry_after));
+        }
+    }
+
+    #[test]
+    fn process_api_response_distinguishes_500_from_501_retry_semantics() {
+        let headers = [("retry-after".to_string(), "15".to_string())];
+
+        let internal = process_api_response(500, &headers, b"private").expect("should succeed");
+        let internal = internal.content[0]
+            .as_text()
+            .expect("should be text content");
+        assert_eq!(
+            internal.text,
+            "API error (HTTP 500): category=server_error; transient=true; \
+             retry_after_seconds=15"
+        );
+
+        let not_implemented =
+            process_api_response(501, &headers, b"private").expect("should succeed");
+        let not_implemented = not_implemented.content[0]
+            .as_text()
+            .expect("should be text content");
+        assert_eq!(
+            not_implemented.text,
+            "API error (HTTP 501): category=server_error; transient=false"
+        );
+        assert!(!not_implemented.text.contains("retry_after_seconds"));
+        assert!(!not_implemented.text.contains("private"));
+    }
+
+    #[test]
+    fn process_api_response_binary_error_uses_same_sanitized_diagnostic() {
+        let headers = [(
+            "content-type".to_string(),
+            "application/octet-stream".to_string(),
+        )];
+        let body = b"private binary payload";
+        let result = process_api_response(502, &headers, body).expect("should succeed");
+        let text = result.content[0].as_text().expect("should be text content");
+        assert_eq!(
+            text.text,
+            "API error (HTTP 502): category=service_unavailable; transient=true"
+        );
+        assert!(!text.text.contains("private binary payload"));
+        assert!(!text.text.contains("application/octet-stream"));
     }
 
     // ====================================================================
@@ -4774,6 +5696,22 @@ mod tests {
             body: Some(RequestBody::Json(body)),
             content_type: Some("application/json".to_string()),
         }
+    }
+
+    #[test]
+    fn create_document_request_discriminator_is_exact() {
+        let mut request = json_request_for_injection(serde_json::json!({}));
+        request.path = "/documents".to_string();
+        assert!(is_create_document_request(&request));
+
+        request.path = "/documents/search".to_string();
+        assert!(!is_create_document_request(&request));
+        request.path = "/documents".to_string();
+        request.method = http::Method::GET;
+        assert!(!is_create_document_request(&request));
+        request.method = http::Method::POST;
+        request.body = None;
+        assert!(!is_create_document_request(&request));
     }
 
     #[test]
