@@ -209,6 +209,9 @@ jobs:
     if: inputs.publish
     needs: [library, package, test-tarballs]
     runs-on: ubuntu-latest
+    concurrency:
+      group: npm-publish-${{ inputs.version }}
+      cancel-in-progress: false
     outputs:
       published: ${{ steps.check-auth.outputs.can-publish }}
     steps:
@@ -249,6 +252,10 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Checkout publish helper
+        if: steps.check-auth.outputs.can-publish == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Download tarballs
         if: steps.check-auth.outputs.can-publish == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -273,7 +280,7 @@ jobs:
               exit 1
             fi
             echo "Publishing ${tarballs[0]}..."
-            npm publish "${tarballs[0]}" --tag "$DIST_TAG" --access public
+            .github/scripts/npm-publish-tarball.sh "${tarballs[0]}" "$DIST_TAG"
           done < <(echo "$PLATFORMS" | jq -c '.[]')
 
       - name: Publish plugin package
@@ -290,7 +297,7 @@ jobs:
             exit 1
           fi
           echo "Publishing ${tarballs[0]}..."
-          npm publish "${tarballs[0]}" --tag "$DIST_TAG" --access public
+          .github/scripts/npm-publish-tarball.sh "${tarballs[0]}" "$DIST_TAG"
 
       - name: Publish main package
         if: steps.check-auth.outputs.can-publish == 'true'
@@ -306,7 +313,7 @@ jobs:
             exit 1
           fi
           echo "Publishing ${tarballs[0]}..."
-          npm publish "${tarballs[0]}" --tag "$DIST_TAG" --access public
+          .github/scripts/npm-publish-tarball.sh "${tarballs[0]}" "$DIST_TAG"
 
   test-published:
     name: "Test npm published (${{ matrix.platform.name }})"

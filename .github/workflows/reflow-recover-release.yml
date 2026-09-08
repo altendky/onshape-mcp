@@ -1,0 +1,256 @@
+name: Recover release
+
+on:
+  workflow_call:
+    inputs:
+      release-tag:
+        description: "Existing release tag to recover (e.g., v0.5.0)"
+        type: string
+        required: true
+      source-run-id:
+        description: "Failed tag run containing the original release artifacts"
+        type: string
+        required: true
+
+jobs:
+  library:
+    name: Generate library
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reflow-library.yml
+
+  validate-source:
+    name: Validate source
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.release-tag }}
+          fetch-depth: 0
+
+      - name: Validate tag and source run
+        id: validate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "ERROR: Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          version=$(yq -r '.workspace.package.version' Cargo.toml)
+          if [[ "v${version}" != "$RELEASE_TAG" ]]; then
+            echo "ERROR: Cargo version $version does not match $RELEASE_TAG" >&2
+            exit 1
+          fi
+          node scripts/sync-versions.js --check
+
+          tag_sha=$(git rev-list -n 1 "$RELEASE_TAG")
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")
+          source_event=$(jq -r '.event' <<< "$run")
+          source_branch=$(jq -r '.head_branch' <<< "$run")
+          source_sha=$(jq -r '.head_sha' <<< "$run")
+          source_workflow=$(jq -r '.path' <<< "$run")
+
+          if [[ "$source_event" != "push" \
+            || "$source_branch" != "$RELEASE_TAG" \
+            || "$source_sha" != "$tag_sha" \
+            || "$source_workflow" != ".github/workflows/ci.yml" ]]; then
+            echo "ERROR: Source run does not match $RELEASE_TAG and ci.yml" >&2
+            jq '{event, head_branch, head_sha, path, html_url}' <<< "$run" >&2
+            exit 1
+          fi
+
+          artifacts=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100")
+          expected=(
+            npm-tarballs
+            binary-linux-x64
+            binary-linux-arm64
+            binary-darwin-x64
+            binary-darwin-arm64
+            binary-win32-x64
+          )
+          for name in "${expected[@]}"; do
+            count=$(jq --arg name "$name" \
+              '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+              <<< "$artifacts")
+            if [[ "$count" != "1" ]]; then
+              echo "ERROR: Expected one unexpired $name artifact, found $count" >&2
+              exit 1
+            fi
+          done
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Validated $RELEASE_TAG at $tag_sha using source run $SOURCE_RUN_ID."
+
+  recover-npm:
+    name: Recover npm packages
+    needs: [validate-source]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: npm-publish-${{ needs.validate-source.outputs.version }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout recovery code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download npm tarballs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-tarballs
+          path: tarballs
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source-run-id }}
+
+      - name: Validate and publish npm tarballs
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-source.outputs.version }}
+        run: |
+          shopt -s failglob
+          tarballs=(
+            ./tarballs/onshape-mcp-linux-x64-*.tgz
+            ./tarballs/onshape-mcp-linux-arm64-*.tgz
+            ./tarballs/onshape-mcp-darwin-x64-*.tgz
+            ./tarballs/onshape-mcp-darwin-arm64-*.tgz
+            ./tarballs/onshape-mcp-win32-x64-*.tgz
+            ./tarballs/onshape-mcp-opencode-auth-*.tgz
+            ./tarballs/onshape-mcp-[0-9]*.tgz
+          )
+          if [[ ${#tarballs[@]} -ne 7 ]]; then
+            echo "ERROR: Expected exactly 7 npm tarballs, found ${#tarballs[@]}" >&2
+            exit 1
+          fi
+
+          expected_names=$(
+            printf '%s\n' \
+              @onshape-mcp/linux-x64 \
+              @onshape-mcp/linux-arm64 \
+              @onshape-mcp/darwin-x64 \
+              @onshape-mcp/darwin-arm64 \
+              @onshape-mcp/win32-x64 \
+              @onshape-mcp/opencode-auth \
+              onshape-mcp \
+              | sort
+          )
+          actual_names=$(
+            for tarball in "${tarballs[@]}"; do
+              metadata=$(npm pack --dry-run --json "$tarball")
+              name=$(jq -r '.[0].name' <<< "$metadata")
+              package_version=$(jq -r '.[0].version' <<< "$metadata")
+              if [[ "$package_version" != "$VERSION" ]]; then
+                echo "ERROR: $tarball has version $package_version, expected $VERSION" >&2
+                exit 1
+              fi
+              printf '%s\n' "$name"
+            done | sort
+          )
+          if [[ "$actual_names" != "$expected_names" ]]; then
+            echo "ERROR: npm tarballs do not contain the expected package set" >&2
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected_names" "$actual_names" >&2
+            exit 1
+          fi
+
+          for tarball in "${tarballs[@]}"; do
+            .github/scripts/npm-publish-tarball.sh "$tarball" latest
+          done
+
+  verify-published:
+    name: "Verify npm published (${{ matrix.platform.name }})"
+    needs: [library, validate-source, recover-npm]
+    runs-on: ${{ matrix.platform.runner }}
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+
+      - name: Install from registry
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-source.outputs.version }}
+          NPM_PLATFORM: ${{ matrix.platform.npm-platform }}
+        run: |
+          mkdir test-registry-install
+          cd test-registry-install
+          npm init -y
+
+          bin_name="onshape-mcp"
+          if [[ "$NPM_PLATFORM" == win32-* ]]; then
+            bin_name="onshape-mcp.exe"
+          fi
+          expected_bin="node_modules/@onshape-mcp/${NPM_PLATFORM}/bin/${bin_name}"
+
+          max_attempts=15
+          delay=30
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "Attempt ${attempt}/${max_attempts}: installing onshape-mcp@${VERSION}..."
+            install_ok=false
+            if npm install "onshape-mcp@${VERSION}"; then
+              install_ok=true
+            fi
+            if [[ "$install_ok" == "true" ]] && [[ -f "$expected_bin" ]]; then
+              echo "Install succeeded and platform binary exists: ${expected_bin}"
+              break
+            fi
+            if [[ "$attempt" -eq "$max_attempts" ]]; then
+              echo "ERROR: Install failed after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+            rm -rf node_modules package-lock.json
+            sleep "$delay"
+          done
+
+      - name: Verify binary version
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-source.outputs.version }}
+        run: |
+          cd test-registry-install
+          output=$(npx --yes onshape-mcp --version 2>&1)
+          echo "Binary output: $output"
+          if ! grep -qF "$VERSION" <<< "$output"; then
+            echo "ERROR: Expected version $VERSION in output: $output" >&2
+            exit 1
+          fi
+
+  recover-github-release:
+    name: Recover GitHub Release
+    needs: [validate-source, verify-published]
+    uses: ./.github/workflows/reflow-publish-release.yml
+    permissions:
+      actions: read
+      contents: write
+    with:
+      publish: true
+      version: ${{ needs.validate-source.outputs.version }}
+      release-tag: ${{ inputs.release-tag }}
+      artifact-run-id: ${{ inputs.source-run-id }}

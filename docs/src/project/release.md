@@ -14,7 +14,7 @@ Users can install the server via:
 
 CI and release share a single unified pipeline in `ci.yml`. A `release-config` job inspects the trigger (tag push vs PR/branch push) and centralizes all mode-dependent decisions. Downstream jobs consume named outputs and have no conditional logic of their own.
 
-The pipeline is composed of four reusable workflows plus one inline job:
+The pipeline is composed of five reusable workflows plus one inline job:
 
 | Component | Purpose |
 | --------- | ------- |
@@ -22,6 +22,7 @@ The pipeline is composed of four reusable workflows plus one inline job:
 | `reflow-release-build.yml` | Build release binaries on 5 platforms |
 | `reflow-release-npm.yml` | Package, publish, and test npm packages (parameterized by version and dist-tag) |
 | `reflow-publish-release.yml` | Package archives, generate SHA256SUMS, create GitHub Release |
+| `reflow-recover-release.yml` | Recover a partial tagged release from its original workflow artifacts |
 | `cargo-publish` job | Publish workspace crates to crates.io (or `cargo package` validation) |
 
 ### Trigger Behavior
@@ -324,6 +325,28 @@ Packages release archives and creates a GitHub Release. Parameterized by `publis
 | Platform archives (5) | Binary + `LICENSE-MIT` + `LICENSE-APACHE` per platform |
 | `SHA256SUMS` | SHA-256 checksums for all archives |
 
+### Partial Release Recovery
+
+`ci.yml` supports a guarded `recover-release` repository dispatch for a tagged release that published only some artifacts.
+Recovery requires the release tag and the failed tag run ID.
+Repository dispatches always use the workflow from the repository's default branch, preventing recovery code from being selected from an unreviewed branch.
+It verifies that the source run used `ci.yml`, was triggered by that tag, and has the same commit as the tag before downloading any artifacts.
+
+The recovery workflow uses the original `npm-tarballs` and `binary-*` artifacts rather than rebuilding from the current branch.
+For npm packages, an existing version is skipped only when its registry integrity matches the original tarball exactly.
+Missing packages are published in platform, plugin, then main-package order and tested by exact version on all platforms.
+The GitHub Release is created or completed from the original binary artifacts.
+
+Recovery is dispatched through `ci.yml` so npm trusted publishing continues to recognize the configured workflow identity.
+Normal CI and release jobs are skipped during a recovery dispatch.
+
+```bash
+gh api repos/altendky/onshape-mcp/dispatches \
+  -f event_type=recover-release \
+  -f 'client_payload[release_tag]=v0.5.0' \
+  -f 'client_payload[source_run_id]=29884259705'
+```
+
 ## Artifacts
 
 Artifacts are shared across workflow runs via GitHub Actions upload/download.
@@ -393,11 +416,13 @@ It is generated in `reflow-publish-release.yml` on every CI run (validating the 
 | `.github/workflows/reflow-release-build.yml` | Reusable: build release binaries on 5 platforms |
 | `.github/workflows/reflow-release-npm.yml` | Reusable: package, publish, and test npm packages |
 | `.github/workflows/reflow-publish-release.yml` | Reusable: package archives, generate SHA256SUMS, create GitHub Release |
+| `.github/workflows/reflow-recover-release.yml` | Reusable: validate and recover a partial tagged release |
 | `.github/workflows/reflow-tag-release.yml` | Reusable: auto-tag on release merge |
 | `.github/workflows/reflow-post-release.yml` | Reusable: create signed post-release version bump PR |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days (52.8 hours) |
 | `.github/scripts/compute-staging-version.sh` | Computes staging version with sanitized ref, commit SHA, run ID |
 | `.github/scripts/cargo-publish-workspace.sh` | Publishes all workspace crates to crates.io in dependency order |
+| `.github/scripts/npm-publish-tarball.sh` | Publishes an npm tarball or verifies an identical existing version |
 
 ## Modified Files
 
@@ -472,4 +497,4 @@ Items requiring further discussion before or during implementation.
 
 ### Workflow Inputs
 
-- [x] `workflow_dispatch` inputs: ~~determine whether to accept parameters~~ Resolved: removed. Release is triggered only by tag push. The unified `ci.yml` pipeline exercises the full release flow on every PR — including `cargo package --workspace`, archive packaging, and SHA256SUMS generation — providing comprehensive coverage without a manual dispatch trigger. See [#88](https://github.com/altendky/onshape-mcp/issues/88)
+- [x] Manual recovery inputs: Normal releases are triggered only by tag push. A guarded `repository_dispatch` accepts an existing release tag and source run ID solely to recover a partial release from its original artifacts. The unified `ci.yml` pipeline exercises the full release flow on every PR, while recovery mode skips normal CI jobs. See [#88](https://github.com/altendky/onshape-mcp/issues/88)
