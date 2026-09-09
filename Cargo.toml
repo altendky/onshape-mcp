@@ -27,7 +27,7 @@ axum = "0.8"
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-dirs = "6"
+dirs = "7"
 figment = { version = "0.10", features = ["toml", "env"] }
 http = "1"
 notify = "8"
