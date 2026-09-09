@@ -9,12 +9,17 @@ inputs:
     description: Comma-separated list of components to install (e.g., "rustfmt, clippy")
     required: false
     default: ""
+  cache-key:
+    description: Additional key to distinguish caches for jobs with the same ID
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
     - name: Install Rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
       with:
         toolchain: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
+        cache-key: ${{ inputs.cache-key }}

@@ -1856,7 +1856,7 @@ pub(crate) async fn auth_middleware(
     State(state): State<Arc<OAuthServerState>>,
     mut request: http::Request<axum::body::Body>,
     next: middleware::Next,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> axum::response::Response {
     let method = request.method().clone();
     let path = request.uri().path().to_string();
 
@@ -1873,6 +1873,8 @@ pub(crate) async fn auth_middleware(
             "invalid_request",
             "Missing Authorization header",
         ));
+        eprintln!("[oauth] auth: {method} {uri} — missing Authorization header");
+        return unauthorized_response("invalid_request", "Missing Authorization header");
     };
 
     // Parse scheme case-insensitively per RFC 9110 Section 11.1.
@@ -1894,6 +1896,13 @@ pub(crate) async fn auth_middleware(
             "invalid_token",
             "Invalid or expired token",
         ));
+        eprintln!("[oauth] auth: {method} {uri} — invalid Authorization header format");
+        return unauthorized_response("invalid_request", "Invalid Authorization header format");
+    };
+
+    let Some(user_ctx) = state.validate_token(token).await else {
+        eprintln!("[oauth] auth: {method} {uri} — invalid or expired token");
+        return unauthorized_response("invalid_token", "Invalid or expired token");
     };
 
     eprintln!(
@@ -1901,7 +1910,7 @@ pub(crate) async fn auth_middleware(
         user_ctx.user_id
     );
     request.extensions_mut().insert(user_ctx);
-    Ok(next.run(request).await)
+    next.run(request).await
 }
 
 /// Add browser and intermediary hardening headers to every HTTP response.

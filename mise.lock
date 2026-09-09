@@ -40,75 +40,82 @@ url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/carg
 url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471599057"
 
 [[tools."aqua:superfly/flyctl"]]
-version = "0.4.81"
+version = "0.4.101"
 backend = "aqua:superfly/flyctl"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-arm64"]
-checksum = "sha256:a92d30158b8a8b601b85396d3e9b05445dcee6ed40da6439a4f9db50e7c63979"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.81/flyctl_0.4.81_Linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/509165971"
+checksum = "sha256:a9ea27a1520dbc976cc45812057b4a645bff780f8fee4604681df3058a2b5bd6"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.101/flyctl_0.4.101_Linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/551133714"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-arm64-musl"]
-checksum = "sha256:a92d30158b8a8b601b85396d3e9b05445dcee6ed40da6439a4f9db50e7c63979"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.81/flyctl_0.4.81_Linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/509165971"
+checksum = "sha256:a9ea27a1520dbc976cc45812057b4a645bff780f8fee4604681df3058a2b5bd6"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.101/flyctl_0.4.101_Linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/551133714"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-x64"]
-checksum = "sha256:1db7e3f61d91917edfc8a2e661a0a47c6dfbe45f2d64832aa4e372c511514efc"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.81/flyctl_0.4.81_Linux_x86_64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/509165973"
+checksum = "sha256:81ada177239513e12e825c525290ad4de91f55a1c287d654876b6eadbb28b7f6"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.101/flyctl_0.4.101_Linux_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/551133718"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-x64-musl"]
-checksum = "sha256:1db7e3f61d91917edfc8a2e661a0a47c6dfbe45f2d64832aa4e372c511514efc"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.81/flyctl_0.4.81_Linux_x86_64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/509165973"
+checksum = "sha256:81ada177239513e12e825c525290ad4de91f55a1c287d654876b6eadbb28b7f6"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.101/flyctl_0.4.101_Linux_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/551133718"
 
 [tools."aqua:superfly/flyctl"."platforms.macos-arm64"]
-checksum = "sha256:3eb5015bdb838dae68d6429320b960729a00d68382aa7b8b0e184a5364b8b4bd"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.81/flyctl_0.4.81_macOS_arm64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/509165974"
+checksum = "sha256:6806a4695776b1ac343f35ab9f74e7f26bcd75480732fde18d09aba94ef261a0"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.101/flyctl_0.4.101_macOS_arm64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/551133715"
 
 [tools."aqua:superfly/flyctl"."platforms.macos-x64"]
-checksum = "sha256:a39bca3961a532343c0fd6d0d6125aa08a986ac0d0de619449d5a3fd5b320505"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.81/flyctl_0.4.81_macOS_x86_64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/509165972"
+checksum = "sha256:6717c5a300fa9b2fdc6e4133d548666befddfbedf08848c692a62b9e1382cb74"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.101/flyctl_0.4.101_macOS_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/551133716"
 
 [tools."aqua:superfly/flyctl"."platforms.windows-x64"]
-checksum = "sha256:419f702f5586e80ae1148bab5f084f20f28e066cd87c89e3d610f817c0901db4"
-url = "https://github.com/superfly/flyctl/releases/download/v0.4.81/flyctl_0.4.81_Windows_x86_64.zip"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/509166079"
+checksum = "sha256:b1e1dbf935bb7ce0f77404285831a37190c8c96691faa54596d95895059dd6ab"
+url = "https://github.com/superfly/flyctl/releases/download/v0.4.101/flyctl_0.4.101_Windows_x86_64.zip"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/551133764"
 
 [[tools."aqua:taiki-e/cargo-llvm-cov"]]
-version = "0.8.7"
+version = "0.9.1"
 backend = "aqua:taiki-e/cargo-llvm-cov"
 
 [tools."aqua:taiki-e/cargo-llvm-cov"."platforms.linux-arm64"]
-checksum = "sha256:b7bb2ad514166f3b19fc06874c577eefde0010e5ac571f9ae33ff45cd19a4785"
-url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.7/cargo-llvm-cov-aarch64-unknown-linux-musl.tar.gz"
+checksum = "sha256:abf5f13c1520f8756d2192bfaaeadb0208f5b7eaa8cadc15bf847befa42b7360"
+url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547403281"
 
 [tools."aqua:taiki-e/cargo-llvm-cov"."platforms.linux-arm64-musl"]
-checksum = "sha256:b7bb2ad514166f3b19fc06874c577eefde0010e5ac571f9ae33ff45cd19a4785"
-url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.7/cargo-llvm-cov-aarch64-unknown-linux-musl.tar.gz"
+checksum = "sha256:49c0085628392a8d727c4464d91ec417c613c5015f5197cd16d5c05aa3fb5ad1"
+url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547403283"
 
 [tools."aqua:taiki-e/cargo-llvm-cov"."platforms.linux-x64"]
-checksum = "sha256:967b5cc996c29d8baa52bbb4595ef1f53af35255af8e2036ddbc6468d7b523c7"
-url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.7/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
+checksum = "sha256:b3f68e625481fed9b16444174f3fa5ebcdbde4a1878803a35eabe2dcefcdc41a"
+url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547403171"
 
 [tools."aqua:taiki-e/cargo-llvm-cov"."platforms.linux-x64-musl"]
-checksum = "sha256:967b5cc996c29d8baa52bbb4595ef1f53af35255af8e2036ddbc6468d7b523c7"
-url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.7/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
+checksum = "sha256:3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522"
+url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547403186"
 
 [tools."aqua:taiki-e/cargo-llvm-cov"."platforms.macos-arm64"]
-checksum = "sha256:3efee732ed7e9a653e20d96c930e0ec799901289cce90f46bb20f627e2c0d2e9"
-url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.7/cargo-llvm-cov-aarch64-apple-darwin.tar.gz"
+checksum = "sha256:7e821a6c90c0884f79f759f5d9be50799ade67bb82515186d922f26032ef43b8"
+url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547403359"
 
 [tools."aqua:taiki-e/cargo-llvm-cov"."platforms.macos-x64"]
-checksum = "sha256:288ce0cb976207a9a1ad5af4d7ec9a06c9af116727066fb2287df8d9d1026be9"
-url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.7/cargo-llvm-cov-x86_64-apple-darwin.tar.gz"
+checksum = "sha256:ddf949b82a63017441ea76aa068bdd7e2dde8055f47cd3ef736fdbbd633bc33e"
+url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547403156"
 
 [tools."aqua:taiki-e/cargo-llvm-cov"."platforms.windows-x64"]
-checksum = "sha256:56bce7aef6bf906af0fe025d2459f8be483d65ed4c105760671f9c92449c966d"
-url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.7/cargo-llvm-cov-x86_64-pc-windows-msvc.tar.gz"
+checksum = "sha256:15eefd5b90fcdd4006b727c6e710d70a61aff509fcd7bb37f9c2a35c4f024948"
+url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547404213"
 
 [[tools.cargo-binstall]]
 version = "1.17.6"
@@ -193,39 +200,39 @@ url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9
 url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/501885754"
 
 [[tools.node]]
-version = "24.14.0"
+version = "24.20.0"
 backend = "core:node"
 
 [tools.node."platforms.linux-arm64"]
-checksum = "sha256:f44740cd218de8127f1c44c41510a3a740fa5c9c8d1cdce1c3bedada79f3cde7"
-url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-linux-arm64.tar.gz"
+checksum = "sha256:3515603e2487879a39bc75716f1a2affd027500c64ba50e845cf72cb33219013"
+url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-arm64.tar.gz"
 
 [tools.node."platforms.linux-arm64-musl"]
-checksum = "sha256:f44740cd218de8127f1c44c41510a3a740fa5c9c8d1cdce1c3bedada79f3cde7"
-url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-linux-arm64.tar.gz"
+checksum = "sha256:2c8c507ccb0f20812d9526ba8ca454b1652aadef68fc8bad06f07fb1122dd1ef"
+url = "https://unofficial-builds.nodejs.org/download/release/v24.20.0/node-v24.20.0-linux-arm64-musl.tar.gz"
 
 [tools.node."platforms.linux-x64"]
-checksum = "sha256:dbf5b8665dec15e59e6359a517fefb47b23fdb9152d8def975b9bca3dfc6d355"
-url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-linux-x64.tar.gz"
+checksum = "sha256:855d581f8a4eb1a8117e3426de25fe02770592febcfb31369aee1ffbfee9e8ec"
+url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.gz"
 
 [tools.node."platforms.linux-x64-musl"]
-checksum = "sha256:dbf5b8665dec15e59e6359a517fefb47b23fdb9152d8def975b9bca3dfc6d355"
-url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-linux-x64.tar.gz"
+checksum = "sha256:9ae1399fef4bd8990e15773ce1327b336a20b9e97d8c7549f4f42ca73c43f562"
+url = "https://unofficial-builds.nodejs.org/download/release/v24.20.0/node-v24.20.0-linux-x64-musl.tar.gz"
 
 [tools.node."platforms.macos-arm64"]
-checksum = "sha256:a1a54f46a750d2523d628d924aab61758a51c9dad3e0238beb14141be9615dd3"
-url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-darwin-arm64.tar.gz"
+checksum = "sha256:40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8"
+url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-darwin-arm64.tar.gz"
 
 [tools.node."platforms.macos-x64"]
-checksum = "sha256:f2879eb810e25993a0578e5d878930266fd2eafcffe9f2839b3d8db354d4879e"
-url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-darwin-x64.tar.gz"
+checksum = "sha256:9e5b2644cf107befb6aefca676b96d3296bc10138096f022ed378d6233ed81f4"
+url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-darwin-x64.tar.gz"
 
 [tools.node."platforms.windows-x64"]
-checksum = "sha256:313fa40c0d7b18575821de8cb17483031fe07d95de5994f6f435f3b345f85c66"
-url = "https://nodejs.org/dist/v24.14.0/node-v24.14.0-win-x64.zip"
+checksum = "sha256:6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba"
+url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip"
 
 [[tools."npm:wrangler"]]
-version = "4.120.1"
+version = "4.130.0"
 backend = "npm:wrangler"
 
 [[tools."pipx:pre-commit"]]
@@ -233,33 +240,33 @@ version = "4.6.2"
 backend = "pipx:pre-commit"
 
 [[tools.python]]
-version = "3.14.5"
+version = "3.14.7"
 backend = "core:python"
 
 [tools.python."platforms.linux-arm64"]
-checksum = "sha256:1d3ea1b3cd9b8f3d53afb629e82e9bc8f6dab6cbb1a7d23524bd86ba5bc22570"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260602/cpython-3.14.5+20260602-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+checksum = "sha256:4dba8d7e06199f841a9d6b54e4eb58d446a5c20c65085a916190dd0162c6e93b"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.14.7+20260807-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
 
 [tools.python."platforms.linux-arm64-musl"]
-checksum = "sha256:23dfd69917f1c693b7ce857f014a72da546c8132c277bb6ac98fdbe12334e221"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260602/cpython-3.14.5+20260602-aarch64-unknown-linux-musl-install_only_stripped.tar.gz"
+checksum = "sha256:10be7fe15ba5d1e5cfee1c2d8a9c720f29621b873e1f147f0b0a07f23de20d1a"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.14.7+20260807-aarch64-unknown-linux-musl-install_only_stripped.tar.gz"
 
 [tools.python."platforms.linux-x64"]
-checksum = "sha256:982a60fc7f11bbe405ab54afcd4eb145f1134797bbbffac9f5c49df4ec98b13e"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260602/cpython-3.14.5+20260602-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+checksum = "sha256:a2478d654ed51d443bae21ec20ad927f116b4f5aae4094ab74918a6aa38f0575"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.14.7+20260807-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 
 [tools.python."platforms.linux-x64-musl"]
-checksum = "sha256:09fb97b20df0ed9336d39468007619b3458489c33fa4166b43155587b382f84a"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260602/cpython-3.14.5+20260602-x86_64-unknown-linux-musl-install_only_stripped.tar.gz"
+checksum = "sha256:1fe25b50644b50b3333afa0d4013cc9cbab4dde4284c0154aebef4f53523ed99"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.14.7+20260807-x86_64-unknown-linux-musl-install_only_stripped.tar.gz"
 
 [tools.python."platforms.macos-arm64"]
-checksum = "sha256:3a0373cc39fefd494754ef555267f245c720cddbaaabf63a7c9a4269f1e56532"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260602/cpython-3.14.5+20260602-aarch64-apple-darwin-install_only_stripped.tar.gz"
+checksum = "sha256:532645be202d3df8510ab318ca5faed92060a694c8327144e14fa81f31af0f6d"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.14.7+20260807-aarch64-apple-darwin-install_only_stripped.tar.gz"
 
 [tools.python."platforms.macos-x64"]
-checksum = "sha256:d44ff6ec301cabc91eb0c756b1948b28579fb07feba36aaf1990e535649d5ea6"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260602/cpython-3.14.5+20260602-x86_64-apple-darwin-install_only_stripped.tar.gz"
+checksum = "sha256:9964e2d618ebea03be8ea3e65ab0ecc0f2b030ce203345b8f92654641fd4de66"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.14.7+20260807-x86_64-apple-darwin-install_only_stripped.tar.gz"
 
 [tools.python."platforms.windows-x64"]
-checksum = "sha256:66b065143e538c07f069f764d831d8ffae95507907d4ca211304e6f3a056435c"
-url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260602/cpython-3.14.5+20260602-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+checksum = "sha256:840e368318d1630bd8efbd3f7de8fab32cb4bbd735baef733f9034f2676c6a92"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.14.7+20260807-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"

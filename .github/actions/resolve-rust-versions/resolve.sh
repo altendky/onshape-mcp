@@ -73,10 +73,13 @@ RUSTUP_STABLE=$(echo "$STABLE_TOML" | yq -p toml '.pkg.rust.version' | grep -oP 
 STABLE_RELEASE_DATE=$(echo "$STABLE_TOML" | yq -p toml '.date')
 echo "Rustup stable: $RUSTUP_STABLE (released $STABLE_RELEASE_DATE)"
 
-# Get beta version from rustup
-echo "Querying rustup for beta version..."
-RUSTUP_BETA=$(get_rustup_version "beta")
-echo "Rustup beta: $RUSTUP_BETA"
+# Disabled beta jobs should not depend on the beta channel being available.
+RUSTUP_BETA=""
+if [ "${INCLUDE_BETA:-true}" = "true" ]; then
+	echo "Querying rustup for beta version..."
+	RUSTUP_BETA=$(get_rustup_version "beta")
+	echo "Rustup beta: $RUSTUP_BETA"
+fi
 
 # Check Docker Hub for stable version
 echo "Checking Docker Hub for rust:${RUSTUP_STABLE}-alpine..."
@@ -123,7 +126,14 @@ else
 		# Anchor to end-of-day since STABLE_RELEASE_DATE is date-only (no time).
 		# This ensures the grace period is at least GRACE_PERIOD_HOURS from the
 		# actual release moment, at the cost of up to ~24h extra tolerance.
-		if is_within_grace_period "${STABLE_RELEASE_DATE}T23:59:59Z" "$GRACE_PERIOD_HOURS"; then
+		# Temporary exception while publication of the official Rust 1.98.1 images is
+		# blocked upstream: https://github.com/docker-library/official-images/pull/22200
+		# Remove this branch after rust:1.98.1-alpine is published.
+		if [ "$RUSTUP_STABLE" = "1.98.1" ] && [ "$PREV_VERSION" = "1.98.0" ]; then
+			echo "::warning::Using previous version ${PREV_VERSION} while the official Rust ${RUSTUP_STABLE} images are pending upstream"
+			RESOLVED_STABLE="$PREV_VERSION"
+			STABLE_DOCKER_AVAILABLE="true"
+		elif is_within_grace_period "${STABLE_RELEASE_DATE}T23:59:59Z" "$GRACE_PERIOD_HOURS"; then
 			echo "::warning::Using previous version ${PREV_VERSION} (stable ${RUSTUP_STABLE} released ${STABLE_RELEASE_DATE}, within ${GRACE_PERIOD_HOURS}h grace period)"
 			RESOLVED_STABLE="$PREV_VERSION"
 			STABLE_DOCKER_AVAILABLE="true"

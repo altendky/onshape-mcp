@@ -258,5 +258,30 @@ mod tests {
             "should have shaded-views insight"
         );
         assert!(names.contains(&"sketch"), "should have sketch insight");
+        assert!(
+            names.contains(&"api-authoring"),
+            "should have API authoring insight"
+        );
+    }
+
+    #[test]
+    fn api_authoring_guidance_covers_document_and_node_identity_rules() {
+        let entry = RESOURCES
+            .iter()
+            .find(|entry| entry.uri == "insights:api-authoring")
+            .expect("API authoring resource should exist");
+        assert!(entry.content.contains(r#"{"name":"<nonempty name>""#));
+        assert!(entry.content.contains("directly as this object shape"));
+        assert!(entry.content.contains("Legacy callers may pass"));
+        assert!(entry.content.contains("opaque ID"));
+        assert!(
+            entry
+                .content
+                .contains("Free accounts require `isPublic: true`")
+        );
+        assert!(entry.content.contains("server-owned `BTObjectId`"));
+        assert!(entry.content.contains("Omit `nodeId` on newly authored"));
+        assert!(entry.content.contains("Never synthesize"));
+        assert!(entry.content.contains("does not reject or warn"));
     }
 }

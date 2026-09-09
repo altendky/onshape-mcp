@@ -9,7 +9,7 @@ repos:
       - id: check-merge-conflict
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.49.0
+    rev: v1.50.1
     hooks:
       - id: typos
 
@@ -55,6 +55,20 @@ repos:
         entry: cargo fmt --all --check
         language: system
         types: [rust]
+        pass_filenames: false
+
+      - id: openapi-overlays
+        name: OpenAPI guidance overlays
+        entry: python scripts/apply-openapi-overlays.py --check
+        language: system
+        files: ^(crates/onshape-mcp-io/onshape-openapi\.json|scripts/(apply-openapi-overlays\.py|openapi-overlays\.json))$
+        pass_filenames: false
+
+      - id: error-enum-generator-cli
+        name: Error enum generator CLI
+        entry: python scripts/test-generate-error-enums-cli.py
+        language: system
+        files: ^scripts/(generate-error-enums|test-generate-error-enums-cli)\.py$
         pass_filenames: false
 
       - id: cargo-clippy

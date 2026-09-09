@@ -1,4 +1,4 @@
-name: npm
+name: Mise Warmup
 
 on:
   workflow_call:
@@ -8,12 +8,10 @@ jobs:
     name: Generate library
     uses: ./.github/workflows/reflow-library.yml
 
-  coverage:
-    name: ☂️ ${{ matrix.os.emoji }} ${{ matrix.arch.emoji }} npm ${{ matrix.os.name }} ${{ matrix.arch.name }}
+  warmup:
+    name: Warm tools (${{ matrix.os.name }} ${{ matrix.arch.name }})
     needs: library
     runs-on: ${{ matrix.os.runs-on[matrix.arch.matrix] }}
-    permissions:
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -23,22 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Populate each platform's cache before the consumers fan out on a cold key.
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         env:
           RUSTUP_TOOLCHAIN: stable
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: npm/onshape-mcp
-
-      - name: Generate coverage
-        run: npm run test:coverage
-        working-directory: npm/onshape-mcp
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
-        with:
-          use_oidc: true
-          files: npm/onshape-mcp/coverage/lcov.info
-          flags: npm
-          fail_ci_if_error: true

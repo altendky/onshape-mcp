@@ -42,6 +42,13 @@
       "groupName": "Rust toolchain"
     },
 
+    // MSRV is a deliberate compatibility policy, not a latest-Rust pin.
+    {
+      "matchDepNames": ["rust-lang/rust"],
+      "matchFileNames": ["Cargo.toml"],
+      "enabled": false
+    },
+
     // Override extractVersion for nextest (version_prefix workaround)
     {
       "matchDepNames": ["github:nextest-rs/nextest"],

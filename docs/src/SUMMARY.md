@@ -48,6 +48,7 @@
 
 # Insights
 
+- [Document and Configuration Authoring](mcp-resources/insights/api-authoring.md)
 - [Shaded Views](mcp-resources/insights/shaded-views.md)
 - [Sketch](mcp-resources/insights/sketch.md)
 - [Extrude](mcp-resources/insights/extrude.md)

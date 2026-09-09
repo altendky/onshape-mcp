@@ -143,6 +143,10 @@ jobs:
       fail-fast: false
       matrix:
         platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
+        # macOS is build-only; its binaries are still included in every package.
+        exclude:
+          - platform: { name: darwin-x64 }
+          - platform: { name: darwin-arm64 }
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -317,6 +321,10 @@ jobs:
       fail-fast: false
       matrix:
         platform: ${{ fromJSON(needs.library.outputs.matrix).release }}
+        # Match the build-only macOS policy used for tarball validation.
+        exclude:
+          - platform: { name: darwin-x64 }
+          - platform: { name: darwin-arm64 }
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
