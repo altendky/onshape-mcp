@@ -3,7 +3,7 @@
 //! These helpers operate only on data. Tool dispatch, generic request and file
 //! handling, and HTTP status classification stay in the parent module.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use onshape_client_core::request::{ApiRequest, RequestBody};
 use serde_json::{Map, Value};
@@ -342,37 +342,29 @@ fn safe_onshape_error_severity(body: &Value) -> Option<&'static str> {
 /// standard library (MIT licensed, Copyright (c) 2013-Present PTC Inc.).
 const ERROR_ENUMS_JSON: &str = include_str!("../../error-enums.json");
 
-/// Lazily parsed error enum mapping.
-#[allow(clippy::expect_used)]
-pub fn error_enum_map() -> &'static HashMap<String, String> {
-    use std::sync::OnceLock;
-
-    static MAP: OnceLock<HashMap<String, String>> = OnceLock::new();
-    MAP.get_or_init(|| {
-        let parsed: Value =
-            serde_json::from_str(ERROR_ENUMS_JSON).expect("embedded error-enums.json is valid");
-        let enums = parsed
-            .get("enums")
-            .and_then(Value::as_object)
-            .expect("error-enums.json has an 'enums' object");
-        enums
-            .iter()
-            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
-            .collect()
-    })
+/// Message lookup and safe diagnostic codes derived from the embedded document.
+struct ErrorEnums {
+    messages: HashMap<String, String>,
+    safe_codes: HashSet<String>,
 }
 
-/// Versioned safe error-code values generated from `FeatureScript` and the
-/// bundled `OpenAPI` `GBTErrorStringEnum` schema.
+/// Initialize both collections from a single parse on their first use.
 #[allow(clippy::expect_used)]
-fn safe_error_code_set() -> &'static std::collections::HashSet<String> {
+fn error_enums() -> &'static ErrorEnums {
     use std::sync::OnceLock;
 
-    static SET: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
-    SET.get_or_init(|| {
+    static ENUMS: OnceLock<ErrorEnums> = OnceLock::new();
+    ENUMS.get_or_init(|| {
         let parsed: Value =
             serde_json::from_str(ERROR_ENUMS_JSON).expect("embedded error-enums.json is valid");
-        parsed
+        let messages = parsed
+            .get("enums")
+            .and_then(Value::as_object)
+            .expect("error-enums.json has an 'enums' object")
+            .iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
+            .collect();
+        let safe_codes = parsed
             .get("safe_codes")
             .and_then(Value::as_array)
             .expect("error-enums.json has a 'safe_codes' array")
@@ -383,8 +375,23 @@ fn safe_error_code_set() -> &'static std::collections::HashSet<String> {
                     .expect("safe_codes contains only strings")
                     .to_string()
             })
-            .collect()
+            .collect();
+        ErrorEnums {
+            messages,
+            safe_codes,
+        }
     })
+}
+
+/// Lazily parsed error enum mapping.
+pub fn error_enum_map() -> &'static HashMap<String, String> {
+    &error_enums().messages
+}
+
+/// Versioned safe error-code values generated from `FeatureScript` and the
+/// bundled `OpenAPI` `GBTErrorStringEnum` schema.
+fn safe_error_code_set() -> &'static HashSet<String> {
+    &error_enums().safe_codes
 }
 
 #[cfg(test)]
