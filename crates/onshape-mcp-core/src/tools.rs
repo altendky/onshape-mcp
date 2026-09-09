@@ -3,6 +3,10 @@
 //! This module contains all tool metadata and pure business logic for tool execution.
 //! Uses rmcp types directly to avoid unnecessary type conversions.
 //!
+//! Onshape request validation and diagnostic interpretation live in the private
+//! `onshape` module. Generic argument handling, file injection, and HTTP status
+//! classification remain here.
+//!
 //! ## Effect Pattern
 //!
 //! Tool dispatch returns a [`ToolEffect`] which is either:
@@ -12,6 +16,8 @@
 //! Multi-step operations use a [`Continuation`] enum (plain data) instead of
 //! closures. After the I/O layer executes an effect, it calls [`resume()`] with
 //! the continuation and an [`IoResult`] to get the next effect.
+
+mod onshape;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -306,246 +312,6 @@ fn header_params_to_header_map(params: &HashMap<String, String>) -> Result<Heade
     Ok(headers)
 }
 
-fn json_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-}
-
-fn safe_diagnostic_field_name(name: &str) -> &str {
-    match name {
-        "body"
-        | "code"
-        | "description"
-        | "details"
-        | "elements"
-        | "error"
-        | "errorCode"
-        | "forceExportRules"
-        | "generateUnknownMessages"
-        | "isEmptyContent"
-        | "isPublic"
-        | "message"
-        | "moreInfoUrl"
-        | "name"
-        | "notes"
-        | "notRevisionManaged"
-        | "oldClientNotes"
-        | "ownerEmail"
-        | "ownerId"
-        | "ownerType"
-        | "parentId"
-        | "projectId"
-        | "requestId"
-        | "retryable"
-        | "status"
-        | "statusCode"
-        | "statusMsg"
-        | "tags" => name,
-        _ => "<unrecognized field>",
-    }
-}
-
-fn json_shape(value: &Value) -> String {
-    match value {
-        Value::Object(fields) => {
-            let mut fields: Vec<_> = fields
-                .iter()
-                .map(|(name, value)| {
-                    format!(
-                        "{}: {}",
-                        safe_diagnostic_field_name(name),
-                        json_type_name(value)
-                    )
-                })
-                .collect();
-            fields.sort();
-            fields.dedup();
-            if fields.is_empty() {
-                "object with no fields".to_string()
-            } else {
-                format!("object with fields {{{}}}", fields.join(", "))
-            }
-        }
-        Value::Array(items) => {
-            let mut item_types: Vec<_> = items.iter().map(json_type_name).collect();
-            item_types.sort_unstable();
-            item_types.dedup();
-            if item_types.is_empty() {
-                "array with no items".to_string()
-            } else {
-                format!("array with item types {{{}}}", item_types.join(", "))
-            }
-        }
-        _ => json_type_name(value).to_string(),
-    }
-}
-
-const CREATE_DOCUMENT_STRING_FIELDS: &[&str] = &[
-    "description",
-    "notes",
-    "oldClientNotes",
-    "ownerEmail",
-    "ownerId",
-    "parentId",
-    "projectId",
-];
-const CREATE_DOCUMENT_BOOLEAN_FIELDS: &[&str] = &[
-    "forceExportRules",
-    "generateUnknownMessages",
-    "isEmptyContent",
-    "isPublic",
-    "notRevisionManaged",
-];
-
-fn create_document_invalid_fields(fields: &Map<String, Value>) -> Vec<String> {
-    let mut invalid = Vec::new();
-    for field in CREATE_DOCUMENT_STRING_FIELDS {
-        if let Some(value) = fields.get(*field)
-            && !value.is_null()
-            && !value.is_string()
-        {
-            invalid.push(format!(
-                "{field} must be string or null, received {}",
-                json_type_name(value)
-            ));
-        }
-    }
-    for field in CREATE_DOCUMENT_BOOLEAN_FIELDS {
-        if let Some(value) = fields.get(*field)
-            && !value.is_null()
-            && !value.is_boolean()
-        {
-            invalid.push(format!(
-                "{field} must be boolean or null, received {}",
-                json_type_name(value)
-            ));
-        }
-    }
-    if let Some(value) = fields.get("ownerType")
-        && !value.is_null()
-        && !value
-            .as_number()
-            .is_some_and(|number| number.is_i64() || number.is_u64())
-    {
-        invalid.push(format!(
-            "ownerType must be integer or null, received {}",
-            json_type_name(value)
-        ));
-    }
-    if let Some(value) = fields.get("elements")
-        && !value.is_null()
-        && !value.is_array()
-    {
-        invalid.push(format!(
-            "elements must be array or null, received {}",
-            json_type_name(value)
-        ));
-    }
-    if let Some(value) = fields.get("tags")
-        && !value.is_null()
-    {
-        match value.as_array() {
-            Some(tags) if tags.iter().all(Value::is_string) => {}
-            Some(_) => invalid.push("tags must contain only strings".to_string()),
-            None => invalid.push(format!(
-                "tags must be array or null, received {}",
-                json_type_name(value)
-            )),
-        }
-    }
-    invalid
-}
-
-fn validate_create_document_body(body: Option<&Value>) -> Result<(), String> {
-    let Some(body) = body else {
-        return Err("createDocument requires a body containing a non-blank name".to_string());
-    };
-    let Some(fields) = body.as_object() else {
-        let double_encoded = body.as_str().is_some_and(|text| {
-            serde_json::from_str::<Value>(text).is_ok_and(|decoded| decoded.is_object())
-        });
-        let hint = if double_encoded {
-            "; the parsed body is a string containing JSON, so it is double-encoded"
-        } else {
-            ""
-        };
-        return Err(format!(
-            "createDocument body must parse directly to a JSON object; received {}{hint}",
-            json_shape(body)
-        ));
-    };
-
-    match fields.get("name") {
-        None => {
-            return Err(format!(
-                "createDocument body is missing the semantically required name field; received {}",
-                json_shape(body)
-            ));
-        }
-        Some(Value::String(name)) if name.trim().is_empty() => {
-            return Err(format!(
-                "createDocument name must not be blank; received {}",
-                json_shape(body)
-            ));
-        }
-        Some(Value::String(_)) => {}
-        Some(value) => {
-            return Err(format!(
-                "createDocument field name must be a string; received {} in {}",
-                json_type_name(value),
-                json_shape(body)
-            ));
-        }
-    }
-
-    let mut invalid = create_document_invalid_fields(fields);
-
-    if invalid.is_empty() {
-        Ok(())
-    } else {
-        invalid.sort();
-        Err(format!(
-            "invalid createDocument body fields: {}; received {}",
-            invalid.join("; "),
-            json_shape(body)
-        ))
-    }
-}
-
-fn validate_create_document_body_before_file_injection(
-    body: Option<&Value>,
-    file_refs: &[FileReference],
-) -> Result<(), String> {
-    if file_refs.is_empty() {
-        return validate_create_document_body(body);
-    }
-
-    let Some(body) = body else {
-        return validate_create_document_body(None);
-    };
-    let mut pending_body = body.clone();
-    if let Some(fields) = pending_body.as_object_mut() {
-        for file_ref in file_refs {
-            if file_ref.field == "name" {
-                fields.insert(
-                    "name".to_string(),
-                    Value::String("pending file_ref".to_string()),
-                );
-            } else {
-                fields.remove(&file_ref.field);
-            }
-        }
-    }
-    validate_create_document_body(Some(&pending_body))
-}
-
 const fn http_error_category(status: u16) -> &'static str {
     match status {
         400 | 422 => "invalid_request",
@@ -578,29 +344,7 @@ fn retry_after_seconds(headers: &[(String, String)]) -> Option<u64> {
         .filter(|seconds| *seconds <= MAX_RETRY_AFTER_SECONDS)
 }
 
-fn safe_onshape_error_code(body: &Value) -> Option<&str> {
-    let fields = body.as_object()?;
-    ["statusEnum", "errorValue", "errorCode", "code"]
-        .iter()
-        .filter_map(|field| fields.get(*field).and_then(Value::as_str))
-        .find(|code| safe_error_code_set().contains(*code))
-}
-
-fn safe_onshape_error_severity(body: &Value) -> Option<&'static str> {
-    let fields = body.as_object()?;
-    ["featureStatus", "statusType", "level"]
-        .iter()
-        .filter_map(|field| fields.get(*field).and_then(Value::as_str))
-        .find_map(|severity| match severity {
-            "OK" => Some("ok"),
-            "INFO" => Some("info"),
-            "WARNING" => Some("warning"),
-            "ERROR" => Some("error"),
-            "UNKNOWN" => Some("unknown"),
-            _ => None,
-        })
-}
-
+/// Combine generic HTTP classification with allowlisted Onshape response details.
 fn sanitized_api_error(status: u16, headers: &[(String, String)], body: &[u8]) -> String {
     use std::fmt::Write;
 
@@ -610,14 +354,7 @@ fn sanitized_api_error(status: u16, headers: &[(String, String)], body: &[u8]) -
         http_error_category(status)
     );
 
-    if let Ok(body) = serde_json::from_slice::<Value>(body) {
-        if let Some(code) = safe_onshape_error_code(&body) {
-            let _ = write!(detail, "; error_code={code}");
-        }
-        if let Some(severity) = safe_onshape_error_severity(&body) {
-            let _ = write!(detail, "; severity={severity}");
-        }
-    }
+    onshape::append_api_error_details(&mut detail, body);
     if transient && let Some(seconds) = retry_after_seconds(headers) {
         let _ = write!(detail, "; retry_after_seconds={seconds}");
     }
@@ -883,23 +620,14 @@ fn resume_inject_files(
         }
     }
 
-    if is_create_document_request(&request) {
-        let body = request.body.as_ref().and_then(RequestBody::as_json);
-        if let Err(message) = validate_create_document_body(body) {
-            return tool_input_error(message);
-        }
+    if let Err(message) = onshape::validate_injected_request(&request) {
+        return tool_input_error(message);
     }
 
     ToolEffect::ApiRequest {
         request,
         continuation: Continuation::FormatApiResponse,
     }
-}
-
-fn is_create_document_request(request: &ApiRequest) -> bool {
-    request.method == http::Method::POST
-        && request.path == "/documents"
-        && matches!(request.body.as_ref(), Some(RequestBody::Json(_)))
 }
 
 /// Inject a single file reference into a JSON object field.
@@ -1865,9 +1593,8 @@ fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> 
         );
     }
 
-    if input.endpoint == "createDocument"
-        && let Err(message) =
-            validate_create_document_body_before_file_injection(body.as_ref(), &input.file_refs)
+    if let Err(message) =
+        onshape::validate_call_body(&input.endpoint, body.as_ref(), &input.file_refs)
     {
         return tool_input_error(message);
     }
@@ -2033,57 +1760,6 @@ fn call_read_resource(arguments: Option<&Map<String, Value>>) -> CallToolResult 
 // Error Enum Lookup
 // ============================================================================
 
-/// Embedded JSON mapping of `ErrorStringEnum` values to human-readable messages.
-///
-/// Generated by `scripts/generate-error-enums.py` from the `FeatureScript`
-/// standard library (MIT licensed, Copyright (c) 2013-Present PTC Inc.).
-const ERROR_ENUMS_JSON: &str = include_str!("../error-enums.json");
-
-/// Lazily parsed error enum mapping.
-#[allow(clippy::expect_used)]
-fn error_enum_map() -> &'static HashMap<String, String> {
-    use std::sync::OnceLock;
-
-    static MAP: OnceLock<HashMap<String, String>> = OnceLock::new();
-    MAP.get_or_init(|| {
-        let parsed: Value =
-            serde_json::from_str(ERROR_ENUMS_JSON).expect("embedded error-enums.json is valid");
-        let enums = parsed
-            .get("enums")
-            .and_then(Value::as_object)
-            .expect("error-enums.json has an 'enums' object");
-        enums
-            .iter()
-            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
-            .collect()
-    })
-}
-
-/// Versioned safe error-code values generated from `FeatureScript` and the
-/// bundled `OpenAPI` `GBTErrorStringEnum` schema.
-#[allow(clippy::expect_used)]
-fn safe_error_code_set() -> &'static std::collections::HashSet<String> {
-    use std::sync::OnceLock;
-
-    static SET: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
-    SET.get_or_init(|| {
-        let parsed: Value =
-            serde_json::from_str(ERROR_ENUMS_JSON).expect("embedded error-enums.json is valid");
-        parsed
-            .get("safe_codes")
-            .and_then(Value::as_array)
-            .expect("error-enums.json has a 'safe_codes' array")
-            .iter()
-            .map(|value| {
-                value
-                    .as_str()
-                    .expect("safe_codes contains only strings")
-                    .to_string()
-            })
-            .collect()
-    })
-}
-
 fn call_error_lookup(arguments: Option<&Map<String, Value>>) -> CallToolResult {
     let input: ErrorLookupInput = match parse_arguments(arguments) {
         Ok(input) => input,
@@ -2097,7 +1773,7 @@ fn call_error_lookup(arguments: Option<&Map<String, Value>>) -> CallToolResult {
         )]);
     }
 
-    let map = error_enum_map();
+    let map = onshape::error_enum_map();
     let mut output = String::new();
     for name in &input.values {
         use std::fmt::Write;
@@ -3633,22 +3309,6 @@ mod tests {
         assert!(!text.text.contains("accessKey"));
         assert!(!text.text.contains("details"));
         assert!(!text.text.contains("statusMsg"));
-    }
-
-    #[test]
-    fn generated_safe_codes_include_openapi_only_values_and_all_message_codes() {
-        let safe_codes = safe_error_code_set();
-        assert_eq!(error_enum_map().len(), 1_723);
-        assert_eq!(safe_codes.len(), 1_779);
-        assert!(safe_codes.contains("CUSTOM_ERROR"));
-        assert!(safe_codes.contains("CONFIG_INCORRECT_PARAMETER_TYPE"));
-        assert!(safe_codes.contains("TRANSACTION_CONFLICT"));
-        assert!(
-            error_enum_map()
-                .keys()
-                .all(|code| safe_codes.contains(code)),
-            "every message-bearing FeatureScript code must remain safe"
-        );
     }
 
     #[test]
@@ -5696,22 +5356,6 @@ mod tests {
             body: Some(RequestBody::Json(body)),
             content_type: Some("application/json".to_string()),
         }
-    }
-
-    #[test]
-    fn create_document_request_discriminator_is_exact() {
-        let mut request = json_request_for_injection(serde_json::json!({}));
-        request.path = "/documents".to_string();
-        assert!(is_create_document_request(&request));
-
-        request.path = "/documents/search".to_string();
-        assert!(!is_create_document_request(&request));
-        request.path = "/documents".to_string();
-        request.method = http::Method::GET;
-        assert!(!is_create_document_request(&request));
-        request.method = http::Method::POST;
-        request.body = None;
-        assert!(!is_create_document_request(&request));
     }
 
     #[test]
