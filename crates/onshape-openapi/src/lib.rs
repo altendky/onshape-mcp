@@ -2,6 +2,13 @@
 //!
 //! This crate provides pure (sans-IO) operations over an Onshape `OpenAPI` specification.
 //! The spec JSON content is provided externally; this crate never performs I/O.
+//!
+//! Standard component schema inspection lives in the internal `schema` module.
+//! The public API adds Onshape presentation through the `onshape` module when
+//! returning explanations; parsed schemas retain their original metadata.
+
+mod onshape;
+mod schema;
 
 use std::collections::{HashMap, HashSet};
 
@@ -10,6 +17,8 @@ use http::{HeaderMap, HeaderValue, Method, header::ACCEPT};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::schema::SchemaCatalog;
 
 pub use onshape_client_core::request::ApiRequest;
 use onshape_client_core::request::{BinaryField, MultipartBody, RequestBody};
@@ -174,7 +183,7 @@ struct ParsedParameter {
 /// Detail of a component schema, returned by schema lookup.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SchemaDetail {
-    /// The schema name (e.g., `"BTMParameterEnum-145"`).
+    /// The component schema name.
     pub name: String,
     /// Description from the schema, if present.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -187,10 +196,10 @@ pub struct SchemaDetail {
     /// Required property names, if specified.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub required: Vec<String>,
-    /// Valid `btType` discriminator values, if this schema is polymorphic.
+    /// Discriminator mapping keys, if this schema is polymorphic.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtypes: Option<Vec<String>>,
-    /// The discriminator property name (typically `"btType"`), if present.
+    /// The discriminator property name, if present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discriminator_property: Option<String>,
 }
@@ -205,7 +214,7 @@ pub struct OpenApiSpec {
     /// Ordered list of operation IDs (for consistent search output).
     operation_ids: Vec<String>,
     /// Component schemas from the spec, for `$ref` resolution and schema lookup.
-    components: HashMap<String, Value>,
+    schemas: SchemaCatalog,
 }
 
 impl OpenApiSpec {
@@ -270,7 +279,7 @@ impl OpenApiSpec {
             .to_string();
 
         // Extract component schemas for $ref resolution
-        let components = Self::extract_components(root);
+        let schemas = SchemaCatalog::from_root(root);
 
         // Parse all endpoints
         let paths = root
@@ -303,7 +312,7 @@ impl OpenApiSpec {
                     path,
                     detail,
                     &path_parameters,
-                    &components,
+                    &schemas,
                 );
                 if endpoints
                     .insert(operation_id.to_string(), endpoint)
@@ -318,7 +327,7 @@ impl OpenApiSpec {
             server_url,
             endpoints,
             operation_ids,
-            components,
+            schemas,
         })
     }
 
@@ -429,9 +438,15 @@ impl OpenApiSpec {
                 })
                 .collect(),
             has_request_body: ep.has_request_body,
-            request_body_schema: ep.request_body_schema.clone(),
+            request_body_schema: ep
+                .request_body_schema
+                .as_ref()
+                .map(|schema| onshape::annotate_schema_properties(schema, &self.schemas)),
             request_body_content_type: ep.request_body_content_type.clone(),
-            response_schema: ep.response_schema.clone(),
+            response_schema: ep
+                .response_schema
+                .as_ref()
+                .map(|schema| onshape::annotate_schema_properties(schema, &self.schemas)),
             response_content_types: ep.response_content_types.clone(),
         })
     }
@@ -639,258 +654,23 @@ impl OpenApiSpec {
     ///
     /// Returns an error if the schema name is not found in the spec's components.
     pub fn lookup_schema(&self, name: &str) -> Result<SchemaDetail, OpenApiError> {
-        let schema = self
-            .components
-            .get(name)
-            .ok_or_else(|| OpenApiError::SchemaNotFound {
-                schema_name: name.to_string(),
-            })?;
-
-        let description = schema
-            .get("description")
-            .and_then(Value::as_str)
-            .map(String::from);
-
-        // Extract discriminator info from this schema.
-        let discriminator = schema.get("discriminator");
-        let discriminator_property = discriminator
-            .and_then(|d| d.get("propertyName"))
-            .and_then(Value::as_str)
-            .map(String::from);
-        let subtypes = discriminator
-            .and_then(|d| d.get("mapping"))
-            .and_then(Value::as_object)
-            .map(|m| m.keys().cloned().collect::<Vec<_>>());
-
-        // Merge properties from allOf (parent) and own properties.
-        let mut merged_props = serde_json::Map::new();
-        let mut parent = None;
-        let mut required: Vec<String> = Vec::new();
-
-        // Collect required from the top-level schema.
-        if let Some(req) = schema.get("required").and_then(Value::as_array) {
-            for r in req {
-                if let Some(s) = r.as_str() {
-                    required.push(s.to_string());
-                }
-            }
-        }
-
-        // Walk allOf to find parent ref and merge properties.
-        if let Some(all_of) = schema.get("allOf").and_then(Value::as_array) {
-            for item in all_of {
-                if let Some(ref_str) = item.get("$ref").and_then(Value::as_str) {
-                    // This is the parent reference.
-                    if let Some(parent_name) = ref_str.strip_prefix("#/components/schemas/") {
-                        parent = Some(parent_name.to_string());
-                        // Merge parent properties (one level only — transitive
-                        // ancestry is accessible via the `parent` field).
-                        if let Some(parent_schema) = self.components.get(parent_name) {
-                            Self::merge_props_and_required(
-                                parent_schema,
-                                &mut merged_props,
-                                &mut required,
-                            );
-                            // Also merge properties/required from the parent's
-                            // own allOf inline blocks (non-$ref items).  Many
-                            // schemas in the Onshape spec carry their properties
-                            // inside allOf rather than at the top level.
-                            if let Some(parent_all_of) =
-                                parent_schema.get("allOf").and_then(Value::as_array)
-                            {
-                                for parent_item in parent_all_of {
-                                    if parent_item.get("$ref").is_some() {
-                                        continue;
-                                    }
-                                    Self::merge_props_and_required(
-                                        parent_item,
-                                        &mut merged_props,
-                                        &mut required,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Inline properties/required from allOf item.
-                    Self::merge_props_and_required(item, &mut merged_props, &mut required);
-                }
-            }
-        }
-
-        // Merge top-level properties (override parent if same key).
-        if let Some(props) = schema.get("properties").and_then(Value::as_object) {
-            for (k, v) in props {
-                merged_props.insert(k.clone(), v.clone());
-            }
-        }
-
-        // Annotate properties that reference polymorphic schemas.
-        let annotated =
-            Self::annotate_discriminators(&Value::Object(merged_props), &self.components);
-        let properties = annotated;
-
-        Ok(SchemaDetail {
-            name: name.to_string(),
-            description,
-            parent,
-            properties,
-            required,
-            subtypes,
-            discriminator_property,
-        })
+        let mut detail = self.schemas.lookup(name)?;
+        detail.properties = onshape::annotate_discriminators(&detail.properties, &self.schemas);
+        Ok(detail)
     }
 
     // ========================================================================
     // Private helpers
     // ========================================================================
 
-    /// Merge `properties` and `required` from `source` into the accumulators.
-    ///
-    /// Used during `lookup_schema` to fold parent (and parent-allOf-inline)
-    /// properties into the child's merged view.
-    fn merge_props_and_required(
-        source: &Value,
-        merged_props: &mut serde_json::Map<String, Value>,
-        required: &mut Vec<String>,
-    ) {
-        if let Some(props) = source.get("properties").and_then(Value::as_object) {
-            for (k, v) in props {
-                merged_props.insert(k.clone(), v.clone());
-            }
-        }
-        if let Some(req) = source.get("required").and_then(Value::as_array) {
-            for r in req {
-                if let Some(s) = r.as_str()
-                    && !required.contains(&s.to_string())
-                {
-                    required.push(s.to_string());
-                }
-            }
-        }
-    }
-
-    /// Walk a schema's properties and annotate any `$ref` (or `items.$ref`)
-    /// that points to a schema with a `discriminator.mapping` by adding an
-    /// `x-bttype-options` array listing the valid btType values.
-    ///
-    /// Only examines one level of properties (does not recurse into subtypes).
-    fn annotate_discriminators(schema: &Value, components: &HashMap<String, Value>) -> Value {
-        let Some(props) = schema.as_object() else {
-            return schema.clone();
-        };
-
-        let mut annotated = props.clone();
-
-        for (key, value) in props {
-            let annotated_value = Self::annotate_single_property(value, components);
-            if annotated_value != *value {
-                annotated.insert(key.clone(), annotated_value);
-            }
-        }
-
-        Value::Object(annotated)
-    }
-
-    /// Check a single property value for `$ref` or `items.$ref` pointing to
-    /// a schema with a discriminator, and annotate it with `x-bttype-options`.
-    fn annotate_single_property(value: &Value, components: &HashMap<String, Value>) -> Value {
-        // Direct $ref
-        if let Some(ref_str) = value.get("$ref").and_then(Value::as_str)
-            && let Some(options) = Self::discriminator_options(ref_str, components)
-        {
-            let mut annotated = value.as_object().cloned().unwrap_or_default();
-            annotated.insert("x-bttype-options".to_string(), Value::Array(options));
-            return Value::Object(annotated);
-        }
-
-        // items.$ref (for array properties)
-        if let Some(items) = value.get("items")
-            && let Some(ref_str) = items.get("$ref").and_then(Value::as_str)
-            && let Some(options) = Self::discriminator_options(ref_str, components)
-        {
-            let mut annotated_items = items.as_object().cloned().unwrap_or_default();
-            annotated_items.insert("x-bttype-options".to_string(), Value::Array(options));
-            let mut annotated = value.as_object().cloned().unwrap_or_default();
-            annotated.insert("items".to_string(), Value::Object(annotated_items));
-            return Value::Object(annotated);
-        }
-
-        value.clone()
-    }
-
-    /// Annotate a resolved schema's `properties` with discriminator info.
-    ///
-    /// If the schema has a `properties` object, walk it and annotate any `$ref`
-    /// properties that point to discriminator schemas. Returns the schema with
-    /// the annotated properties in place.
-    fn annotate_schema_properties(schema: &Value, components: &HashMap<String, Value>) -> Value {
-        let mut result = schema.clone();
-        let Some(obj) = result.as_object_mut() else {
-            return result;
-        };
-
-        if let Some(props) = obj.get("properties").cloned() {
-            obj.insert(
-                "properties".to_string(),
-                Self::annotate_discriminators(&props, components),
-            );
-        }
-
-        if let Some(all_of) = obj.get_mut("allOf").and_then(Value::as_array_mut) {
-            for item in all_of {
-                let Some(props) = item.get("properties").cloned() else {
-                    continue;
-                };
-                if let Some(item_obj) = item.as_object_mut() {
-                    item_obj.insert(
-                        "properties".to_string(),
-                        Self::annotate_discriminators(&props, components),
-                    );
-                }
-            }
-        }
-
-        result
-    }
-
-    /// Given a `$ref` string, check if the referenced schema has a discriminator
-    /// mapping. If so, return the mapping keys as a `Vec<Value>` of strings.
-    fn discriminator_options(
-        ref_str: &str,
-        components: &HashMap<String, Value>,
-    ) -> Option<Vec<Value>> {
-        let name = ref_str.strip_prefix("#/components/schemas/")?;
-        let schema = components.get(name)?;
-        let mapping = schema.get("discriminator")?.get("mapping")?.as_object()?;
-        let options: Vec<Value> = mapping.keys().cloned().map(Value::String).collect();
-        if options.is_empty() {
-            None
-        } else {
-            Some(options)
-        }
-    }
-
-    fn extract_components(root: &Value) -> HashMap<String, Value> {
-        let mut components = HashMap::new();
-        if let Some(schemas) = root
-            .pointer("/components/schemas")
-            .and_then(Value::as_object)
-        {
-            for (name, schema) in schemas {
-                components.insert(name.clone(), schema.clone());
-            }
-        }
-        components
-    }
-
+    /// Collect operation metadata and search text, resolving schemas without annotations.
     fn parse_endpoint(
         operation_id: &str,
         method: Method,
         path: &str,
         detail: &Value,
         path_parameters: &[ParsedParameter],
-        components: &HashMap<String, Value>,
+        schemas: &SchemaCatalog,
     ) -> ParsedEndpoint {
         let summary = detail
             .get("summary")
@@ -917,8 +697,8 @@ impl OpenApiSpec {
 
         let parameters = Self::merge_parameters(path_parameters, Self::parse_parameters(detail));
         let (has_request_body, request_body_schema, request_body_content_type) =
-            Self::parse_request_body(detail, components);
-        let response_schema = Self::parse_response_schema(detail, components);
+            Self::parse_request_body(detail, schemas);
+        let response_schema = Self::parse_response_schema(detail, schemas);
         let response_content_types = Self::parse_response_content_types(detail);
 
         // Build search text
@@ -951,6 +731,7 @@ impl OpenApiSpec {
         }
     }
 
+    /// Read inline path, query, and header parameters from a path item or operation.
     fn parse_parameters(detail: &Value) -> Vec<ParsedParameter> {
         let Some(params) = detail.get("parameters").and_then(Value::as_array) else {
             return Vec::new();
@@ -997,6 +778,7 @@ impl OpenApiSpec {
             .collect()
     }
 
+    /// Apply operation parameter overrides by matching both name and location.
     fn merge_parameters(
         path_parameters: &[ParsedParameter],
         operation_parameters: Vec<ParsedParameter>,
@@ -1017,9 +799,10 @@ impl OpenApiSpec {
         parameters
     }
 
+    /// Read body availability, a shallowly resolved schema, and its preferred media type.
     fn parse_request_body(
         detail: &Value,
-        components: &HashMap<String, Value>,
+        schemas: &SchemaCatalog,
     ) -> (bool, Option<Value>, Option<String>) {
         let Some(rb) = detail.get("requestBody") else {
             return (false, None, None);
@@ -1032,11 +815,9 @@ impl OpenApiSpec {
             // first content type.
             let entry = Self::prefer_json_content(content_map);
             if let Some((content_type, schema_info)) = entry {
-                let schema = schema_info.get("schema").cloned();
-                let resolved = schema.map(|s| {
-                    let resolved = Self::resolve_ref_shallow(&s, components);
-                    Self::annotate_schema_properties(&resolved, components)
-                });
+                let resolved = schema_info
+                    .get("schema")
+                    .map(|schema| schemas.resolve_ref_shallow(schema));
                 return (true, resolved, Some(content_type.to_string()));
             }
         }
@@ -1044,7 +825,8 @@ impl OpenApiSpec {
         (true, None, None)
     }
 
-    fn parse_response_schema(detail: &Value, components: &HashMap<String, Value>) -> Option<Value> {
+    /// Resolve the selected success response schema using its preferred media type.
+    fn parse_response_schema(detail: &Value, schemas: &SchemaCatalog) -> Option<Value> {
         let response = Self::select_success_response(detail)?;
 
         let content = response.get("content")?.as_object()?;
@@ -1053,8 +835,7 @@ impl OpenApiSpec {
         let (_, schema_info) = Self::prefer_json_content(content)?;
         let schema = schema_info.get("schema")?;
 
-        let resolved = Self::resolve_ref_shallow(schema, components);
-        Some(Self::annotate_schema_properties(&resolved, components))
+        Some(schemas.resolve_ref_shallow(schema))
     }
 
     fn parse_response_content_types(detail: &Value) -> Vec<String> {
@@ -1101,19 +882,6 @@ impl OpenApiSpec {
             .find(|(k, _)| k.starts_with("application/json"))
             .map(|(k, v)| (k.as_str(), v))
             .or_else(|| content_map.iter().next().map(|(k, v)| (k.as_str(), v)))
-    }
-
-    /// Resolve a single level of `$ref` — replaces the `$ref` pointer with the
-    /// referenced schema. Does NOT recursively resolve nested `$ref`s (to avoid
-    /// unbounded expansion of the spec).
-    fn resolve_ref_shallow(schema: &Value, components: &HashMap<String, Value>) -> Value {
-        if let Some(ref_str) = schema.get("$ref").and_then(Value::as_str)
-            && let Some(name) = ref_str.strip_prefix("#/components/schemas/")
-            && let Some(resolved) = components.get(name)
-        {
-            return resolved.clone();
-        }
-        schema.clone()
     }
 
     fn truncate_description(s: &str, max_len: usize) -> String {
@@ -1180,6 +948,116 @@ const fn json_type_name(value: &Value) -> &'static str {
 #[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// Check that Onshape presentation leaves standard schema metadata intact.
+    #[test]
+    fn explanations_add_annotations_without_changing_standard_schema_data() {
+        let pet_ref = serde_json::json!({ "$ref": "#/components/schemas/Pet" });
+        let properties = serde_json::json!({
+            "pet": pet_ref,
+            "pets": { "type": "array", "items": pet_ref },
+            "label": { "type": "string", "x-example": "retained" }
+        });
+        let envelope = serde_json::json!({ "allOf": [{ "properties": properties }] });
+        let media = serde_json::json!({
+            "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } }
+        });
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "info": { "title": "Pet API", "version": "1.0" },
+            "servers": [{ "url": "https://example.com" }],
+            "paths": {
+                "/pets": {
+                    "post": {
+                        "operationId": "createPet",
+                        "requestBody": { "content": media },
+                        "responses": { "200": { "description": "A pet", "content": media } }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "Pet": {
+                        "type": "object",
+                        "properties": { "kind": { "type": "string" } },
+                        "discriminator": {
+                            "propertyName": "kind",
+                            "mapping": { "cat": "#/components/schemas/Cat" }
+                        }
+                    },
+                    "Cat": { "allOf": [pet_ref] },
+                    "Envelope": envelope
+                }
+            }
+        }))
+        .expect("should parse");
+
+        let pet = spec.schemas.lookup("Pet").expect("should find pet");
+        assert_eq!(pet.discriminator_property.as_deref(), Some("kind"));
+        assert_eq!(pet.subtypes, Some(vec!["cat".to_string()]));
+
+        let mut annotated = envelope.clone();
+        annotated["allOf"][0]["properties"]["pet"]["x-bttype-options"] = serde_json::json!(["cat"]);
+        annotated["allOf"][0]["properties"]["pets"]["items"]["x-bttype-options"] =
+            serde_json::json!(["cat"]);
+
+        let detail = spec.explain("createPet").expect("should find endpoint");
+        assert_eq!(detail.request_body_schema.as_ref(), Some(&annotated));
+        assert_eq!(detail.response_schema.as_ref(), Some(&annotated));
+        assert_eq!(
+            spec.lookup_schema("Envelope")
+                .expect("should find schema")
+                .properties,
+            annotated["allOf"][0]["properties"]
+        );
+
+        // The standard catalog and parsed endpoint still contain only source
+        // metadata after the public API has produced annotated explanations.
+        assert_eq!(
+            spec.schemas
+                .lookup("Envelope")
+                .expect("should find schema")
+                .properties,
+            properties
+        );
+        let endpoint = &spec.endpoints["createPet"];
+        assert_eq!(endpoint.request_body_schema.as_ref(), Some(&envelope));
+        assert_eq!(endpoint.response_schema.as_ref(), Some(&envelope));
+    }
+
+    /// Keep explicit empty subtype lists while omitting annotations with no options.
+    #[test]
+    fn lookup_schema_empty_mapping_preserves_subtypes_without_annotations() {
+        let properties = serde_json::json!({
+            "pet": { "$ref": "#/components/schemas/Pet" }
+        });
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "info": { "title": "Pet API", "version": "1.0" },
+            "servers": [{ "url": "https://example.com" }],
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Pet": {
+                        "type": "object",
+                        "discriminator": { "propertyName": "kind", "mapping": {} }
+                    },
+                    "Envelope": { "type": "object", "properties": properties }
+                }
+            }
+        }))
+        .expect("should parse");
+
+        let pet = spec.lookup_schema("Pet").expect("should find pet");
+        assert_eq!(pet.subtypes, Some(Vec::new()));
+        assert_eq!(pet.discriminator_property.as_deref(), Some("kind"));
+        assert_eq!(
+            spec.lookup_schema("Envelope")
+                .expect("should find envelope")
+                .properties,
+            properties
+        );
+    }
 
     /// A minimal `OpenAPI` spec for testing.
     #[allow(clippy::too_many_lines)]
