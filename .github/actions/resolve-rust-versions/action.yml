@@ -5,6 +5,10 @@ inputs:
   msrv:
     description: Minimum Supported Rust Version
     required: true
+  include-beta:
+    description: Resolve the beta channel when enabled in the CI matrix
+    required: false
+    default: "true"
   grace-period-hours:
     description: Grace period in hours for version lag between sources
     required: false
@@ -32,4 +36,5 @@ runs:
       shell: bash
       env:
         GRACE_PERIOD_HOURS: ${{ inputs.grace-period-hours }}
+        INCLUDE_BETA: ${{ inputs.include-beta }}
       run: ${{ github.action_path }}/resolve.sh

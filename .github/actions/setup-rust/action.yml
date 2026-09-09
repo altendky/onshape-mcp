@@ -9,6 +9,10 @@ inputs:
     description: Comma-separated list of components to install (e.g., "rustfmt, clippy")
     required: false
     default: ""
+  cache-key:
+    description: Additional key to distinguish caches for jobs with the same ID
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -18,3 +22,4 @@ runs:
       with:
         toolchain: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
+        cache-key: ${{ inputs.cache-key }}

@@ -73,10 +73,13 @@ RUSTUP_STABLE=$(echo "$STABLE_TOML" | yq -p toml '.pkg.rust.version' | grep -oP 
 STABLE_RELEASE_DATE=$(echo "$STABLE_TOML" | yq -p toml '.date')
 echo "Rustup stable: $RUSTUP_STABLE (released $STABLE_RELEASE_DATE)"
 
-# Get beta version from rustup
-echo "Querying rustup for beta version..."
-RUSTUP_BETA=$(get_rustup_version "beta")
-echo "Rustup beta: $RUSTUP_BETA"
+# Disabled beta jobs should not depend on the beta channel being available.
+RUSTUP_BETA=""
+if [ "${INCLUDE_BETA:-true}" = "true" ]; then
+	echo "Querying rustup for beta version..."
+	RUSTUP_BETA=$(get_rustup_version "beta")
+	echo "Rustup beta: $RUSTUP_BETA"
+fi
 
 # Check Docker Hub for stable version
 echo "Checking Docker Hub for rust:${RUSTUP_STABLE}-alpine..."

@@ -7,6 +7,8 @@ axes:
         arm: ubuntu-24.04-arm
         intel: ubuntu-latest
     - name: macOS
+      # Keep macOS coverage to the native release builds and their --version checks.
+      enabled: false
       matrix: macos
       emoji: 🍎
       runs-on:
@@ -35,6 +37,8 @@ axes:
       version: stable
       emoji: 🪨
     - name: beta
+      # Disable advisory beta jobs to reduce runner usage; set true to restore them.
+      enabled: false
       matrix: beta
       version: beta
       emoji: 🔮

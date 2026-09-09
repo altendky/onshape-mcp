@@ -10,6 +10,7 @@ jobs:
 
   resolve-versions:
     name: Resolve Rust versions
+    needs: library
     runs-on: ubuntu-latest
     outputs:
       msrv: ${{ steps.resolve.outputs.msrv }}
@@ -23,6 +24,7 @@ jobs:
         uses: ./.github/actions/resolve-rust-versions
         with:
           msrv: "1.89"
+          include-beta: ${{ contains(fromJSON(needs.library.outputs.matrix).axes.rust.*.matrix, 'beta') }}
 
   # Lint job runs separately (doesn't need build/test split)
   lint:

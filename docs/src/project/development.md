@@ -110,13 +110,17 @@ The CI workflow separates build and test stages:
 
 1. **Build stage**: Compiles tests and creates archives
    - Linux: Builds with musl target (Rust provides built-in support)
-   - macOS/Windows: Builds natively
+   - Windows: Builds natively
 
 2. **Test stage**: Runs pre-built tests in multiple environments
    - Linux tests run on both glibc (Ubuntu) and musl (Alpine)
-   - macOS/Windows tests run natively
+   - Windows tests run natively
 
 This architecture verifies that musl binaries work correctly on glibc systems and vice versa.
+
+macOS CI coverage consists of native Intel and ARM release builds and their
+`--version` smoke checks. The test matrix runs MSRV and stable Rust on Linux and
+Windows; beta is retained in the shared library with `enabled: false`.
 
 ### Test Runner
 
