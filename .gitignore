@@ -466,3 +466,5 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,rust-analyzer,node,macos,linux,windows,vim,emacs,jetbrains,visualstudiocode,patch,direnv
+
+/deploy/enterprise/secrets/*

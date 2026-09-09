@@ -47,9 +47,10 @@ before broad rollout.
 
 ## Configure
 
-From this directory:
+From the repository root:
 
 ```bash
+cd deploy/enterprise
 cp .env.example .env
 mkdir -p secrets
 openssl rand -base64 32 > secrets/state-encryption-key
@@ -76,6 +77,49 @@ curl --fail "https://${MCP_DOMAIN}/.well-known/oauth-protected-resource/mcp"
 The MCP client URL is `https://<MCP_DOMAIN>/mcp`. Each engineer completes the
 browser OAuth flow once. Caddy preserves the public `Host` header because the
 MCP transport rejects other authorities to prevent DNS rebinding.
+
+## Engineer onboarding (no terminal)
+
+Engineers do not need the repository, configuration files, OAuth client ID, or
+OAuth client secret. They only connect the MCP URL and sign in with Onshape.
+
+### Claude
+
+For a Claude Team or Enterprise organization, an Owner or Primary Owner adds
+the connector once:
+
+1. Open **Organization Settings → Connectors**.
+2. Select **Add → Custom → Web**.
+3. Enter `https://<MCP_DOMAIN>/mcp` and save it as `ICEpower Onshape`.
+
+Each engineer then opens **Customize → Connectors**, finds `ICEpower Onshape`,
+selects **Connect**, and completes the Onshape login. The server must be
+publicly reachable over HTTPS because remote Claude connectors connect from
+Anthropic's infrastructure. See [Claude's custom connector
+guide](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+
+### Codex
+
+Each engineer can connect entirely through the desktop interface:
+
+1. Open **Settings → MCP servers → Add server**.
+2. Enter `ICEpower Onshape` as the name.
+3. Select **Streamable HTTP** and enter `https://<MCP_DOMAIN>/mcp`.
+4. Save, restart when prompted, and select **Authenticate**.
+5. Complete the Onshape login.
+
+For a managed rollout, IT can distribute this Codex configuration so the MCP
+server appears automatically and engineers only need to authenticate:
+
+```toml
+[mcp_servers.icepower_onshape]
+url = "https://<MCP_DOMAIN>/mcp"
+```
+
+See the official [Codex MCP
+guide](https://learn.chatgpt.com/docs/extend/mcp?surface=app) and [managed
+configuration
+guide](https://learn.chatgpt.com/docs/enterprise/managed-configuration).
 
 ## Operations
 
