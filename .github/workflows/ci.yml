@@ -53,7 +53,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - run: python scripts/apply-openapi-overlays.py --check
+
+      - run: python scripts/test-generate-error-enums-cli.py
 
       - run: python scripts/generate-error-enums.py --check
 
@@ -63,7 +67,7 @@ jobs:
     needs: [mise, pre-commit, rust, coverage, npm, error-enums]
     runs-on: ubuntu-latest
     steps:
-      - uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
           jobs: ${{ toJSON(needs) }}
 
@@ -183,7 +187,7 @@ jobs:
     needs: [checks, tag-release, post-release, release-npm, cargo-publish, publish-release]
     runs-on: ubuntu-latest
     steps:
-      - uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
           allowed-skips: tag-release, post-release
           jobs: ${{ toJSON(needs) }}

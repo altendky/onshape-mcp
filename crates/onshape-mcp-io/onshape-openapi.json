@@ -8304,7 +8304,7 @@
           "Document"
         ],
         "summary": "Create and upload a document.",
-        "description": "The `name` field is required in the `BTDocumentParams` schema when creating a new document.",
+        "description": "The `name` field is semantically required and must be nonempty when creating a document, although `BTDocumentParams` does not mark it OpenAPI-required. `parentId` accepts the destination folder's opaque ID, not its name or path. Free accounts require `isPublic=true`. Omit ownership, project, debug/internal, and null optional fields unless deliberately needed; clients must not assume OpenAPI defaults are applied.",
         "operationId": "createDocument",
         "requestBody": {
           "content": {
@@ -11588,7 +11588,7 @@
           "Element"
         ],
         "summary": "Update the configuration definition for a Part Studio, Variable Studio, or Assembly.",
-        "description": "See the [Configuration API Guide](https://onshape-public.github.io/docs/api-adv/configs/) for additional details",
+        "description": "See the [Configuration API Guide](https://onshape-public.github.io/docs/api-adv/configs/) for additional details. `nodeId` is opaque server-owned identity: omit it on newly authored configuration parameters, options, and current-configuration entries; read the configuration back and preserve exact server-returned IDs in later updates. Never synthesize IDs from names, UUIDs, or inferred formats.",
         "operationId": "updateConfiguration",
         "parameters": [
           {
@@ -34545,7 +34545,7 @@
           },
           "parentId": {
             "type": "string",
-            "description": "Document ID of this document's parent."
+            "description": "Opaque ID of this document's parent folder. Supply the folder ID, not its name or path."
           },
           "projectId": {
             "type": "string",
@@ -43246,7 +43246,8 @@
             "writeOnly": true
           },
           "nodeId": {
-            "type": "string"
+            "type": "string",
+            "description": "Opaque server-owned BTObjectId for serialized node identity. Preserve an exact ID returned by Onshape for later updates; never synthesize one from a name, UUID, or inferred format. Omit it for newly authored configuration nodes."
           }
         },
         "discriminator": {
