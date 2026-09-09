@@ -16,23 +16,31 @@ jobs:
     name: Mise
     uses: ./.github/workflows/reflow-mise.yml
 
+  mise-warmup:
+    name: Mise warmup
+    uses: ./.github/workflows/reflow-mise-warmup.yml
+
   pre-commit:
     name: Pre-commit
+    needs: mise-warmup
     uses: ./.github/workflows/reflow-pre-commit.yml
 
   rust:
     name: Rust
+    needs: mise-warmup
     uses: ./.github/workflows/reflow-rust.yml
     secrets: inherit
 
   coverage:
     name: Coverage
+    needs: mise-warmup
     uses: ./.github/workflows/reflow-coverage.yml
     permissions:
       id-token: write
 
   npm:
     name: npm
+    needs: mise-warmup
     uses: ./.github/workflows/reflow-npm.yml
     permissions:
       id-token: write
@@ -49,6 +57,7 @@ jobs:
 
   error-enums:
     name: Error enums
+    needs: mise-warmup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -64,7 +73,7 @@ jobs:
   checks:
     name: checks
     if: ${{ !cancelled() }}
-    needs: [mise, pre-commit, rust, coverage, npm, error-enums]
+    needs: [mise, mise-warmup, pre-commit, rust, coverage, npm, error-enums]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1

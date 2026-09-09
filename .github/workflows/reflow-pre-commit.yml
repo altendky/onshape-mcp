@@ -25,6 +25,14 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: stable
 
+      - name: Setup Rust and cache Clippy dependencies
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          # Coverage also has a job named check; keep Clippy's artifacts separate.
+          cache-key: pre-commit
+
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/pre-commit
