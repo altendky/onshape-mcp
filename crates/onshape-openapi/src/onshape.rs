@@ -37,7 +37,7 @@ fn annotate_single_property(value: &Value, schemas: &SchemaCatalog) -> Value {
         && let Some(options) = schemas.discriminator_options(ref_str)
     {
         let mut annotated = value.as_object().cloned().unwrap_or_default();
-        annotated.insert("x-bttype-options".to_string(), Value::Array(options));
+        annotated.insert("x-bttype-options".to_string(), Value::from(options));
         return Value::Object(annotated);
     }
 
@@ -47,7 +47,7 @@ fn annotate_single_property(value: &Value, schemas: &SchemaCatalog) -> Value {
         && let Some(options) = schemas.discriminator_options(ref_str)
     {
         let mut annotated_items = items.as_object().cloned().unwrap_or_default();
-        annotated_items.insert("x-bttype-options".to_string(), Value::Array(options));
+        annotated_items.insert("x-bttype-options".to_string(), Value::from(options));
         let mut annotated = value.as_object().cloned().unwrap_or_default();
         annotated.insert("items".to_string(), Value::Object(annotated_items));
         return Value::Object(annotated);

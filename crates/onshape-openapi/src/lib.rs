@@ -663,6 +663,7 @@ impl OpenApiSpec {
     // Private helpers
     // ========================================================================
 
+    /// Collect operation metadata and search text, resolving schemas without annotations.
     fn parse_endpoint(
         operation_id: &str,
         method: Method,
@@ -730,6 +731,7 @@ impl OpenApiSpec {
         }
     }
 
+    /// Read inline path, query, and header parameters from a path item or operation.
     fn parse_parameters(detail: &Value) -> Vec<ParsedParameter> {
         let Some(params) = detail.get("parameters").and_then(Value::as_array) else {
             return Vec::new();
@@ -776,6 +778,7 @@ impl OpenApiSpec {
             .collect()
     }
 
+    /// Apply operation parameter overrides by matching both name and location.
     fn merge_parameters(
         path_parameters: &[ParsedParameter],
         operation_parameters: Vec<ParsedParameter>,
@@ -796,6 +799,7 @@ impl OpenApiSpec {
         parameters
     }
 
+    /// Read body availability, a shallowly resolved schema, and its preferred media type.
     fn parse_request_body(
         detail: &Value,
         schemas: &SchemaCatalog,
@@ -821,6 +825,7 @@ impl OpenApiSpec {
         (true, None, None)
     }
 
+    /// Resolve the selected success response schema using its preferred media type.
     fn parse_response_schema(detail: &Value, schemas: &SchemaCatalog) -> Option<Value> {
         let response = Self::select_success_response(detail)?;
 
@@ -944,6 +949,7 @@ const fn json_type_name(value: &Value) -> &'static str {
 mod tests {
     use super::*;
 
+    /// Check that Onshape presentation leaves standard schema metadata intact.
     #[test]
     fn explanations_add_annotations_without_changing_standard_schema_data() {
         let pet_ref = serde_json::json!({ "$ref": "#/components/schemas/Pet" });
@@ -1017,6 +1023,40 @@ mod tests {
         let endpoint = &spec.endpoints["createPet"];
         assert_eq!(endpoint.request_body_schema.as_ref(), Some(&envelope));
         assert_eq!(endpoint.response_schema.as_ref(), Some(&envelope));
+    }
+
+    /// Keep explicit empty subtype lists while omitting annotations with no options.
+    #[test]
+    fn lookup_schema_empty_mapping_preserves_subtypes_without_annotations() {
+        let properties = serde_json::json!({
+            "pet": { "$ref": "#/components/schemas/Pet" }
+        });
+        let spec = OpenApiSpec::from_value(&serde_json::json!({
+            "openapi": "3.0.1",
+            "info": { "title": "Pet API", "version": "1.0" },
+            "servers": [{ "url": "https://example.com" }],
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Pet": {
+                        "type": "object",
+                        "discriminator": { "propertyName": "kind", "mapping": {} }
+                    },
+                    "Envelope": { "type": "object", "properties": properties }
+                }
+            }
+        }))
+        .expect("should parse");
+
+        let pet = spec.lookup_schema("Pet").expect("should find pet");
+        assert_eq!(pet.subtypes, Some(Vec::new()));
+        assert_eq!(pet.discriminator_property.as_deref(), Some("kind"));
+        assert_eq!(
+            spec.lookup_schema("Envelope")
+                .expect("should find envelope")
+                .properties,
+            properties
+        );
     }
 
     /// A minimal `OpenAPI` spec for testing.

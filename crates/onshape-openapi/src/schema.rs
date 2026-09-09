@@ -15,6 +15,7 @@ pub struct SchemaCatalog {
 }
 
 impl SchemaCatalog {
+    /// Index component schemas from a specification, retaining their source metadata.
     pub fn from_root(root: &Value) -> Self {
         let mut components = HashMap::new();
         if let Some(schemas) = root
@@ -55,10 +56,7 @@ impl SchemaCatalog {
             .and_then(|d| d.get("propertyName"))
             .and_then(Value::as_str)
             .map(String::from);
-        let subtypes = discriminator
-            .and_then(|d| d.get("mapping"))
-            .and_then(Value::as_object)
-            .map(|m| m.keys().cloned().collect::<Vec<_>>());
+        let subtypes = Self::mapping_keys(schema);
 
         // Merge properties from allOf (parent) and own properties.
         let mut merged_props = serde_json::Map::new();
@@ -157,18 +155,18 @@ impl SchemaCatalog {
         }
     }
 
-    /// Given a `$ref` string, check if the referenced schema has a discriminator
-    /// mapping. If so, return the mapping keys as a `Vec<Value>` of strings.
-    pub fn discriminator_options(&self, ref_str: &str) -> Option<Vec<Value>> {
+    /// Return discriminator mapping keys, preserving an explicitly empty mapping.
+    fn mapping_keys(schema: &Value) -> Option<Vec<String>> {
+        let mapping = schema.get("discriminator")?.get("mapping")?.as_object()?;
+        Some(mapping.keys().cloned().collect())
+    }
+
+    /// Return plain discriminator mapping keys for a component reference.
+    /// Empty mappings have no options to annotate, while lookup retains empty subtypes.
+    pub fn discriminator_options(&self, ref_str: &str) -> Option<Vec<String>> {
         let name = ref_str.strip_prefix("#/components/schemas/")?;
         let schema = self.components.get(name)?;
-        let mapping = schema.get("discriminator")?.get("mapping")?.as_object()?;
-        let options: Vec<Value> = mapping.keys().cloned().map(Value::String).collect();
-        if options.is_empty() {
-            None
-        } else {
-            Some(options)
-        }
+        Self::mapping_keys(schema).filter(|options| !options.is_empty())
     }
 
     /// Resolve a single level of `$ref` — replaces the `$ref` pointer with the
