@@ -8,7 +8,7 @@ http_timeout = "120s"
 locked = true
 
 [tools]
-node = "24"
+node = "24.20.0"
 python = "3.14.7"
 "pipx:pre-commit" = "4.6.2"
 # Non-core tools: use explicit backend prefix (aqua:/github:) for Renovate compatibility
