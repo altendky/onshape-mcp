@@ -1,11 +1,4 @@
-{
-	email {$ACME_EMAIL}
-	servers {
-		trusted_proxies static private_ranges
-	}
-}
-
-{$MCP_DOMAIN} {
+mcp-onshape.icesound.dk {
 	log {
 		output stdout
 		format filter {
@@ -26,7 +19,7 @@
 		-Server
 	}
 
-	reverse_proxy onshape-mcp:8080 {
+	reverse_proxy http://10.254.50.30:8080 {
 		header_up Host {host}
 		health_uri /ready
 		health_interval 30s

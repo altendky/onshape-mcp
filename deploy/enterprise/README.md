@@ -1,9 +1,10 @@
-# Enterprise single-server deployment
+# Enterprise split-server deployment
 
-This deployment runs one hardened `onshape-mcp` instance behind Caddy with
-automatic TLS. It is intended for an internal engineering team on one
-company-managed Linux server. OAuth clients, MCP tokens, and Onshape user
-tokens survive restarts in an AES-256-GCM encrypted state file.
+This deployment runs one hardened `onshape-mcp` instance on `10.254.50.30`.
+The existing Caddy server on `10.254.50.70` terminates public HTTPS and proxies
+requests to the MCP server over the private network. OAuth clients, MCP tokens,
+and Onshape user tokens survive restarts in an AES-256-GCM encrypted state
+file.
 
 ## Security model
 
@@ -19,8 +20,9 @@ tokens survive restarts in an AES-256-GCM encrypted state file.
 - Durable OAuth state is encrypted at rest. The encryption key and Onshape
   client secret are mounted read-only and are never put in environment
   variables or command-line arguments.
-- The application container is non-root, read-only, capability-free, and not
-  published directly. Only Caddy exposes ports 80 and 443.
+- The application container is non-root, read-only, and capability-free. Port
+  8080 is published only on the MCP server's private address. The MCP host
+  firewall must accept it from `10.254.50.70` and reject all other sources.
 - HTTP security headers, request-size limits, registration/pending-flow caps,
   and JSON audit events for Onshape API calls are enabled.
 
@@ -31,14 +33,21 @@ state backend before adding replicas.
 
 ## Prerequisites
 
-1. A company-managed Linux server with Docker Engine and Docker Compose.
-2. A DNS A/AAAA record for the MCP hostname pointing at the server.
-3. Inbound TCP 80/443 and UDP 443; do not expose port 8080.
-4. Outbound HTTPS to `oauth.onshape.com` and `cad.onshape.com`.
-5. A company-owned Onshape OAuth application with this exact redirect URI:
+1. The company-managed MCP server at `10.254.50.30`, with Docker Engine and
+   Docker Compose.
+2. The Caddy server at `10.254.50.70`, reachable from the MCP server over the
+   private network.
+3. A public DNS record for the MCP hostname pointing to the Caddy server's
+   public IP or public NAT address. Do not publish either `10.254.50.70` or
+   `10.254.50.30` in public DNS; they are private addresses.
+4. Public TCP 80/443 to Caddy, plus private TCP 8080 from `10.254.50.70` to
+   `10.254.50.30`. Do not expose port 8080 to the internet.
+5. Outbound HTTPS from the MCP server to `oauth.onshape.com` and
+   `icepower.onshape.com`.
+6. A company-owned Onshape OAuth application with this exact redirect URI:
    `https://<MCP_DOMAIN>/oauth/callback`.
-6. The Onshape enterprise company ID configured for the integrated application.
-7. Confirmation from the Onshape administrator that the OAuth application and
+7. The Onshape enterprise company ID configured for the integrated application.
+8. Confirmation from the Onshape administrator that the OAuth application and
    enterprise policy permit only the accounts that should use this server.
 
 Company-owned Onshape OAuth applications count against the company's API
@@ -64,19 +73,36 @@ in the company's secret manager. Losing the state encryption key makes the
 persisted OAuth state unrecoverable; exposing it together with the state volume
 exposes active credentials.
 
+## Configure Caddy
+
+The `Caddyfile` in this directory is intended for the separate Caddy server at
+`10.254.50.70`. Merge its site block into that server's active Caddy
+configuration. It routes the complete public origin—including `/mcp`, OAuth,
+and discovery endpoints—to `http://10.254.50.30:8080`.
+
+Configure the MCP server firewall to allow TCP port 8080 only from
+`10.254.50.70`. Before testing the public hostname, run this from the Caddy
+server:
+
+```bash
+curl --fail http://10.254.50.30:8080/ready
+```
+
 ## Start and verify
 
 ```bash
 docker compose up -d --build
 docker compose ps
+curl --fail http://10.254.50.30:8080/ready
 curl --fail "https://${MCP_DOMAIN}/health"
 curl --fail "https://${MCP_DOMAIN}/ready"
 curl --fail "https://${MCP_DOMAIN}/.well-known/oauth-protected-resource/mcp"
 ```
 
 The MCP client URL is `https://<MCP_DOMAIN>/mcp`. Each engineer completes the
-browser OAuth flow once. Caddy preserves the public `Host` header because the
-MCP transport rejects other authorities to prevent DNS rebinding.
+browser OAuth flow once. The separate Caddy server preserves the public `Host`
+header because the MCP transport rejects other authorities to prevent DNS
+rebinding.
 
 ## Engineer onboarding (no terminal)
 
@@ -123,7 +149,8 @@ guide](https://learn.chatgpt.com/docs/enterprise/managed-configuration).
 
 ## Operations
 
-- Stream logs with `docker compose logs -f`. Application audit records use the
+- Stream MCP logs with `docker compose logs -f onshape-mcp`; inspect Caddy logs
+  on `10.254.50.70`. Application audit records use the
   event name `onshape_api_request` and include timestamp, Onshape user ID,
   method, path, outcome, and upstream status. They do
   not include request bodies, query parameters, OAuth tokens, or Authorization
@@ -138,9 +165,9 @@ guide](https://learn.chatgpt.com/docs/enterprise/managed-configuration).
   intentionally fails startup. For simple key rotation, stop the service,
   archive the old state and key under the retention policy, generate a new key,
   remove the old state volume, and have engineers authorize again.
-- Base and proxy images are digest-pinned. Patch the host and deliberately
-  update those pins and rebuild regularly. Run `cargo deny check` and the full
-  test suite in CI for every dependency or image update.
+- Base images are digest-pinned. Patch the host and deliberately update those
+  pins and rebuild regularly. Run `cargo deny check` and the full test suite in
+  CI for every dependency or image update.
 
 At the company edge, add per-IP rate limiting for `/oauth/register`,
 `/oauth/authorize`, `/oauth/token`, and `/mcp`; alert on repeated 401/403/429
