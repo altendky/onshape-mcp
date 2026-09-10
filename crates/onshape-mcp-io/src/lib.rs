@@ -4,7 +4,7 @@
 //! It delegates all tool logic to `onshape-mcp-core` and HTTP execution to
 //! `onshape-client-io`.
 
-pub mod api;
+pub use openapi_mcp_io::api;
 pub mod config;
 pub mod login;
 pub mod oauth;
@@ -45,7 +45,7 @@ use onshape_client_io::{ClientAuthConfig, ClientConfig, OnshapeClient};
 use onshape_mcp_core::ValidationState;
 use onshape_mcp_core::config::{AppConfig, AuthInventory, ResolvedAuth, TokenStatus, resolve_auth};
 use onshape_mcp_core::tools::{self, IoResult, SideEffect, ToolEffect};
-use onshape_openapi::OpenApiSpec;
+use openapi_mcp_spec::OpenApiSpec;
 
 use crate::oauth::{McpOAuthTokenFile, McpOAuthTokenMetadata, default_token_file_path};
 use api::{RequestExecutor as _, Response as RawResponse};

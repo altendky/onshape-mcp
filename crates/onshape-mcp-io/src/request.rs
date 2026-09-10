@@ -1,7 +1,7 @@
 //! Adapt neutral `OpenAPI` requests to the authenticated Onshape client.
 
 use onshape_client_core::request as client;
-use onshape_openapi::request as openapi;
+use openapi_mcp_spec::request as openapi;
 
 use super::{ApiState, McpError, ValidationState, api};
 

@@ -19,7 +19,7 @@
 //! closures. After the I/O layer executes an effect, it calls [`resume()`] with
 //! the continuation and an [`IoResult`] to get the next effect.
 
-pub mod api;
+pub use openapi_mcp_core as api;
 mod onshape;
 
 pub use onshape::API_POLICY as ONSHAPE_API_POLICY;
@@ -39,10 +39,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use onshape_openapi::OpenApiSpec;
-use onshape_openapi::request::ApiRequest;
+use openapi_mcp_spec::OpenApiSpec;
+use openapi_mcp_spec::request::ApiRequest;
 #[cfg(test)]
-use onshape_openapi::request::{MultipartBody, RequestBody};
+use openapi_mcp_spec::request::{MultipartBody, RequestBody};
 
 pub use api::{
     ApiCallInput, ApiExplainInput, ApiSchemaInput, ApiSearchInput, FileEncoding, FileRead,

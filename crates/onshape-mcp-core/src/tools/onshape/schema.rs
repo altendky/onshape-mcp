@@ -5,7 +5,7 @@
 
 use serde_json::Value;
 
-use onshape_openapi::{EndpointDetail, OpenApiSpec, SchemaDetail};
+use openapi_mcp_spec::{EndpointDetail, OpenApiSpec, SchemaDetail};
 
 /// Annotate endpoint request and response schemas without mutating the catalog.
 pub(super) fn present_endpoint(detail: &mut EndpointDetail, spec: &OpenApiSpec) {

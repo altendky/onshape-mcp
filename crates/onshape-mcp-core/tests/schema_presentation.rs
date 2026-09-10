@@ -6,7 +6,7 @@ use onshape_mcp_core::{
     tools::api::{self, Effect, Policy, ToolKind},
     tools::{self, ToolEffect},
 };
-use onshape_openapi::OpenApiSpec;
+use openapi_mcp_spec::OpenApiSpec;
 use rmcp::model::CallToolResult;
 use serde_json::{Value, json};
 

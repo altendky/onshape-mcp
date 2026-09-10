@@ -2505,7 +2505,7 @@ mod tests {
 
         let config = Arc::new(onshape_mcp_core::config::AppConfig::default());
         let spec = Arc::new(
-            onshape_openapi::OpenApiSpec::from_json_with_server_url_fallback(
+            openapi_mcp_spec::OpenApiSpec::from_json_with_server_url_fallback(
                 crate::OPENAPI_SPEC_JSON,
                 crate::OPENAPI_SERVER_URL_FALLBACK,
             )

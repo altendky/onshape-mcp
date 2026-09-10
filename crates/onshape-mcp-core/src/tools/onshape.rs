@@ -10,7 +10,7 @@ pub use metadata::api_tools;
 
 use std::collections::{HashMap, HashSet};
 
-use onshape_openapi::request::{ApiRequest, RequestBody};
+use openapi_mcp_spec::request::{ApiRequest, RequestBody};
 use serde_json::{Map, Value};
 
 use super::{Continuation, FileReference, ToolEffect, api};

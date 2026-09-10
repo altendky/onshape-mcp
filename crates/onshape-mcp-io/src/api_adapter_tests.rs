@@ -6,7 +6,7 @@ use onshape_mcp_core::{
     ValidationStatus,
     tools::{Continuation, FileEncoding, FileReference},
 };
-use onshape_openapi::request::{ApiRequest, RequestBody};
+use openapi_mcp_spec::request::{ApiRequest, RequestBody};
 use serde_json::json;
 
 use super::*;
