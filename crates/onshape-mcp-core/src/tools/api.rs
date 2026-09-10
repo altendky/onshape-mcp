@@ -1,10 +1,15 @@
 //! Pure `OpenAPI` tool handlers.
 //!
 //! The `execution` module owns generic effects, file injection, and response
-//! formatting. The host supplies validation and diagnostic policy. Tool metadata
-//! and the four tool input schemas are owned by the parent module.
+//! formatting. Generic input types and host-configured tool metadata live here
+//! too. The host supplies presentation, validation, and diagnostic policy.
 
 mod execution;
+mod input;
+mod metadata;
+
+pub use input::{ApiCallInput, ApiExplainInput, ApiSchemaInput, ApiSearchInput};
+pub(super) use metadata::{ToolDefinition, ToolKind, ToolSet};
 
 use execution::tool_input_error;
 pub(super) use execution::{
@@ -24,7 +29,20 @@ use rmcp::{
 };
 use serde_json::{Map, Value};
 
-use super::{ApiCallInput, ApiExplainInput, ApiSchemaInput, ApiSearchInput};
+/// Dispatch a resolved API tool operation using the supplied host policy.
+pub(super) fn dispatch(
+    kind: ToolKind,
+    arguments: Option<&Map<String, Value>>,
+    spec: &OpenApiSpec,
+    policy: &Policy,
+) -> Effect {
+    match kind {
+        ToolKind::Search => Effect::Done(search(arguments, spec)),
+        ToolKind::Explain => Effect::Done(explain(arguments, spec)),
+        ToolKind::Call => call(arguments, spec, policy),
+        ToolKind::Schema => Effect::Done(schema(arguments, spec)),
+    }
+}
 
 pub(super) fn search(
     arguments: Option<&Map<String, Value>>,
@@ -273,6 +291,238 @@ mod tests {
         }
     }
 
+    const DOCUMENT_TOOL_NAMES: [&str; 4] = [
+        "catalog_find",
+        "endpoint_details",
+        "run_request",
+        "type_details",
+    ];
+
+    fn document_tool_definitions(names: [&str; 4]) -> [ToolDefinition<'_>; 4] {
+        [
+            ToolDefinition {
+                kind: ToolKind::Search,
+                name: names[0],
+                description: "Find document endpoints, then use endpoint_details.",
+                input_description: Some("Document catalog search."),
+                field_descriptions: &[("query", "Words to find in the document catalog.")],
+            },
+            ToolDefinition {
+                kind: ToolKind::Explain,
+                name: names[1],
+                description: "Explain an endpoint found with catalog_find.",
+                input_description: None,
+                field_descriptions: &[],
+            },
+            ToolDefinition {
+                kind: ToolKind::Call,
+                name: names[2],
+                description: "Invoke a document endpoint.",
+                input_description: None,
+                field_descriptions: &[(
+                    "body",
+                    "Use endpoint_details to inspect the request schema.",
+                )],
+            },
+            ToolDefinition {
+                kind: ToolKind::Schema,
+                name: names[3],
+                description: "Look up a document schema.",
+                input_description: None,
+                field_descriptions: &[],
+            },
+        ]
+    }
+
+    #[test]
+    fn configured_metadata_owns_names_and_preserves_input_contracts() {
+        let tools = {
+            let names = DOCUMENT_TOOL_NAMES.map(str::to_owned);
+            let mut definitions = document_tool_definitions(names.each_ref().map(String::as_str));
+            definitions.swap(0, 2);
+            ToolSet::new(&definitions).expect("valid document tool definitions")
+        };
+        let advertised = tools.list();
+        let names: Vec<_> = advertised.iter().map(|tool| tool.name.as_ref()).collect();
+        assert_eq!(
+            names,
+            [
+                "run_request",
+                "endpoint_details",
+                "catalog_find",
+                "type_details"
+            ]
+        );
+        let metadata = serde_json::to_value(advertised).expect("serializable tool metadata");
+        assert!(!metadata.to_string().to_lowercase().contains("onshape"));
+        assert_eq!(
+            metadata[2]["description"],
+            "Find document endpoints, then use endpoint_details."
+        );
+        assert_eq!(
+            metadata[2]["inputSchema"]["description"],
+            "Document catalog search."
+        );
+        assert_eq!(
+            metadata[2]["inputSchema"]["properties"]["query"]["description"],
+            "Words to find in the document catalog."
+        );
+        assert_eq!(
+            metadata[2]["inputSchema"]["properties"]["query"]["type"],
+            "string"
+        );
+        assert_eq!(metadata[2]["inputSchema"]["required"], json!(["query"]));
+        assert_eq!(metadata[0]["inputSchema"]["required"], json!(["endpoint"]));
+        assert_eq!(
+            metadata[0]["inputSchema"]["properties"]["body"]["description"],
+            "Use endpoint_details to inspect the request schema."
+        );
+        for (index, tool) in metadata.as_array().expect("tool list").iter().enumerate() {
+            assert_eq!(tool["annotations"]["readOnlyHint"], index != 0);
+            assert_eq!(tool["annotations"]["destructiveHint"], index == 0);
+        }
+        assert_eq!(tools.resolve("onshape_api_call"), None);
+        assert_eq!(tools.resolve("unknown_tool"), None);
+    }
+
+    #[test]
+    fn configured_names_dispatch_all_four_operations() {
+        let tools = ToolSet::new(&document_tool_definitions(DOCUMENT_TOOL_NAMES))
+            .expect("valid document tool definitions");
+        let spec = document_store_spec();
+        let host_policy = policy(|_, _, _| Ok(()));
+        for (name, arguments, expected_field, expected_value) in [
+            (
+                "catalog_find",
+                json!({ "query": "createDocument" }),
+                "/0/operation_id",
+                "createDocument",
+            ),
+            (
+                "endpoint_details",
+                json!({ "endpoint": "createDocument" }),
+                "/path",
+                "/documents",
+            ),
+            (
+                "type_details",
+                json!({ "schema": "Document" }),
+                "/name",
+                "Document",
+            ),
+        ] {
+            let kind = tools.resolve(name).expect("configured tool name");
+            let Effect::Done(Ok(result)) =
+                dispatch(kind, arguments.as_object(), &spec, &host_policy)
+            else {
+                panic!("catalog tools should complete without I/O");
+            };
+            assert_ne!(result.is_error, Some(true));
+            let text = &result.content[0].as_text().expect("JSON text content").text;
+            let value: Value = serde_json::from_str(text).expect("valid JSON");
+            assert_eq!(value.pointer(expected_field), Some(&json!(expected_value)));
+        }
+
+        let arguments = json!({ "endpoint": "createDocument", "body": { "title": "Example" } });
+        let kind = tools.resolve("run_request").expect("configured call tool");
+        let Effect::ApiRequest { request, .. } =
+            dispatch(kind, arguments.as_object(), &spec, &host_policy)
+        else {
+            panic!("the configured call tool should prepare an API request");
+        };
+        assert_eq!(request.method, http::Method::POST);
+        assert_eq!(request.path, "/documents");
+        assert_eq!(
+            request.body.as_ref().and_then(RequestBody::as_json),
+            Some(&json!({ "title": "Example" }))
+        );
+    }
+
+    #[test]
+    fn tool_configuration_rejects_ambiguous_or_blank_names() {
+        let definitions = document_tool_definitions(DOCUMENT_TOOL_NAMES);
+        let mut duplicate_name = definitions;
+        duplicate_name[1].name = duplicate_name[0].name;
+        assert_eq!(
+            ToolSet::new(&duplicate_name).expect_err("duplicate name"),
+            "duplicate API tool name: catalog_find"
+        );
+
+        let mut duplicate_kind = definitions;
+        duplicate_kind[1].kind = ToolKind::Search;
+        assert_eq!(
+            ToolSet::new(&duplicate_kind).expect_err("duplicate operation leaves one missing"),
+            "duplicate API tool kind: Search"
+        );
+
+        for name in ["", " \t\n"] {
+            let mut blank_name = definitions;
+            blank_name[1].name = name;
+            assert_eq!(
+                ToolSet::new(&blank_name).expect_err("blank name"),
+                "API tool name must not be blank"
+            );
+        }
+    }
+
+    #[test]
+    fn tool_configuration_rejects_names_outside_mcp_guidance() {
+        let too_long = "a".repeat(129);
+        for name in [
+            " tool",
+            "tool ",
+            "two words",
+            "tool\tname",
+            "tool\nname",
+            "tool/name",
+            "tool,name",
+            "tool:name",
+            "café",
+            "\0name",
+            &too_long,
+        ] {
+            let mut definitions = document_tool_definitions(DOCUMENT_TOOL_NAMES);
+            definitions[0].name = name;
+            assert_eq!(
+                ToolSet::new(&definitions).expect_err("invalid tool name"),
+                format!(
+                    "invalid API tool name {name:?}: expected 1-128 ASCII letters, digits, underscores, hyphens, or periods"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn tool_configuration_accepts_mcp_name_boundaries_and_distinct_case() {
+        let longest = "a".repeat(128);
+        let names = ["a", "A", "Admin.tools-v2_0", &longest];
+        let tools = ToolSet::new(&document_tool_definitions(names))
+            .expect("valid names at the length boundaries and with all allowed character classes");
+        for ((name, kind), advertised) in names
+            .into_iter()
+            .zip([
+                ToolKind::Search,
+                ToolKind::Explain,
+                ToolKind::Call,
+                ToolKind::Schema,
+            ])
+            .zip(tools.list())
+        {
+            assert_eq!(advertised.name, name);
+            assert_eq!(tools.resolve(name), Some(kind));
+        }
+    }
+
+    #[test]
+    fn tool_configuration_rejects_unknown_description_fields() {
+        let mut definitions = document_tool_definitions(DOCUMENT_TOOL_NAMES);
+        definitions[0].field_descriptions = &[("missing_field", "Unknown field name.")];
+        assert_eq!(
+            ToolSet::new(&definitions).expect_err("invalid description override"),
+            "invalid API input description field \"missing_field\" for Search"
+        );
+    }
+
     fn file_upload_arguments() -> Value {
         json!({
             "endpoint": "createDocument",
@@ -452,6 +702,14 @@ mod tests {
                 "openapi": "3.0.1",
                 "info": { "title": "Document Store", "version": "1.0" },
                 "servers": [{ "url": "https://documents.example.com" }],
+                "components": {
+                    "schemas": {
+                        "Document": {
+                            "type": "object",
+                            "properties": { "title": { "type": "string" } }
+                        }
+                    }
+                },
                 "paths": {
                     "/documents": {
                         "post": {

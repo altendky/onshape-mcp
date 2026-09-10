@@ -1,0 +1,184 @@
+[
+  {
+    "name": "onshape_api_search",
+    "description": "Find Onshape API endpoints by keyword or filter. Returns brief summaries (endpoint ID, method, path template, one-line description). Use this to discover available endpoints before calling onshape_api_explain for details.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Input schema for `onshape_api_search`.",
+      "properties": {
+        "method": {
+          "description": "Filter by HTTP method (e.g., \"GET\", \"POST\", \"DELETE\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "description": "Free-text search query. Matches against endpoint names, paths,\ndescriptions, and tags. Leave empty to list all endpoints.",
+          "type": "string"
+        },
+        "tag": {
+          "description": "Filter by tag name (e.g., \"Document\", \"Assembly\", \"`PartStudio`\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "ApiSearchInput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "onshape_api_explain",
+    "description": "Get full details for a specific Onshape API endpoint. Returns parameter schemas, types, required/optional flags, request/response schemas. Use the endpoint's operationId from onshape_api_search results.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Input schema for `onshape_api_explain`.",
+      "properties": {
+        "endpoint": {
+          "description": "The operation ID of the endpoint to explain (from search results).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint"
+      ],
+      "title": "ApiExplainInput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "onshape_api_call",
+    "description": "Invoke an Onshape API endpoint. Provide the operationId and structured parameters (path_params, query_params, body). Path parameters are named fields (e.g., {\"did\": \"abc123\"}), not baked into a URL string. For endpoints that accept file content (e.g., file uploads), use `file_refs` to reference local files instead of inlining content in the body — the server reads them directly. Returns the API response.",
+    "inputSchema": {
+      "$defs": {
+        "FileEncoding": {
+          "description": "How file content should be encoded when injected into a request body.\n\nThe encoding determines how raw file bytes are converted for the target\nfield. The appropriate encoding depends on the field type:\n\n- **Text fields** (JSON string values, multipart text parts): use [`TextUtf8`](FileEncoding::TextUtf8)\n- **Binary fields** (multipart `format: binary` parts): use [`RawBytes`](FileEncoding::RawBytes)\n- **Embedded binary in JSON**: use [`Base64`](FileEncoding::Base64)",
+          "oneOf": [
+            {
+              "const": "text_utf8",
+              "description": "Read the file as UTF-8 text.\n\nFor JSON bodies: injected as a JSON string value.\nFor multipart bodies: injected as a text form field.\n\nReturns an error if the file is not valid UTF-8.",
+              "type": "string"
+            },
+            {
+              "const": "base64",
+              "description": "Read the file as raw bytes and base64-encode.\n\nFor JSON bodies: injected as a base64-encoded JSON string value.\nFor multipart bodies: injected as a text form field containing base64.",
+              "type": "string"
+            },
+            {
+              "const": "raw_bytes",
+              "description": "Read the file as raw bytes (no encoding).\n\nFor multipart bodies: injected as a binary form field (`BinaryField`).\nFor JSON bodies: returns an error (raw bytes cannot be embedded in JSON).",
+              "type": "string"
+            }
+          ]
+        },
+        "FileReference": {
+          "description": "A reference to a file whose content should be injected into a request body field.\n\nInstead of the LLM reading a file into its context and inlining the content,\nthe server reads the file at execution time. This keeps large file content\nout of the LLM's context window.",
+          "properties": {
+            "encoding": {
+              "$ref": "#/$defs/FileEncoding",
+              "description": "How to encode the file content for the target field."
+            },
+            "field": {
+              "description": "The body field name to populate with the file content.\n\nFor JSON bodies, this is a top-level key in the JSON object.\nFor multipart bodies, this is the form field name.",
+              "type": "string"
+            },
+            "path": {
+              "description": "File system path to read. Must not be empty or contain `..` segments.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "field",
+            "encoding"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Input schema for `onshape_api_call`.",
+      "properties": {
+        "body": {
+          "description": "JSON value for the request body (for POST/PUT/PATCH endpoints).\nLegacy serialized JSON strings are also accepted for compatibility. Use\n`onshape_api_explain` to see the expected schema for each endpoint."
+        },
+        "endpoint": {
+          "description": "The operation ID of the endpoint to call.",
+          "type": "string"
+        },
+        "file_refs": {
+          "description": "File references for fields whose content should be read from disk.\n\nEach reference specifies a file path, a body field name, and an encoding.\nThe server reads the files and injects their content into the request body\nafter building the request. Fields listed here should be omitted from `body`.\n\nExample: to upload a file via `uploadFileCreateElement`, pass the metadata\nfields in `body` and use `file_refs` for the binary content:\n`body: {\"formatName\": \"PARASOLID\"}`,\n`file_refs: [{\"path\": \"/tmp/part.x_t\", \"field\": \"file\", \"encoding\": \"raw_bytes\"}]`",
+          "items": {
+            "$ref": "#/$defs/FileReference"
+          },
+          "type": "array"
+        },
+        "header_params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Header parameters (e.g., `{\"Accept\": \"application/octet-stream\"}`).",
+          "type": "object"
+        },
+        "path_params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Path parameters (e.g., `{\"did\": \"abc123\", \"wid\": \"def456\"}`).",
+          "type": "object"
+        },
+        "query_params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Query parameters (e.g., `{\"q\": \"robot arm\", \"limit\": \"10\"}`).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "endpoint"
+      ],
+      "title": "ApiCallInput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "onshape_api_schema",
+    "description": "Look up an Onshape API schema by name. Returns the schema's properties (merged with inherited parent properties), discriminator subtypes if polymorphic, and parent type. Use schema names from x-bttype-options annotations in onshape_api_explain results to drill into specific types.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Input schema for `onshape_api_schema`.",
+      "properties": {
+        "schema": {
+          "description": "The schema name to look up (e.g., `\"BTMParameterEnum-145\"` or\n`\"BTFeatureDefinitionCall-1406\"`). Use schema names from\n`x-bttype-options` annotations in `onshape_api_explain` results,\nor from the `subtypes` field in previous `onshape_api_schema` results.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema"
+      ],
+      "title": "ApiSchemaInput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  }
+]
