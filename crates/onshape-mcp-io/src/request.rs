@@ -3,6 +3,37 @@
 use onshape_client_core::request as client;
 use onshape_openapi::request as openapi;
 
+use super::{ApiState, McpError, ValidationState, api};
+
+/// Execute requests with Onshape authentication and update host validation state.
+pub struct Executor<'a> {
+    pub state: &'a mut ApiState,
+    pub validation: &'a tokio::sync::Mutex<ValidationState>,
+}
+
+impl api::RequestExecutor for Executor<'_> {
+    async fn execute(
+        &mut self,
+        request: openapi::ApiRequest,
+    ) -> Result<api::RequestOutcome, McpError> {
+        match self.state {
+            ApiState::NotConfigured { .. } => {
+                return Ok(api::RequestOutcome::ToolResult(
+                    super::not_configured_error(),
+                ));
+            }
+            ApiState::OAuthPending(_) => {
+                return Ok(api::RequestOutcome::ToolResult(super::oauth_pending_error()));
+            }
+            ApiState::Basic(_) | ApiState::OAuth(_) | ApiState::HttpOAuth(_) => {}
+        }
+        let request = into_onshape_request(request);
+        let response = super::execute_raw_api_request(self.state, &request).await?;
+        super::update_implicit_validation(self.validation, response.status).await;
+        Ok(api::RequestOutcome::Response(response))
+    }
+}
+
 /// Move request data into the Onshape client representation without serialization.
 pub fn into_onshape_request(request: openapi::ApiRequest) -> client::ApiRequest {
     let openapi::ApiRequest {

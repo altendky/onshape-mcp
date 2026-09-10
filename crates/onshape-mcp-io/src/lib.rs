@@ -4,12 +4,16 @@
 //! It delegates all tool logic to `onshape-mcp-core` and HTTP execution to
 //! `onshape-client-io`.
 
+pub mod api;
 pub mod config;
 pub mod login;
 pub mod oauth;
 pub mod oauth_server;
 mod request;
 pub mod watcher;
+
+#[cfg(test)]
+mod api_adapter_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,6 +48,7 @@ use onshape_mcp_core::tools::{self, IoResult, SideEffect, ToolEffect};
 use onshape_openapi::OpenApiSpec;
 
 use crate::oauth::{McpOAuthTokenFile, McpOAuthTokenMetadata, default_token_file_path};
+use api::{RequestExecutor as _, Response as RawResponse};
 
 /// The embedded Onshape `OpenAPI` specification JSON.
 ///
@@ -656,9 +661,8 @@ impl OnshapeMcpServer {
 /// Handles `Done`, `ApiRequest`, `OAuthLoginFlow`, `WriteFiles`, and `ReadFiles`
 /// variants. Used by both stdio and HTTP modes.
 ///
-/// After executing an `ApiRequest`, `WriteFiles`, or `ReadFiles` effect, calls
-/// [`tools::resume()`] with the continuation and the I/O result to get the
-/// next effect, then loops.
+/// Generic API continuations are handed to [`api::run`]. Host continuations
+/// resume through [`tools::resume()`], applying any Onshape side effects.
 ///
 /// `allow_file_writes` and `allow_file_reads` control whether file I/O effects
 /// are executed. The stdio transport passes `true` for both (local, single-user
@@ -673,20 +677,32 @@ async fn dispatch_tool_effect(
     allow_file_writes: bool,
     allow_file_reads: bool,
 ) -> Result<CallToolResult, McpError> {
+    let file_reads = if allow_file_reads {
+        api::FileReadPolicy::Allow
+    } else {
+        api::FileReadPolicy::Deny(
+            "File read operations are not supported over the HTTP transport. \
+             File references in onshape_api_call require the stdio transport \
+             (local process).",
+        )
+    };
     let mut current = initial_effect;
     loop {
-        // For variants that need API execution, check if credentials
-        // are available. NotConfigured and OAuthPending cannot execute
-        // API requests, so return informative tool-level errors.
-        if matches!(current, ToolEffect::ApiRequest { .. }) {
-            match state {
-                ApiState::NotConfigured { .. } => return Ok(not_configured_error()),
-                ApiState::OAuthPending(_) => return Ok(oauth_pending_error()),
-                ApiState::Basic(_) | ApiState::OAuth(_) | ApiState::HttpOAuth(_) => {}
+        let mut executor = request::Executor { state, validation };
+        let host_effect = match current.into_api_effect() {
+            Ok(effect) => {
+                return api::run(
+                    effect,
+                    &tools::ONSHAPE_API_POLICY,
+                    &mut executor,
+                    file_reads,
+                )
+                .await;
             }
-        }
+            Err(effect) => effect,
+        };
 
-        match current {
+        match host_effect {
             ToolEffect::Done(r) => return r,
             ToolEffect::OAuthLoginFlow { mode } => {
                 // In HTTP mode, login_state is None — return informative message.
@@ -704,25 +720,18 @@ async fn dispatch_tool_effect(
             ToolEffect::ApiRequest {
                 request: api_req,
                 continuation,
-            } => {
-                let api_req = request::into_onshape_request(api_req);
-                let raw = execute_raw_api_request(state, &api_req).await;
-                match raw {
-                    Ok(raw) => {
-                        update_implicit_validation(validation, raw.status).await;
+            } => match executor.execute(api_req).await? {
+                api::RequestOutcome::Response(raw) => {
+                    let (next_effect, side_effects) = resume_with_raw_response(continuation, &raw);
 
-                        let (next_effect, side_effects) =
-                            resume_with_raw_response(continuation, &raw);
-
-                        for effect in side_effects {
-                            apply_side_effect(validation, effect).await;
-                        }
-
-                        current = next_effect;
+                    for effect in side_effects {
+                        apply_side_effect(validation, effect).await;
                     }
-                    Err(e) => return Err(e),
+
+                    current = next_effect;
                 }
-            }
+                api::RequestOutcome::ToolResult(result) => return Ok(result),
+            },
             ToolEffect::WriteFiles {
                 files,
                 continuation,
@@ -751,16 +760,10 @@ async fn dispatch_tool_effect(
                 reads,
                 continuation,
             } => {
-                if !allow_file_reads {
-                    return Ok(CallToolResult::error(vec![
-                        rmcp::model::ContentBlock::text(
-                            "File read operations are not supported over the HTTP transport. \
-                         File references in onshape_api_call require the stdio transport \
-                         (local process).",
-                        ),
-                    ]));
-                }
-                let results = read_files(&reads).await;
+                let results = match api::read_files(&reads, &file_reads).await {
+                    Ok(results) => results,
+                    Err(result) => return Ok(result),
+                };
 
                 let (next_effect, side_effects) =
                     tools::resume(continuation, IoResult::FileReadResults(&results));
@@ -815,44 +818,8 @@ async fn write_files(files: &[tools::FileWrite]) -> Vec<tools::FileWriteResult> 
 }
 
 // ============================================================================
-// File Read Execution
-// ============================================================================
-
-/// Read files from disk as requested by [`ToolEffect::ReadFiles`].
-///
-/// Returns one [`tools::FileReadResult`] per input file.
-async fn read_files(reads: &[tools::FileRead]) -> Vec<tools::FileReadResult> {
-    let mut results = Vec::with_capacity(reads.len());
-    for read in reads {
-        match tokio::fs::read(&read.path).await {
-            Ok(data) => {
-                results.push(tools::FileReadResult::Success {
-                    path: read.path.clone(),
-                    data,
-                });
-            }
-            Err(e) => {
-                results.push(tools::FileReadResult::Error {
-                    path: read.path.clone(),
-                    message: format!("failed to read file: {e}"),
-                });
-            }
-        }
-    }
-    results
-}
-
-// ============================================================================
 // API Request Execution
 // ============================================================================
-
-/// Result of executing a raw API request: HTTP status code, headers, and bytes.
-#[derive(Debug)]
-struct RawResponse {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
-}
 
 fn raw_response_from_api_response(response: ApiResponse) -> RawResponse {
     RawResponse {

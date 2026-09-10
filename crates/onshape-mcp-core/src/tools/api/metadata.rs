@@ -80,11 +80,13 @@ impl ToolSet {
     }
 
     /// Return the advertised tools in their configured order.
+    #[must_use]
     pub fn list(&self) -> Vec<Tool> {
         self.entries.iter().map(|(_, tool)| tool.clone()).collect()
     }
 
     /// Resolve an advertised name to its operation, leaving other names to the host.
+    #[must_use]
     pub fn resolve(&self, name: &str) -> Option<ToolKind> {
         self.entries
             .iter()

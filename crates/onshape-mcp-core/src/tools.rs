@@ -4,7 +4,7 @@
 //! Uses rmcp types directly to avoid unnecessary type conversions.
 //!
 //! Onshape request validation and diagnostic interpretation live in the private
-//! `onshape` module. The private `api` module handles `OpenAPI` search, explain,
+//! `onshape` module. The `api` module handles `OpenAPI` search, explain,
 //! schema lookup, and execution through its own effects and continuations.
 //! The Onshape adapter supplies validation and diagnostic policy and translates
 //! generic effects into the public dispatcher types used by the I/O layer.
@@ -19,8 +19,10 @@
 //! closures. After the I/O layer executes an effect, it calls [`resume()`] with
 //! the continuation and an [`IoResult`] to get the next effect.
 
-mod api;
+pub mod api;
 mod onshape;
+
+pub use onshape::API_POLICY as ONSHAPE_API_POLICY;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -174,6 +176,37 @@ pub enum ToolEffect {
         /// What to do with the read results.
         continuation: Continuation,
     },
+}
+
+impl ToolEffect {
+    /// Recover a generic API effect from the compatible Onshape representation.
+    ///
+    /// The I/O layer uses this to hand API continuations to the generic runner
+    /// while leaving authentication and screenshot continuations with the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns the original effect when it requires the Onshape dispatcher.
+    #[allow(clippy::result_large_err)] // Both branches move the existing effect without allocation.
+    pub fn into_api_effect(self) -> Result<api::Effect, Self> {
+        match self {
+            Self::ApiRequest {
+                request,
+                continuation: Continuation::FormatApiResponse,
+            } => Ok(api::Effect::ApiRequest {
+                request,
+                continuation: api::Continuation::FormatApiResponse,
+            }),
+            Self::ReadFiles {
+                reads,
+                continuation: Continuation::InjectFilesIntoRequest { request, file_refs },
+            } => Ok(api::Effect::ReadFiles {
+                reads,
+                continuation: api::Continuation::InjectFilesIntoRequest { request, file_refs },
+            }),
+            effect => Err(effect),
+        }
+    }
 }
 
 /// Plain-data continuation describing how to process an I/O result.

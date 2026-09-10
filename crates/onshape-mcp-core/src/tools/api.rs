@@ -9,13 +9,12 @@ mod input;
 mod metadata;
 
 pub use input::{ApiCallInput, ApiExplainInput, ApiSchemaInput, ApiSearchInput};
-pub(super) use metadata::{ToolDefinition, ToolKind, ToolSet};
+pub use metadata::{ToolDefinition, ToolKind, ToolSet};
 
 use execution::tool_input_error;
-pub(super) use execution::{
-    Continuation, Effect, IoResult, Policy, process_api_response, resume, validate_file_path,
-};
+pub use execution::{Continuation, Effect, IoResult, Policy, resume};
 pub use execution::{FileEncoding, FileRead, FileReadResult, FileReference};
+pub(super) use execution::{process_api_response, validate_file_path};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -30,7 +29,8 @@ use rmcp::{
 use serde_json::{Map, Value};
 
 /// Dispatch a resolved API tool operation using the supplied host policy.
-pub(super) fn dispatch(
+#[must_use]
+pub fn dispatch(
     kind: ToolKind,
     arguments: Option<&Map<String, Value>>,
     spec: &OpenApiSpec,
