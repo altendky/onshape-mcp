@@ -1,6 +1,6 @@
 //! Generic API effects, file injection, and response formatting.
 //!
-//! The host supplies synchronous validation and diagnostic policy on each call.
+//! The host supplies synchronous presentation, validation, and diagnostic policy.
 //! Effects and continuations contain only data, with no authentication or I/O.
 
 use std::collections::HashMap;
@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use base64::Engine;
 use onshape_openapi::request::{ApiRequest, BinaryField, MultipartBody, RequestBody};
+use onshape_openapi::{EndpointDetail, OpenApiSpec, SchemaDetail};
 use rmcp::{
     ErrorData,
     model::{CallToolResult, ContentBlock, ErrorCode},
@@ -21,6 +22,10 @@ pub type BodyValidator = fn(&str, Option<&Value>, &[FileReference]) -> Result<()
 
 /// Synchronous host policy, supplied separately from plain-data continuations.
 pub struct Policy {
+    /// Customize endpoint details before serialization without changing the spec.
+    pub present_endpoint: fn(&mut EndpointDetail, &OpenApiSpec),
+    /// Customize component schema details before serialization without changing the spec.
+    pub present_schema: fn(&mut SchemaDetail, &OpenApiSpec),
     /// Validate the decoded body before generic file and request validation.
     pub validate_body: BodyValidator,
     /// Validate the final request after file contents have been injected.

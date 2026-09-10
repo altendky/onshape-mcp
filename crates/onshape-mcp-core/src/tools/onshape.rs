@@ -1,9 +1,10 @@
-//! Onshape request validation and diagnostic interpretation for MCP tools.
+//! Onshape schema presentation, request validation, and diagnostics for MCP tools.
 //!
 //! This adapter supplies policy to generic API execution and translates its
 //! effects into the public Onshape dispatcher types. All helpers operate on data.
 
 mod metadata;
+mod schema;
 
 pub use metadata::api_tools;
 
@@ -14,8 +15,10 @@ use serde_json::{Map, Value};
 
 use super::{Continuation, FileReference, ToolEffect, api};
 
-/// Onshape policy for request preparation, file injection, and API errors.
+/// Onshape policy for schema presentation, request preparation, and API errors.
 pub const API_POLICY: api::Policy = api::Policy {
+    present_endpoint: schema::present_endpoint,
+    present_schema: schema::present_schema,
     validate_body: validate_call_body,
     validate_request: validate_injected_request,
     append_error_details: append_api_error_details,

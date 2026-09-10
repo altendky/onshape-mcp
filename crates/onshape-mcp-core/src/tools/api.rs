@@ -38,9 +38,9 @@ pub fn dispatch(
 ) -> Effect {
     match kind {
         ToolKind::Search => Effect::Done(search(arguments, spec)),
-        ToolKind::Explain => Effect::Done(explain(arguments, spec)),
+        ToolKind::Explain => Effect::Done(explain(arguments, spec, policy)),
         ToolKind::Call => call(arguments, spec, policy),
-        ToolKind::Schema => Effect::Done(schema(arguments, spec)),
+        ToolKind::Schema => Effect::Done(schema(arguments, spec, policy)),
     }
 }
 
@@ -72,12 +72,13 @@ pub(super) fn search(
 pub(super) fn explain(
     arguments: Option<&Map<String, Value>>,
     spec: &OpenApiSpec,
+    policy: &Policy,
 ) -> Result<CallToolResult, ErrorData> {
     let input: ApiExplainInput = match parse_arguments(arguments) {
         Ok(input) => input,
         Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e.message)])),
     };
-    let detail = match spec.explain(&input.endpoint) {
+    let mut detail = match spec.explain(&input.endpoint) {
         Ok(d) => d,
         Err(e) => {
             return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
@@ -86,6 +87,7 @@ pub(super) fn explain(
         }
     };
 
+    (policy.present_endpoint)(&mut detail, spec);
     let content = ContentBlock::json(&detail).map_err(|e| {
         ErrorData::new(
             ErrorCode::INTERNAL_ERROR,
@@ -223,12 +225,13 @@ pub(super) fn call(
 pub(super) fn schema(
     arguments: Option<&Map<String, Value>>,
     spec: &OpenApiSpec,
+    policy: &Policy,
 ) -> Result<CallToolResult, ErrorData> {
     let input: ApiSchemaInput = match parse_arguments(arguments) {
         Ok(input) => input,
         Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e.message)])),
     };
-    let detail = match spec.lookup_schema(&input.schema) {
+    let mut detail = match spec.lookup_schema(&input.schema) {
         Ok(d) => d,
         Err(e) => {
             return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
@@ -237,6 +240,7 @@ pub(super) fn schema(
         }
     };
 
+    (policy.present_schema)(&mut detail, spec);
     let content = ContentBlock::json(&detail).map_err(|e| {
         ErrorData::new(
             ErrorCode::INTERNAL_ERROR,
@@ -285,6 +289,8 @@ mod tests {
 
     fn policy(validate_body: BodyValidator) -> Policy {
         Policy {
+            present_endpoint: |_, _| {},
+            present_schema: |_, _| {},
             validate_body,
             validate_request: |_| Ok(()),
             append_error_details: |_, _| {},

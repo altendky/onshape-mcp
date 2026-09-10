@@ -33,6 +33,12 @@ Onshape's executor handles credentials, token refresh, and validation updates;
 its dispatcher retains auth and screenshot continuations. Existing public
 Onshape effects are adapted to the generic runner at the I/O boundary.
 
+`onshape-openapi` returns schema details with source metadata and standard
+discriminator information. It does not add presentation annotations. Generic
+explain and schema tools apply the host's presentation callbacks before
+serialization; the Onshape adapter adds `x-bttype-options` through those callbacks
+without changing the parsed specification.
+
 See [Data Flow](data-flow.md) for sequence diagrams showing how requests,
 authentication, and token refresh flow through each operating mode.
 
