@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 use super::*;
 
 const POLICY: Policy = Policy {
+    present_endpoint: |_, _| {},
+    present_schema: |_, _| {},
     validate_body: |_, _, _| Ok(()),
     validate_request: |_| Ok(()),
     append_error_details: |_, _| {},

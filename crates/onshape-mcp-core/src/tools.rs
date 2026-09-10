@@ -3,11 +3,11 @@
 //! This module contains all tool metadata and pure business logic for tool execution.
 //! Uses rmcp types directly to avoid unnecessary type conversions.
 //!
-//! Onshape request validation and diagnostic interpretation live in the private
-//! `onshape` module. The `api` module handles `OpenAPI` search, explain,
+//! Onshape schema presentation, request validation, and diagnostics live in
+//! the private `onshape` module. The `api` module handles `OpenAPI` search, explain,
 //! schema lookup, and execution through its own effects and continuations.
-//! The Onshape adapter supplies validation and diagnostic policy and translates
-//! generic effects into the public dispatcher types used by the I/O layer.
+//! The Onshape adapter supplies this policy and translates generic effects into
+//! the public dispatcher types used by the I/O layer.
 //!
 //! ## Effect Pattern
 //!

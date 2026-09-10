@@ -25,6 +25,8 @@ pub const BINARY_CONTENT: &[u8] = &[0, 255, 10, 13, 128];
 pub const TOOL_NAMES: [&str; 4] = ["media.find", "media.describe", "media.send", "media.type"];
 
 const POLICY: Policy = Policy {
+    present_endpoint: |_, _| {},
+    present_schema: |_, _| {},
     validate_body: |_, _, _| Ok(()),
     validate_request: |_| Ok(()),
     append_error_details: |_, _| {},

@@ -1,15 +1,13 @@
 //! `OpenAPI` spec parsing, searching, and request building.
 //!
-//! This crate provides pure (sans-IO) operations over an Onshape `OpenAPI` specification.
+//! This crate provides pure (sans-IO) operations over an `OpenAPI` specification.
 //! The spec JSON content is provided externally; this crate never performs I/O.
 //!
 //! Standard component schema inspection lives in the internal `schema` module.
-//! The public API adds Onshape presentation through the `onshape` module when
-//! returning explanations; parsed schemas retain their original metadata.
+//! Explanations retain source schema metadata without adding host annotations.
 //! The [`request`] module owns API-neutral request data; applications adapt it
 //! to their HTTP executor at the I/O boundary.
 
-mod onshape;
 pub mod request;
 mod schema;
 
@@ -405,6 +403,7 @@ impl OpenApiSpec {
     }
 
     /// Get full details for a specific endpoint by operation ID.
+    /// Schema metadata is returned without host-specific presentation annotations.
     ///
     /// # Errors
     ///
@@ -441,15 +440,9 @@ impl OpenApiSpec {
                 })
                 .collect(),
             has_request_body: ep.has_request_body,
-            request_body_schema: ep
-                .request_body_schema
-                .as_ref()
-                .map(|schema| onshape::annotate_schema_properties(schema, &self.schemas)),
+            request_body_schema: ep.request_body_schema.clone(),
             request_body_content_type: ep.request_body_content_type.clone(),
-            response_schema: ep
-                .response_schema
-                .as_ref()
-                .map(|schema| onshape::annotate_schema_properties(schema, &self.schemas)),
+            response_schema: ep.response_schema.clone(),
             response_content_types: ep.response_content_types.clone(),
         })
     }
@@ -650,16 +643,23 @@ impl OpenApiSpec {
     /// Look up a component schema by name and return its detail.
     ///
     /// Merges parent properties (from `allOf.$ref`) into a flat `properties`
-    /// object, annotates polymorphic `$ref` properties with `x-bttype-options`,
-    /// and includes the discriminator subtypes if the schema is polymorphic.
+    /// object and includes the discriminator subtypes if the schema is polymorphic.
+    /// Source metadata is retained without adding host presentation annotations.
     ///
     /// # Errors
     ///
     /// Returns an error if the schema name is not found in the spec's components.
     pub fn lookup_schema(&self, name: &str) -> Result<SchemaDetail, OpenApiError> {
-        let mut detail = self.schemas.lookup(name)?;
-        detail.properties = onshape::annotate_discriminators(&detail.properties, &self.schemas);
-        Ok(detail)
+        self.schemas.lookup(name)
+    }
+
+    /// Return discriminator mapping keys for a local component schema reference.
+    ///
+    /// Returns `None` for unresolved or non-component references and for absent
+    /// or empty mappings. Schema lookup retains explicitly empty subtype lists.
+    #[must_use]
+    pub fn discriminator_options(&self, reference: &str) -> Option<Vec<String>> {
+        self.schemas.discriminator_options(reference)
     }
 
     // ========================================================================
@@ -952,14 +952,15 @@ const fn json_type_name(value: &Value) -> &'static str {
 mod tests {
     use super::*;
 
-    /// Check that Onshape presentation leaves standard schema metadata intact.
+    /// Public explanations preserve source metadata without adding annotations.
     #[test]
-    fn explanations_add_annotations_without_changing_standard_schema_data() {
+    fn explanations_preserve_standard_schema_data_without_annotations() {
         let pet_ref = serde_json::json!({ "$ref": "#/components/schemas/Pet" });
         let properties = serde_json::json!({
             "pet": pet_ref,
             "pets": { "type": "array", "items": pet_ref },
-            "label": { "type": "string", "x-example": "retained" }
+            "label": { "type": "string", "x-example": "retained" },
+            "sourceAnnotation": { "type": "string", "x-bttype-options": ["retained"] }
         });
         let envelope = serde_json::json!({ "allOf": [{ "properties": properties }] });
         let media = serde_json::json!({
@@ -995,27 +996,22 @@ mod tests {
         }))
         .expect("should parse");
 
-        let pet = spec.schemas.lookup("Pet").expect("should find pet");
+        let pet = spec.lookup_schema("Pet").expect("should find pet");
         assert_eq!(pet.discriminator_property.as_deref(), Some("kind"));
         assert_eq!(pet.subtypes, Some(vec!["cat".to_string()]));
 
-        let mut annotated = envelope.clone();
-        annotated["allOf"][0]["properties"]["pet"]["x-bttype-options"] = serde_json::json!(["cat"]);
-        annotated["allOf"][0]["properties"]["pets"]["items"]["x-bttype-options"] =
-            serde_json::json!(["cat"]);
-
         let detail = spec.explain("createPet").expect("should find endpoint");
-        assert_eq!(detail.request_body_schema.as_ref(), Some(&annotated));
-        assert_eq!(detail.response_schema.as_ref(), Some(&annotated));
+        assert_eq!(detail.request_body_schema.as_ref(), Some(&envelope));
+        assert_eq!(detail.response_schema.as_ref(), Some(&envelope));
         assert_eq!(
             spec.lookup_schema("Envelope")
                 .expect("should find schema")
                 .properties,
-            annotated["allOf"][0]["properties"]
+            properties
         );
 
         // The standard catalog and parsed endpoint still contain only source
-        // metadata after the public API has produced annotated explanations.
+        // metadata after the public API has produced explanations.
         assert_eq!(
             spec.schemas
                 .lookup("Envelope")
@@ -2055,11 +2051,11 @@ mod tests {
     }
 
     // ====================================================================
-    // Discriminator Annotation Tests
+    // Discriminator Metadata Tests
     // ====================================================================
 
     #[test]
-    fn explain_annotates_discriminator_refs_in_request_body() {
+    fn explain_preserves_discriminator_refs_in_request_body() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
         let detail = spec.explain("addFeature").expect("should find");
 
@@ -2070,37 +2066,43 @@ mod tests {
 
         // The "feature" property refs BTMFeature-134 which has a discriminator.
         let feature = props.get("feature").expect("should have feature property");
-        let options = feature
-            .get("x-bttype-options")
-            .expect("should have x-bttype-options annotation");
-        let options_arr = options.as_array().expect("should be an array");
-        assert!(options_arr.len() >= 2);
-        assert!(options_arr.contains(&Value::String("BTMSketch-151".to_string())));
-        assert!(options_arr.contains(&Value::String("BTMFeatureInvalid-1031".to_string())));
+        assert_eq!(
+            feature,
+            &serde_json::json!({"$ref": "#/components/schemas/BTMFeature-134"})
+        );
+        let options = spec
+            .discriminator_options("#/components/schemas/BTMFeature-134")
+            .expect("standard discriminator options remain available");
+        assert_eq!(options, ["BTMFeatureInvalid-1031", "BTMSketch-151"]);
     }
 
     #[test]
-    fn explain_annotates_discriminator_refs_in_array_items() {
+    fn lookup_schema_preserves_discriminator_refs_in_array_items() {
         let spec = OpenApiSpec::from_json(test_spec_json()).expect("should parse");
 
         // BTMFeature-134 has "parameters" which is an array of BTMParameter-1 refs.
-        // When addFeature is explained, the resolved BTFeatureDefinitionCall-1406
-        // should show annotations on the feature ref... but BTMFeature-134's own
-        // properties aren't resolved in the explain output (only one level of ref
-        // resolution). So let's use lookup_schema to check array items annotation.
+        // Lookup retains the reference without adding presentation annotations.
         let detail = spec
             .lookup_schema("BTMFeature-134")
             .expect("should find schema");
         let props = detail.properties.as_object().expect("should be object");
         let params = props.get("parameters").expect("should have parameters");
         let items = params.get("items").expect("should have items");
-        let options = items
-            .get("x-bttype-options")
-            .expect("items should have x-bttype-options");
-        let options_arr = options.as_array().expect("should be an array");
-        assert!(options_arr.contains(&Value::String("BTMParameterEnum-145".to_string())));
-        assert!(options_arr.contains(&Value::String("BTMParameterQuantity-147".to_string())));
-        assert!(options_arr.contains(&Value::String("BTMParameterString-149".to_string())));
+        assert_eq!(
+            items,
+            &serde_json::json!({"$ref": "#/components/schemas/BTMParameter-1"})
+        );
+        let options = spec
+            .discriminator_options("#/components/schemas/BTMParameter-1")
+            .expect("standard discriminator options remain available");
+        assert_eq!(
+            options,
+            [
+                "BTMParameterEnum-145",
+                "BTMParameterQuantity-147",
+                "BTMParameterString-149"
+            ]
+        );
     }
 
     #[test]
@@ -2201,11 +2203,11 @@ mod tests {
         assert!(props.contains_key("feature"));
         assert!(props.contains_key("libraryVersion"));
 
-        // The "feature" property should be annotated with x-bttype-options
+        // The "feature" property retains its source reference.
         let feature = props.get("feature").expect("should have feature");
-        assert!(
-            feature.get("x-bttype-options").is_some(),
-            "feature ref should be annotated with discriminator options"
+        assert_eq!(
+            feature,
+            &serde_json::json!({"$ref": "#/components/schemas/BTMFeature-134"})
         );
     }
 

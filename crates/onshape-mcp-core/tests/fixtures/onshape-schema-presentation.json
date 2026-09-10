@@ -1,0 +1,72 @@
+{
+  "boolean": {
+    "content": [
+      {
+        "text": "{\"operation_id\":\"booleanSchema\",\"method\":\"GET\",\"path\":\"/boolean\",\"description\":\"\",\"tags\":[],\"parameters\":[],\"has_request_body\":false,\"response_schema\":true,\"response_content_types\":[\"application/json\"]}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "resultType": "complete"
+  },
+  "composed": {
+    "content": [
+      {
+        "text": "{\"name\":\"Composed\",\"properties\":{\"empty\":{\"$ref\":\"#/components/schemas/Empty\"},\"external\":{\"$ref\":\"https://example.com/pet.json\"},\"label\":{\"type\":\"string\",\"x-example\":\"retained\"},\"missing\":{\"$ref\":\"#/components/schemas/Missing\"},\"nested\":{\"properties\":{\"pet\":{\"$ref\":\"#/components/schemas/Pet\"}},\"type\":\"object\"},\"pet\":{\"$ref\":\"#/components/schemas/Pet\",\"x-bttype-options\":[\"cat\",\"dog\"]},\"pets\":{\"items\":{\"$ref\":\"#/components/schemas/Pet\",\"x-bttype-options\":[\"cat\",\"dog\"]},\"type\":\"array\"},\"plain\":{\"$ref\":\"#/components/schemas/Plain\"},\"sourceAnnotation\":{\"type\":\"string\",\"x-bttype-options\":[\"source-value\"]}}}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "resultType": "complete"
+  },
+  "empty": {
+    "content": [
+      {
+        "text": "{\"operation_id\":\"empty\",\"method\":\"GET\",\"path\":\"/empty\",\"description\":\"\",\"tags\":[],\"parameters\":[],\"has_request_body\":false}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "resultType": "complete"
+  },
+  "emptyMapping": {
+    "content": [
+      {
+        "text": "{\"name\":\"Empty\",\"properties\":{},\"subtypes\":[],\"discriminator_property\":\"kind\"}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "resultType": "complete"
+  },
+  "explain": {
+    "content": [
+      {
+        "text": "{\"operation_id\":\"createPet\",\"method\":\"POST\",\"path\":\"/pets\",\"description\":\"\",\"tags\":[],\"parameters\":[],\"has_request_body\":true,\"request_body_schema\":{\"properties\":{\"empty\":{\"$ref\":\"#/components/schemas/Empty\"},\"external\":{\"$ref\":\"https://example.com/pet.json\"},\"label\":{\"type\":\"string\",\"x-example\":\"retained\"},\"missing\":{\"$ref\":\"#/components/schemas/Missing\"},\"nested\":{\"properties\":{\"pet\":{\"$ref\":\"#/components/schemas/Pet\"}},\"type\":\"object\"},\"pet\":{\"$ref\":\"#/components/schemas/Pet\",\"x-bttype-options\":[\"cat\",\"dog\"]},\"pets\":{\"items\":{\"$ref\":\"#/components/schemas/Pet\",\"x-bttype-options\":[\"cat\",\"dog\"]},\"type\":\"array\"},\"plain\":{\"$ref\":\"#/components/schemas/Plain\"},\"sourceAnnotation\":{\"type\":\"string\",\"x-bttype-options\":[\"source-value\"]}},\"type\":\"object\"},\"request_body_content_type\":\"application/json\",\"response_schema\":{\"allOf\":[{\"properties\":{\"empty\":{\"$ref\":\"#/components/schemas/Empty\"},\"external\":{\"$ref\":\"https://example.com/pet.json\"},\"label\":{\"type\":\"string\",\"x-example\":\"retained\"},\"missing\":{\"$ref\":\"#/components/schemas/Missing\"},\"nested\":{\"properties\":{\"pet\":{\"$ref\":\"#/components/schemas/Pet\"}},\"type\":\"object\"},\"pet\":{\"$ref\":\"#/components/schemas/Pet\",\"x-bttype-options\":[\"cat\",\"dog\"]},\"pets\":{\"items\":{\"$ref\":\"#/components/schemas/Pet\",\"x-bttype-options\":[\"cat\",\"dog\"]},\"type\":\"array\"},\"plain\":{\"$ref\":\"#/components/schemas/Plain\"},\"sourceAnnotation\":{\"type\":\"string\",\"x-bttype-options\":[\"source-value\"]}}},{\"description\":\"No properties\"},true]},\"response_content_types\":[\"application/json\"]}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "resultType": "complete"
+  },
+  "schema": {
+    "content": [
+      {
+        "text": "{\"name\":\"Envelope\",\"properties\":{\"empty\":{\"$ref\":\"#/components/schemas/Empty\"},\"external\":{\"$ref\":\"https://example.com/pet.json\"},\"label\":{\"type\":\"string\",\"x-example\":\"retained\"},\"missing\":{\"$ref\":\"#/components/schemas/Missing\"},\"nested\":{\"properties\":{\"pet\":{\"$ref\":\"#/components/schemas/Pet\"}},\"type\":\"object\"},\"pet\":{\"$ref\":\"#/components/schemas/Pet\",\"x-bttype-options\":[\"cat\",\"dog\"]},\"pets\":{\"items\":{\"$ref\":\"#/components/schemas/Pet\",\"x-bttype-options\":[\"cat\",\"dog\"]},\"type\":\"array\"},\"plain\":{\"$ref\":\"#/components/schemas/Plain\"},\"sourceAnnotation\":{\"type\":\"string\",\"x-bttype-options\":[\"source-value\"]}}}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "resultType": "complete"
+  },
+  "subtypes": {
+    "content": [
+      {
+        "text": "{\"name\":\"Pet\",\"properties\":{\"kind\":{\"type\":\"string\"}},\"subtypes\":[\"cat\",\"dog\"],\"discriminator_property\":\"kind\"}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "resultType": "complete"
+  }
+}
