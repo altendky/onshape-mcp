@@ -26,6 +26,13 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+Generic API execution is split between `onshape_mcp_core::tools::api`, which
+produces and resumes plain-data effects, and `onshape_mcp_io::api`, which runs
+those effects. The runner accepts a host request executor and file-read policy.
+Onshape's executor handles credentials, token refresh, and validation updates;
+its dispatcher retains auth and screenshot continuations. Existing public
+Onshape effects are adapted to the generic runner at the I/O boundary.
+
 See [Data Flow](data-flow.md) for sequence diagrams showing how requests,
 authentication, and token refresh flow through each operating mode.
 
