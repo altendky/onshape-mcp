@@ -1422,7 +1422,6 @@ version = "0.5.3-dev.0"
 dependencies = [
  "base64 0.23.1",
  "http",
- "onshape-client-core",
  "schemars",
  "serde",
  "serde_json",

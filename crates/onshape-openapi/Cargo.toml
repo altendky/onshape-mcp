@@ -13,7 +13,6 @@ categories = ["api-bindings"]
 [dependencies]
 base64.workspace = true
 http.workspace = true
-onshape-client-core.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use onshape_client_core::request::{ApiRequest, RequestBody};
+use onshape_openapi::request::{ApiRequest, RequestBody};
 use serde_json::{Map, Value};
 
 use super::FileReference;

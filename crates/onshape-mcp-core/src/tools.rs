@@ -37,8 +37,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use onshape_client_core::request::{ApiRequest, BinaryField, RequestBody};
 use onshape_openapi::OpenApiSpec;
+use onshape_openapi::request::{ApiRequest, BinaryField, MultipartBody, RequestBody};
 
 use crate::config::ResolvedAuth;
 use crate::{AuthStatusResult, ValidationState};
@@ -161,7 +161,7 @@ pub enum ToolEffect {
     /// After executing the request, the I/O layer calls [`resume()`] with
     /// the continuation and an [`IoResult::ApiResponse`].
     ApiRequest {
-        /// The HTTP request to execute.
+        /// Neutral HTTP request data, adapted to the Onshape client by the I/O layer.
         request: ApiRequest,
         /// What to do with the response.
         continuation: Continuation,
@@ -663,7 +663,7 @@ fn inject_into_json_field(
 ///
 /// Returns `Err(message)` on encoding/lookup errors.
 fn inject_into_multipart_field(
-    multipart: &mut onshape_client_core::request::MultipartBody,
+    multipart: &mut MultipartBody,
     file_ref: &FileReference,
     reads: &HashMap<PathBuf, &[u8]>,
 ) -> Result<(), String> {
@@ -5138,7 +5138,6 @@ mod tests {
 
     /// Build a minimal `ApiRequest` with a JSON body for injection tests.
     fn json_request_for_injection(body: Value) -> ApiRequest {
-        use onshape_client_core::request::RequestBody;
         ApiRequest {
             method: http::Method::POST,
             path: "/test".to_string(),
@@ -5253,7 +5252,6 @@ mod tests {
 
     /// Build a minimal `ApiRequest` with a multipart body for injection tests.
     fn multipart_request_for_injection(text_fields: Vec<(String, String)>) -> ApiRequest {
-        use onshape_client_core::request::{MultipartBody, RequestBody};
         ApiRequest {
             method: http::Method::POST,
             path: "/upload".to_string(),

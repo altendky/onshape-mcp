@@ -8,6 +8,7 @@ pub mod config;
 pub mod login;
 pub mod oauth;
 pub mod oauth_server;
+mod request;
 pub mod watcher;
 
 use std::path::PathBuf;
@@ -704,6 +705,7 @@ async fn dispatch_tool_effect(
                 request: api_req,
                 continuation,
             } => {
+                let api_req = request::into_onshape_request(api_req);
                 let raw = execute_raw_api_request(state, &api_req).await;
                 match raw {
                     Ok(raw) => {
