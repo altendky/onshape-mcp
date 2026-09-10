@@ -4,7 +4,9 @@
 //! Uses rmcp types directly to avoid unnecessary type conversions.
 //!
 //! Onshape request validation and diagnostic interpretation live in the private
-//! `onshape` module. Generic argument handling, file injection, and HTTP status
+//! `onshape` module. The private `api` module handles `OpenAPI` search, explain,
+//! schema lookup, and request preparation, with validation supplied by this
+//! dispatcher. Tool metadata, shared effects, file injection, and HTTP status
 //! classification remain here.
 //!
 //! ## Effect Pattern
@@ -17,6 +19,7 @@
 //! closures. After the I/O layer executes an effect, it calls [`resume()`] with
 //! the continuation and an [`IoResult`] to get the next effect.
 
+mod api;
 mod onshape;
 
 use std::collections::HashMap;
@@ -24,7 +27,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use base64::Engine;
-use http::{HeaderMap, HeaderName, HeaderValue};
+use http::HeaderMap;
 
 use rmcp::{
     ErrorData,
@@ -35,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use onshape_client_core::request::{ApiRequest, BinaryField, RequestBody};
-use onshape_openapi::{OpenApiSpec, SearchFilters};
+use onshape_openapi::OpenApiSpec;
 
 use crate::config::ResolvedAuth;
 use crate::{AuthStatusResult, ValidationState};
@@ -298,18 +301,6 @@ fn validate_file_path(path: &str) -> Result<PathBuf, String> {
         ));
     }
     Ok(path_buf)
-}
-
-fn header_params_to_header_map(params: &HashMap<String, String>) -> Result<HeaderMap, String> {
-    let mut headers = HeaderMap::new();
-    for (name, value) in params {
-        let header_name = HeaderName::from_bytes(name.as_bytes())
-            .map_err(|e| format!("invalid header name {name:?}: {e}"))?;
-        let header_value = HeaderValue::from_str(value)
-            .map_err(|e| format!("invalid value for header {name:?}: {e}"))?;
-        headers.insert(header_name, header_value);
-    }
-    Ok(headers)
 }
 
 const fn http_error_category(status: u16) -> &'static str {
@@ -902,28 +893,28 @@ pub fn call_tool(
                 Ok(s) => s,
                 Err(e) => return ToolEffect::Done(Err(e)),
             };
-            ToolEffect::Done(call_api_search(arguments, spec))
+            ToolEffect::Done(api::search(arguments, spec))
         }
         "onshape_api_explain" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
                 Err(e) => return ToolEffect::Done(Err(e)),
             };
-            ToolEffect::Done(call_api_explain(arguments, spec))
+            ToolEffect::Done(api::explain(arguments, spec))
         }
         "onshape_api_call" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
                 Err(e) => return ToolEffect::Done(Err(e)),
             };
-            call_api_call(arguments, spec)
+            api::call(arguments, spec, onshape::validate_call_body)
         }
         "onshape_api_schema" => {
             let spec = match require_spec(spec) {
                 Ok(s) => s,
                 Err(e) => return ToolEffect::Done(Err(e)),
             };
-            ToolEffect::Done(call_api_schema(arguments, spec))
+            ToolEffect::Done(api::schema(arguments, spec))
         }
         "onshape_list_resources" => ToolEffect::Done(Ok(call_list_resources())),
         "onshape_read_resource" => ToolEffect::Done(Ok(call_read_resource(arguments))),
@@ -1513,178 +1504,6 @@ fn call_auth_login(arguments: Option<&Map<String, Value>>) -> ToolEffect {
     ToolEffect::OAuthLoginFlow { mode }
 }
 
-fn call_api_search(
-    arguments: Option<&Map<String, Value>>,
-    spec: &OpenApiSpec,
-) -> Result<CallToolResult, ErrorData> {
-    let input: ApiSearchInput = match parse_arguments(arguments) {
-        Ok(input) => input,
-        Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e.message)])),
-    };
-    let filters = SearchFilters {
-        method: input.method,
-        tag: input.tag,
-    };
-    let results = spec.search(&input.query, &filters);
-
-    let content = ContentBlock::json(&results).map_err(|e| {
-        ErrorData::new(
-            ErrorCode::INTERNAL_ERROR,
-            format!("failed to serialize search results: {e}"),
-            None,
-        )
-    })?;
-
-    Ok(CallToolResult::success(vec![content]))
-}
-
-fn call_api_explain(
-    arguments: Option<&Map<String, Value>>,
-    spec: &OpenApiSpec,
-) -> Result<CallToolResult, ErrorData> {
-    let input: ApiExplainInput = match parse_arguments(arguments) {
-        Ok(input) => input,
-        Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e.message)])),
-    };
-    let detail = match spec.explain(&input.endpoint) {
-        Ok(d) => d,
-        Err(e) => {
-            return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                "{e}"
-            ))]));
-        }
-    };
-
-    let content = ContentBlock::json(&detail).map_err(|e| {
-        ErrorData::new(
-            ErrorCode::INTERNAL_ERROR,
-            format!("failed to serialize endpoint detail: {e}"),
-            None,
-        )
-    })?;
-
-    Ok(CallToolResult::success(vec![content]))
-}
-
-fn call_api_call(arguments: Option<&Map<String, Value>>, spec: &OpenApiSpec) -> ToolEffect {
-    if arguments
-        .and_then(|arguments| arguments.get("body"))
-        .is_some_and(Value::is_null)
-    {
-        return tool_input_error("body must not be JSON null; omit it instead");
-    }
-
-    let input: ApiCallInput = match parse_arguments(arguments) {
-        Ok(input) => input,
-        Err(e) => return tool_input_error(e.message),
-    };
-
-    let body = match input.body {
-        Some(Value::String(serialized)) => match serde_json::from_str(&serialized) {
-            Ok(body) => Some(body),
-            Err(e) => return tool_input_error(format!("invalid body JSON: {e}")),
-        },
-        body => body,
-    };
-
-    if body == Some(Value::Null) {
-        return tool_input_error(
-            "body parsed as JSON null; omit the body field instead of passing \"null\"",
-        );
-    }
-
-    if let Err(message) =
-        onshape::validate_call_body(&input.endpoint, body.as_ref(), &input.file_refs)
-    {
-        return tool_input_error(message);
-    }
-
-    // Validate file reference paths and field names before building the request.
-    for file_ref in &input.file_refs {
-        if let Err(msg) = validate_file_path(&file_ref.path) {
-            return tool_input_error(format!("invalid file_ref path: {msg}"));
-        }
-        if file_ref.field.trim().is_empty() {
-            return tool_input_error("invalid file_ref field: field must not be empty");
-        }
-    }
-
-    let header_params = match header_params_to_header_map(&input.header_params) {
-        Ok(headers) => headers,
-        Err(msg) => return tool_input_error(msg),
-    };
-
-    let request = match spec.build_request(
-        &input.endpoint,
-        &input.path_params,
-        &input.query_params,
-        &header_params,
-        body,
-    ) {
-        Ok(req) => req,
-        Err(e) => {
-            return tool_input_error(format!("{e}"));
-        }
-    };
-
-    // Validate request body shape before scheduling file reads.
-    // resume_inject_files() rejects these cases too (defense-in-depth),
-    // but checking early avoids unnecessary disk I/O.
-    if !input.file_refs.is_empty() {
-        match request.body.as_ref() {
-            Some(RequestBody::Json(value)) => {
-                if !value.is_object() {
-                    return tool_input_error(
-                        "file_refs require the request body to be a JSON object",
-                    );
-                }
-                if input
-                    .file_refs
-                    .iter()
-                    .any(|fr| matches!(fr.encoding, FileEncoding::RawBytes))
-                {
-                    return tool_input_error(
-                        "raw_bytes file_refs cannot be used with JSON request bodies; \
-                         use text_utf8 or base64 instead",
-                    );
-                }
-            }
-            Some(RequestBody::Multipart(_)) => {}
-            None => {
-                return tool_input_error("file_refs provided but the endpoint has no request body");
-            }
-        }
-    }
-
-    // If file references are present, emit a ReadFiles effect first.
-    // After reads complete, resume() will inject the content and forward
-    // the request as an ApiRequest effect.
-    if input.file_refs.is_empty() {
-        ToolEffect::ApiRequest {
-            request,
-            continuation: Continuation::FormatApiResponse,
-        }
-    } else {
-        let mut seen = std::collections::HashSet::new();
-        let reads: Vec<FileRead> = input
-            .file_refs
-            .iter()
-            .filter_map(|fr| {
-                let path = PathBuf::from(&fr.path);
-                seen.insert(path.clone()).then_some(FileRead { path })
-            })
-            .collect();
-
-        ToolEffect::ReadFiles {
-            reads,
-            continuation: Continuation::InjectFilesIntoRequest {
-                request,
-                file_refs: input.file_refs,
-            },
-        }
-    }
-}
-
 fn call_list_resources() -> CallToolResult {
     use std::fmt::Write;
 
@@ -1701,34 +1520,6 @@ fn call_list_resources() -> CallToolResult {
     }
 
     CallToolResult::success(vec![ContentBlock::text(output)])
-}
-
-fn call_api_schema(
-    arguments: Option<&Map<String, Value>>,
-    spec: &OpenApiSpec,
-) -> Result<CallToolResult, ErrorData> {
-    let input: ApiSchemaInput = match parse_arguments(arguments) {
-        Ok(input) => input,
-        Err(e) => return Ok(CallToolResult::error(vec![ContentBlock::text(e.message)])),
-    };
-    let detail = match spec.lookup_schema(&input.schema) {
-        Ok(d) => d,
-        Err(e) => {
-            return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                "{e}"
-            ))]));
-        }
-    };
-
-    let content = ContentBlock::json(&detail).map_err(|e| {
-        ErrorData::new(
-            ErrorCode::INTERNAL_ERROR,
-            format!("failed to serialize schema detail: {e}"),
-            None,
-        )
-    })?;
-
-    Ok(CallToolResult::success(vec![content]))
 }
 
 fn call_read_resource(arguments: Option<&Map<String, Value>>) -> CallToolResult {

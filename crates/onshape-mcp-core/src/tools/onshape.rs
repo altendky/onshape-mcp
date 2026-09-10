@@ -1,7 +1,8 @@
 //! Onshape request validation and diagnostic interpretation for MCP tools.
 //!
-//! These helpers operate only on data. Tool dispatch, generic request and file
-//! handling, and HTTP status classification stay in the parent module.
+//! These helpers operate only on data. The parent dispatcher supplies validation
+//! to the `api` handlers and applies policy when resuming file reads or formatting
+//! HTTP errors.
 
 use std::collections::{HashMap, HashSet};
 
