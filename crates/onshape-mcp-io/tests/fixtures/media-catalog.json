@@ -1,0 +1,89 @@
+{
+  "openapi": "3.0.1",
+  "info": { "title": "Media Catalog", "version": "1.0" },
+  "servers": [{ "url": "https://media.example.invalid/api/v2/" }],
+  "paths": {
+    "/collections/{collection_id}/items/{item_id}": {
+      "patch": {
+        "operationId": "updateItem",
+        "summary": "Update an item in a collection",
+        "tags": ["Catalog"],
+        "parameters": [
+          { "name": "collection_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "item_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "note", "in": "query", "schema": { "type": "string" } },
+          { "name": "X-Workspace", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemPatch" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated item",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemPatch" } } }
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/assets": {
+      "post": {
+        "operationId": "uploadAsset",
+        "summary": "Upload binary content to a collection",
+        "tags": ["Assets"],
+        "parameters": [
+          { "name": "collection_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": { "type": "string" },
+                  "file": { "type": "string", "format": "binary" }
+                },
+                "required": ["label", "file"]
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Uploaded asset" } }
+      }
+    },
+    "/assets/{asset_id}/content": {
+      "get": {
+        "operationId": "downloadAsset",
+        "summary": "Download the original asset bytes",
+        "tags": ["Assets"],
+        "parameters": [
+          { "name": "asset_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Original asset",
+            "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } }
+          }
+        }
+      }
+    },
+    "/busy": {
+      "get": {
+        "operationId": "checkCapacity",
+        "summary": "Check catalog capacity",
+        "responses": { "503": { "description": "Capacity temporarily unavailable" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ItemPatch": {
+        "type": "object",
+        "description": "Editable media item metadata.",
+        "properties": { "title": { "type": "string" } },
+        "required": ["title"]
+      }
+    }
+  }
+}
