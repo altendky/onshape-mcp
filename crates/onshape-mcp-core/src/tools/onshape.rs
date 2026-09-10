@@ -3,6 +3,10 @@
 //! This adapter supplies policy to generic API execution and translates its
 //! effects into the public Onshape dispatcher types. All helpers operate on data.
 
+mod metadata;
+
+pub use metadata::api_tools;
+
 use std::collections::{HashMap, HashSet};
 
 use onshape_openapi::request::{ApiRequest, RequestBody};

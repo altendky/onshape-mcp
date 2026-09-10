@@ -42,7 +42,10 @@ use onshape_openapi::request::ApiRequest;
 #[cfg(test)]
 use onshape_openapi::request::{MultipartBody, RequestBody};
 
-pub use api::{FileEncoding, FileRead, FileReadResult, FileReference};
+pub use api::{
+    ApiCallInput, ApiExplainInput, ApiSchemaInput, ApiSearchInput, FileEncoding, FileRead,
+    FileReadResult, FileReference,
+};
 use api::{parse_arguments, validate_file_path};
 
 use crate::config::ResolvedAuth;
@@ -518,19 +521,19 @@ fn resume_screenshot_response(
 /// Returns all available tools.
 #[must_use]
 pub fn list_tools() -> Vec<Tool> {
-    vec![
+    let mut tools = vec![
         tool_get_started_def(),
         tool_auth_status_def(),
         tool_auth_login_def(),
-        tool_api_search_def(),
-        tool_api_explain_def(),
-        tool_api_call_def(),
-        tool_api_schema_def(),
+    ];
+    tools.extend(onshape::api_tools().list());
+    tools.extend([
         tool_list_resources_def(),
         tool_read_resource_def(),
         tool_screenshot_def(),
         tool_error_lookup_def(),
-    ]
+    ]);
+    tools
 }
 
 /// Dispatches a tool call by name.
@@ -552,38 +555,23 @@ pub fn call_tool(
     validation: &ValidationState,
     spec: Option<&OpenApiSpec>,
 ) -> ToolEffect {
+    if let Some(kind) = onshape::api_tools().resolve(name) {
+        let spec = match require_spec(spec) {
+            Ok(spec) => spec,
+            Err(error) => return ToolEffect::Done(Err(error)),
+        };
+        return onshape::adapt_api_effect(api::dispatch(
+            kind,
+            arguments,
+            spec,
+            &onshape::API_POLICY,
+        ));
+    }
+
     match name {
         "onshape_mcp_get_started" => ToolEffect::Done(Ok(call_get_started())),
         "onshape_auth_status" => call_auth_status(arguments, resolved_auth, validation, spec),
         "onshape_auth_login" => call_auth_login(arguments),
-        "onshape_api_search" => {
-            let spec = match require_spec(spec) {
-                Ok(s) => s,
-                Err(e) => return ToolEffect::Done(Err(e)),
-            };
-            ToolEffect::Done(api::search(arguments, spec))
-        }
-        "onshape_api_explain" => {
-            let spec = match require_spec(spec) {
-                Ok(s) => s,
-                Err(e) => return ToolEffect::Done(Err(e)),
-            };
-            ToolEffect::Done(api::explain(arguments, spec))
-        }
-        "onshape_api_call" => {
-            let spec = match require_spec(spec) {
-                Ok(s) => s,
-                Err(e) => return ToolEffect::Done(Err(e)),
-            };
-            onshape::adapt_api_effect(api::call(arguments, spec, &onshape::API_POLICY))
-        }
-        "onshape_api_schema" => {
-            let spec = match require_spec(spec) {
-                Ok(s) => s,
-                Err(e) => return ToolEffect::Done(Err(e)),
-            };
-            ToolEffect::Done(api::schema(arguments, spec))
-        }
         "onshape_list_resources" => ToolEffect::Done(Ok(call_list_resources())),
         "onshape_read_resource" => ToolEffect::Done(Ok(call_read_resource(arguments))),
         "onshape_error_lookup" => ToolEffect::Done(Ok(call_error_lookup(arguments))),
@@ -620,60 +608,6 @@ pub struct AuthStatusInput {
     pub validate: Option<bool>,
 }
 
-/// Input schema for `onshape_api_search`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ApiSearchInput {
-    /// Free-text search query. Matches against endpoint names, paths,
-    /// descriptions, and tags. Leave empty to list all endpoints.
-    pub query: String,
-    /// Filter by HTTP method (e.g., "GET", "POST", "DELETE").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub method: Option<String>,
-    /// Filter by tag name (e.g., "Document", "Assembly", "`PartStudio`").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tag: Option<String>,
-}
-
-/// Input schema for `onshape_api_explain`.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ApiExplainInput {
-    /// The operation ID of the endpoint to explain (from search results).
-    pub endpoint: String,
-}
-
-/// Input schema for `onshape_api_call`.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ApiCallInput {
-    /// The operation ID of the endpoint to call.
-    pub endpoint: String,
-    /// Path parameters (e.g., `{"did": "abc123", "wid": "def456"}`).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub path_params: HashMap<String, String>,
-    /// Query parameters (e.g., `{"q": "robot arm", "limit": "10"}`).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub query_params: HashMap<String, String>,
-    /// Header parameters (e.g., `{"Accept": "application/octet-stream"}`).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub header_params: HashMap<String, String>,
-    /// JSON value for the request body (for POST/PUT/PATCH endpoints).
-    /// Legacy serialized JSON strings are also accepted for compatibility. Use
-    /// `onshape_api_explain` to see the expected schema for each endpoint.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body: Option<Value>,
-    /// File references for fields whose content should be read from disk.
-    ///
-    /// Each reference specifies a file path, a body field name, and an encoding.
-    /// The server reads the files and injects their content into the request body
-    /// after building the request. Fields listed here should be omitted from `body`.
-    ///
-    /// Example: to upload a file via `uploadFileCreateElement`, pass the metadata
-    /// fields in `body` and use `file_refs` for the binary content:
-    /// `body: {"formatName": "PARASOLID"}`,
-    /// `file_refs: [{"path": "/tmp/part.x_t", "field": "file", "encoding": "raw_bytes"}]`
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub file_refs: Vec<FileReference>,
-}
-
 /// Input schema for `onshape_auth_login`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AuthLoginInput {
@@ -691,16 +625,6 @@ pub struct AuthLoginInput {
     /// OAuth 2.0 client secret. Required for direct mode.
     #[serde(default)]
     pub client_secret: Option<String>,
-}
-
-/// Input schema for `onshape_api_schema`.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ApiSchemaInput {
-    /// The schema name to look up (e.g., `"BTMParameterEnum-145"` or
-    /// `"BTFeatureDefinitionCall-1406"`). Use schema names from
-    /// `x-bttype-options` annotations in `onshape_api_explain` results,
-    /// or from the `subtypes` field in previous `onshape_api_schema` results.
-    pub schema: String,
 }
 
 /// Input schema for `onshape_read_resource`.
@@ -867,69 +791,6 @@ fn tool_auth_login_def() -> Tool {
 }
 
 #[allow(clippy::expect_used)]
-fn tool_api_search_def() -> Tool {
-    let schema = schemars::schema_for!(ApiSearchInput);
-    let input_schema: Value = serde_json::to_value(schema)
-        .expect("ApiSearchInput schema serialization should never fail");
-    let input_schema = input_schema
-        .as_object()
-        .cloned()
-        .expect("Schema should be a JSON object");
-
-    Tool::new(
-        "onshape_api_search",
-        "Find Onshape API endpoints by keyword or filter. Returns brief summaries \
-         (endpoint ID, method, path template, one-line description). Use this to \
-         discover available endpoints before calling onshape_api_explain for details.",
-        Arc::new(input_schema),
-    )
-    .annotate(ToolAnnotations::new().read_only(true).destructive(false))
-}
-
-#[allow(clippy::expect_used)]
-fn tool_api_explain_def() -> Tool {
-    let schema = schemars::schema_for!(ApiExplainInput);
-    let input_schema: Value = serde_json::to_value(schema)
-        .expect("ApiExplainInput schema serialization should never fail");
-    let input_schema = input_schema
-        .as_object()
-        .cloned()
-        .expect("Schema should be a JSON object");
-
-    Tool::new(
-        "onshape_api_explain",
-        "Get full details for a specific Onshape API endpoint. Returns parameter schemas, \
-         types, required/optional flags, request/response schemas. Use the endpoint's \
-         operationId from onshape_api_search results.",
-        Arc::new(input_schema),
-    )
-    .annotate(ToolAnnotations::new().read_only(true).destructive(false))
-}
-
-#[allow(clippy::expect_used)]
-fn tool_api_call_def() -> Tool {
-    let schema = schemars::schema_for!(ApiCallInput);
-    let input_schema: Value =
-        serde_json::to_value(schema).expect("ApiCallInput schema serialization should never fail");
-    let input_schema = input_schema
-        .as_object()
-        .cloned()
-        .expect("Schema should be a JSON object");
-
-    Tool::new(
-        "onshape_api_call",
-        "Invoke an Onshape API endpoint. Provide the operationId and structured parameters \
-         (path_params, query_params, body). Path parameters are named fields (e.g., \
-         {\"did\": \"abc123\"}), not baked into a URL string. For endpoints that accept \
-         file content (e.g., file uploads), use `file_refs` to reference local files \
-         instead of inlining content in the body — the server reads them directly. \
-         Returns the API response.",
-        Arc::new(input_schema),
-    )
-    .annotate(ToolAnnotations::new().read_only(false).destructive(true))
-}
-
-#[allow(clippy::expect_used)]
 fn tool_list_resources_def() -> Tool {
     let schema = schemars::schema_for!(EmptyInput);
     let input_schema: Value =
@@ -948,27 +809,6 @@ fn tool_list_resources_def() -> Tool {
          something — the answer may already be documented here. Returns URIs, \
          titles, and descriptions. Use onshape_read_resource to read a specific \
          resource by URI.",
-        Arc::new(input_schema),
-    )
-    .annotate(ToolAnnotations::new().read_only(true).destructive(false))
-}
-
-#[allow(clippy::expect_used)]
-fn tool_api_schema_def() -> Tool {
-    let schema = schemars::schema_for!(ApiSchemaInput);
-    let input_schema: Value = serde_json::to_value(schema)
-        .expect("ApiSchemaInput schema serialization should never fail");
-    let input_schema = input_schema
-        .as_object()
-        .cloned()
-        .expect("Schema should be a JSON object");
-
-    Tool::new(
-        "onshape_api_schema",
-        "Look up an Onshape API schema by name. Returns the schema's properties \
-         (merged with inherited parent properties), discriminator subtypes if \
-         polymorphic, and parent type. Use schema names from x-bttype-options \
-         annotations in onshape_api_explain results to drill into specific types.",
         Arc::new(input_schema),
     )
     .annotate(ToolAnnotations::new().read_only(true).destructive(false))
@@ -1706,7 +1546,10 @@ mod tests {
 
     #[test]
     fn api_call_schema_allows_direct_json_values() {
-        let tool = tool_api_call_def();
+        let tool = list_tools()
+            .into_iter()
+            .find(|tool| tool.name == "onshape_api_call")
+            .expect("API call tool should be advertised");
         let body_schema = &tool.input_schema["properties"]["body"];
         assert!(
             body_schema.as_bool() == Some(true)
@@ -1759,6 +1602,22 @@ mod tests {
     fn list_tools_has_eleven_tools() {
         let tools = list_tools();
         assert_eq!(tools.len(), 11);
+    }
+
+    #[test]
+    fn onshape_api_metadata_matches_published_contract() {
+        // Captured from the published definitions before host configuration was introduced.
+        let expected: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/onshape-api-tools.json"))
+                .expect("valid metadata fixture");
+        let tools: Vec<_> = list_tools()
+            .into_iter()
+            .filter(|tool| tool.name.starts_with("onshape_api_"))
+            .collect();
+        assert_eq!(
+            serde_json::to_value(tools).expect("tool metadata"),
+            expected
+        );
     }
 
     // --- auth_status tests ---
