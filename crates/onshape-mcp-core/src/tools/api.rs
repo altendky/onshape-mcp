@@ -299,6 +299,30 @@ mod tests {
     }
 
     #[test]
+    fn call_rejects_traversal_file_refs_with_permissive_host() {
+        let spec = document_store_spec();
+        let arguments = json!({
+            "endpoint": "createDocument",
+            "body": { "title": "Example" },
+            "file_refs": [{
+                "path": "../content.txt",
+                "field": "content",
+                "encoding": "text_utf8"
+            }]
+        });
+
+        let ToolEffect::Done(Ok(result)) = call(arguments.as_object(), &spec, |_, _, _| Ok(()))
+        else {
+            panic!("a traversal path must not schedule file reads");
+        };
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(result.content.len(), 1);
+        let message = &result.content[0].as_text().expect("text diagnostic").text;
+        assert!(message.contains("invalid file_ref path"));
+        assert!(message.contains("must not contain '..' segments"));
+    }
+
+    #[test]
     fn host_validation_receives_decoded_body_before_file_validation() {
         let spec = document_store_spec();
         let arguments = json!({
