@@ -6,8 +6,11 @@
 //! Standard component schema inspection lives in the internal `schema` module.
 //! The public API adds Onshape presentation through the `onshape` module when
 //! returning explanations; parsed schemas retain their original metadata.
+//! The [`request`] module owns API-neutral request data; applications adapt it
+//! to their HTTP executor at the I/O boundary.
 
 mod onshape;
+pub mod request;
 mod schema;
 
 use std::collections::{HashMap, HashSet};
@@ -20,8 +23,8 @@ use serde_json::Value;
 
 use crate::schema::SchemaCatalog;
 
-pub use onshape_client_core::request::ApiRequest;
-use onshape_client_core::request::{BinaryField, MultipartBody, RequestBody};
+pub use request::ApiRequest;
+use request::{BinaryField, MultipartBody, RequestBody};
 
 // ============================================================================
 // Error Types
@@ -451,7 +454,7 @@ impl OpenApiSpec {
         })
     }
 
-    /// Build an API request effect for a given endpoint.
+    /// Build a neutral API request for a given endpoint.
     ///
     /// Validates that required path parameters are provided and substitutes them
     /// into the path template. Query parameters, headers, and body are passed

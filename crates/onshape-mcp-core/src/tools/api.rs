@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use http::{HeaderMap, HeaderName, HeaderValue};
-use onshape_client_core::request::RequestBody;
+use onshape_openapi::request::RequestBody;
 use onshape_openapi::{OpenApiSpec, SearchFilters};
 use rmcp::{
     ErrorData,
