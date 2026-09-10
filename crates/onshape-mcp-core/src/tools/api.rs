@@ -1,7 +1,16 @@
 //! Pure `OpenAPI` tool handlers.
 //!
-//! The host supplies endpoint-specific body validation. Tool names, descriptions,
-//! public input types, and shared I/O effects are owned by the parent module.
+//! The `execution` module owns generic effects, file injection, and response
+//! formatting. The host supplies validation and diagnostic policy. Tool metadata
+//! and the four tool input schemas are owned by the parent module.
+
+mod execution;
+
+use execution::tool_input_error;
+pub(super) use execution::{
+    Continuation, Effect, IoResult, Policy, process_api_response, resume, validate_file_path,
+};
+pub use execution::{FileEncoding, FileRead, FileReadResult, FileReference};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,13 +24,7 @@ use rmcp::{
 };
 use serde_json::{Map, Value};
 
-use super::{
-    ApiCallInput, ApiExplainInput, ApiSchemaInput, ApiSearchInput, Continuation, FileEncoding,
-    FileRead, FileReference, ToolEffect, parse_arguments, tool_input_error, validate_file_path,
-};
-
-/// Host validation of the decoded body before request construction and file reads.
-pub(super) type BodyValidator = fn(&str, Option<&Value>, &[FileReference]) -> Result<(), String>;
+use super::{ApiCallInput, ApiExplainInput, ApiSchemaInput, ApiSearchInput};
 
 pub(super) fn search(
     arguments: Option<&Map<String, Value>>,
@@ -81,8 +84,8 @@ pub(super) fn explain(
 pub(super) fn call(
     arguments: Option<&Map<String, Value>>,
     spec: &OpenApiSpec,
-    validate_body: BodyValidator,
-) -> ToolEffect {
+    policy: &Policy,
+) -> Effect {
     if arguments
         .and_then(|arguments| arguments.get("body"))
         .is_some_and(Value::is_null)
@@ -109,7 +112,7 @@ pub(super) fn call(
         );
     }
 
-    if let Err(message) = validate_body(&input.endpoint, body.as_ref(), &input.file_refs) {
+    if let Err(message) = (policy.validate_body)(&input.endpoint, body.as_ref(), &input.file_refs) {
         return tool_input_error(message);
     }
 
@@ -174,7 +177,7 @@ pub(super) fn call(
     // After reads complete, resume() will inject the content and forward
     // the request as an ApiRequest effect.
     if input.file_refs.is_empty() {
-        ToolEffect::ApiRequest {
+        Effect::ApiRequest {
             request,
             continuation: Continuation::FormatApiResponse,
         }
@@ -189,7 +192,7 @@ pub(super) fn call(
             })
             .collect();
 
-        ToolEffect::ReadFiles {
+        Effect::ReadFiles {
             reads,
             continuation: Continuation::InjectFilesIntoRequest {
                 request,
@@ -239,11 +242,209 @@ fn header_params_to_header_map(params: &HashMap<String, String>) -> Result<Heade
     Ok(headers)
 }
 
+/// Parse tool arguments from the MCP request into a typed struct.
+pub(super) fn parse_arguments<T: serde::de::DeserializeOwned>(
+    arguments: Option<&Map<String, Value>>,
+) -> Result<T, ErrorData> {
+    let args_value =
+        arguments.map_or_else(|| Value::Object(Map::new()), |m| Value::Object(m.clone()));
+
+    serde_json::from_value(args_value).map_err(|e| {
+        ErrorData::new(
+            ErrorCode::INVALID_PARAMS,
+            format!("invalid arguments: {e}"),
+            None,
+        )
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
+    use super::execution::BodyValidator;
     use super::*;
     use serde_json::json;
+
+    fn policy(validate_body: BodyValidator) -> Policy {
+        Policy {
+            validate_body,
+            validate_request: |_| Ok(()),
+            append_error_details: |_, _| {},
+        }
+    }
+
+    fn file_upload_arguments() -> Value {
+        json!({
+            "endpoint": "createDocument",
+            "body": { "title": "Example" },
+            "file_refs": [{
+                "path": "content.txt",
+                "field": "content",
+                "encoding": "text_utf8"
+            }]
+        })
+    }
+
+    #[test]
+    fn generic_file_read_request_response_flow() {
+        let spec = document_store_spec();
+        let arguments = file_upload_arguments();
+        let host_policy = policy(|_, _, _| Ok(()));
+        let Effect::ReadFiles {
+            reads,
+            continuation,
+        } = call(arguments.as_object(), &spec, &host_policy)
+        else {
+            panic!("file references should schedule file reads");
+        };
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].path, PathBuf::from("content.txt"));
+
+        let results = [FileReadResult::Success {
+            path: reads[0].path.clone(),
+            data: b"Uploaded content".to_vec(),
+        }];
+        let Effect::ApiRequest {
+            request,
+            continuation,
+        } = resume(
+            continuation,
+            IoResult::FileReadResults(&results),
+            &host_policy,
+        )
+        else {
+            panic!("file injection should produce an API request");
+        };
+        assert_eq!(request.method, http::Method::POST);
+        assert_eq!(request.path, "/documents");
+        assert_eq!(
+            request.body.as_ref().and_then(RequestBody::as_json),
+            Some(&json!({ "title": "Example", "content": "Uploaded content" }))
+        );
+
+        let response = br#"{"id":"item-1"}"#;
+        let headers = [("content-type".into(), "application/json".into())];
+        let Effect::Done(Ok(result)) = resume(
+            continuation,
+            IoResult::ApiResponse {
+                status: 201,
+                headers: &headers,
+                body: response,
+            },
+            &host_policy,
+        ) else {
+            panic!("the API response should complete the tool call");
+        };
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(result.content.len(), 1);
+        let text = &result.content[0].as_text().expect("JSON text content").text;
+        assert_eq!(
+            serde_json::from_str::<Value>(text).expect("valid JSON"),
+            json!({ "id": "item-1" })
+        );
+    }
+
+    #[test]
+    fn host_validation_rejects_injected_request_before_http_execution() {
+        let spec = document_store_spec();
+        let arguments = file_upload_arguments();
+        let mut host_policy = policy(|_, _, _| Ok(()));
+        host_policy.validate_request = |request| {
+            assert_eq!(request.method, http::Method::POST);
+            assert_eq!(request.path, "/documents");
+            assert_eq!(
+                request.body.as_ref().and_then(RequestBody::as_json),
+                Some(&json!({ "title": "Example", "content": "Rejected content" }))
+            );
+            Err("host rejected injected request".into())
+        };
+        let Effect::ReadFiles { continuation, .. } =
+            call(arguments.as_object(), &spec, &host_policy)
+        else {
+            panic!("file references should schedule file reads");
+        };
+        let results = [FileReadResult::Success {
+            path: PathBuf::from("content.txt"),
+            data: b"Rejected content".to_vec(),
+        }];
+        let Effect::Done(Ok(result)) = resume(
+            continuation,
+            IoResult::FileReadResults(&results),
+            &host_policy,
+        ) else {
+            panic!("host rejection must prevent HTTP execution");
+        };
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.content[0].as_text().expect("text diagnostic").text,
+            "host rejected injected request"
+        );
+    }
+
+    #[test]
+    fn error_response_uses_host_details_and_generic_retry_guidance() {
+        let mut enriched_policy = policy(|_, _, _| Ok(()));
+        enriched_policy.append_error_details = |detail, body| {
+            assert_eq!(body, b"private response payload");
+            detail.push_str("; host_code=BUSY");
+        };
+        let headers = [("retry-after".into(), "30".into())];
+        for (host_policy, extra) in [
+            (policy(|_, _, _| Ok(())), ""),
+            (enriched_policy, "; host_code=BUSY"),
+        ] {
+            let Effect::Done(Ok(result)) = resume(
+                Continuation::FormatApiResponse,
+                IoResult::ApiResponse {
+                    status: 429,
+                    headers: &headers,
+                    body: b"private response payload",
+                },
+                &host_policy,
+            ) else {
+                panic!("an HTTP error should complete with a tool error");
+            };
+            assert_eq!(result.is_error, Some(true));
+            assert_eq!(
+                result.content[0].as_text().expect("text diagnostic").text,
+                format!(
+                    "API error (HTTP 429): category=rate_limited; transient=true{extra}; retry_after_seconds=30"
+                )
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "mismatched Continuation and IoResult")]
+    fn response_continuation_rejects_file_results() {
+        let _ = resume(
+            Continuation::FormatApiResponse,
+            IoResult::FileReadResults(&[]),
+            &policy(|_, _, _| Ok(())),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "mismatched Continuation and IoResult")]
+    fn file_continuation_rejects_http_response() {
+        let spec = document_store_spec();
+        let arguments = file_upload_arguments();
+        let host_policy = policy(|_, _, _| Ok(()));
+        let Effect::ReadFiles { continuation, .. } =
+            call(arguments.as_object(), &spec, &host_policy)
+        else {
+            panic!("file references should schedule file reads");
+        };
+        let _ = resume(
+            continuation,
+            IoResult::ApiResponse {
+                status: 200,
+                headers: &[],
+                body: b"",
+            },
+            &host_policy,
+        );
+    }
 
     fn document_store_spec() -> OpenApiSpec {
         OpenApiSpec::from_json(
@@ -282,10 +483,10 @@ mod tests {
         let body = json!({ "title": "Example" });
         let arguments = json!({ "endpoint": "createDocument", "body": body });
 
-        let ToolEffect::ApiRequest {
+        let Effect::ApiRequest {
             request,
             continuation: Continuation::FormatApiResponse,
-        } = call(arguments.as_object(), &spec, |_, _, _| Ok(()))
+        } = call(arguments.as_object(), &spec, &policy(|_, _, _| Ok(())))
         else {
             panic!("a permissive host should allow the document store request");
         };
@@ -311,7 +512,8 @@ mod tests {
             }]
         });
 
-        let ToolEffect::Done(Ok(result)) = call(arguments.as_object(), &spec, |_, _, _| Ok(()))
+        let Effect::Done(Ok(result)) =
+            call(arguments.as_object(), &spec, &policy(|_, _, _| Ok(())))
         else {
             panic!("a traversal path must not schedule file reads");
         };
@@ -335,7 +537,7 @@ mod tests {
             }]
         });
 
-        let effect = call(arguments.as_object(), &spec, |endpoint, body, file_refs| {
+        let host_policy = policy(|endpoint, body, file_refs| {
             assert_eq!(endpoint, "createDocument");
             assert_eq!(body, Some(&json!({ "title": "Example" })));
             assert_eq!(file_refs.len(), 1);
@@ -344,8 +546,9 @@ mod tests {
             assert!(matches!(file_refs[0].encoding, FileEncoding::TextUtf8));
             Err("host rejected document".into())
         });
+        let effect = call(arguments.as_object(), &spec, &host_policy);
 
-        let ToolEffect::Done(Ok(result)) = effect else {
+        let Effect::Done(Ok(result)) = effect else {
             panic!("host rejection should return a tool error before scheduling I/O");
         };
         assert_eq!(result.is_error, Some(true));

@@ -1,15 +1,57 @@
 //! Onshape request validation and diagnostic interpretation for MCP tools.
 //!
-//! These helpers operate only on data. The parent dispatcher supplies validation
-//! to the `api` handlers and applies policy when resuming file reads or formatting
-//! HTTP errors.
+//! This adapter supplies policy to generic API execution and translates its
+//! effects into the public Onshape dispatcher types. All helpers operate on data.
 
 use std::collections::{HashMap, HashSet};
 
 use onshape_openapi::request::{ApiRequest, RequestBody};
 use serde_json::{Map, Value};
 
-use super::FileReference;
+use super::{Continuation, FileReference, ToolEffect, api};
+
+/// Onshape policy for request preparation, file injection, and API errors.
+pub const API_POLICY: api::Policy = api::Policy {
+    validate_body: validate_call_body,
+    validate_request: validate_injected_request,
+    append_error_details: append_api_error_details,
+};
+
+/// Translate a generic effect into the existing dispatcher representation.
+pub fn adapt_api_effect(effect: api::Effect) -> ToolEffect {
+    match effect {
+        api::Effect::Done(result) => ToolEffect::Done(result),
+        api::Effect::ApiRequest {
+            request,
+            continuation,
+        } => ToolEffect::ApiRequest {
+            request,
+            continuation: adapt_api_continuation(continuation),
+        },
+        api::Effect::ReadFiles {
+            reads,
+            continuation,
+        } => ToolEffect::ReadFiles {
+            reads,
+            continuation: adapt_api_continuation(continuation),
+        },
+    }
+}
+
+/// Translate generic continuation data without retaining policy callbacks.
+fn adapt_api_continuation(continuation: api::Continuation) -> Continuation {
+    match continuation {
+        api::Continuation::FormatApiResponse => Continuation::FormatApiResponse,
+        api::Continuation::InjectFilesIntoRequest { request, file_refs } => {
+            Continuation::InjectFilesIntoRequest { request, file_refs }
+        }
+    }
+}
+
+/// Resume generic execution using Onshape policy and translate its next effect.
+pub fn resume_api(continuation: api::Continuation, result: api::IoResult<'_>) -> ToolEffect {
+    adapt_api_effect(api::resume(continuation, result, &API_POLICY))
+}
 
 /// Apply Onshape endpoint validation before request construction and file reads.
 ///
