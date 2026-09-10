@@ -26,7 +26,7 @@ pub enum ToolKind {
 pub struct ToolDefinition<'a> {
     /// The operation this name invokes.
     pub kind: ToolKind,
-    /// The advertised and accepted tool name.
+    /// The advertised and accepted tool name: 1-128 ASCII letters, digits, `_`, `-`, or `.`.
     pub name: &'a str,
     /// The advertised tool description, including any cross-tool guidance.
     pub description: &'a str,
@@ -47,8 +47,8 @@ impl ToolSet {
     ///
     /// # Errors
     ///
-    /// Rejects blank or duplicate names, duplicate operations, and description
-    /// overrides that do not name an object-valued input property schema.
+    /// Rejects names outside the MCP naming guidance, duplicate names or operations,
+    /// and description overrides that do not name an object-valued input property schema.
     pub fn new(definitions: &[ToolDefinition<'_>; 4]) -> Result<Self, String> {
         let mut names = HashSet::new();
         let mut kinds = HashSet::new();
@@ -56,6 +56,17 @@ impl ToolSet {
         for definition in definitions {
             if definition.name.trim().is_empty() {
                 return Err("API tool name must not be blank".into());
+            }
+            if definition.name.len() > 128
+                || !definition
+                    .name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+            {
+                return Err(format!(
+                    "invalid API tool name {:?}: expected 1-128 ASCII letters, digits, underscores, hyphens, or periods",
+                    definition.name
+                ));
             }
             if !names.insert(definition.name) {
                 return Err(format!("duplicate API tool name: {}", definition.name));

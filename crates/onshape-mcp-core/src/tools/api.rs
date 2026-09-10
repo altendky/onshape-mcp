@@ -466,6 +466,54 @@ mod tests {
     }
 
     #[test]
+    fn tool_configuration_rejects_names_outside_mcp_guidance() {
+        let too_long = "a".repeat(129);
+        for name in [
+            " tool",
+            "tool ",
+            "two words",
+            "tool\tname",
+            "tool\nname",
+            "tool/name",
+            "tool,name",
+            "tool:name",
+            "café",
+            "\0name",
+            &too_long,
+        ] {
+            let mut definitions = document_tool_definitions(DOCUMENT_TOOL_NAMES);
+            definitions[0].name = name;
+            assert_eq!(
+                ToolSet::new(&definitions).expect_err("invalid tool name"),
+                format!(
+                    "invalid API tool name {name:?}: expected 1-128 ASCII letters, digits, underscores, hyphens, or periods"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn tool_configuration_accepts_mcp_name_boundaries_and_distinct_case() {
+        let longest = "a".repeat(128);
+        let names = ["a", "A", "Admin.tools-v2_0", &longest];
+        let tools = ToolSet::new(&document_tool_definitions(names))
+            .expect("valid names at the length boundaries and with all allowed character classes");
+        for ((name, kind), advertised) in names
+            .into_iter()
+            .zip([
+                ToolKind::Search,
+                ToolKind::Explain,
+                ToolKind::Call,
+                ToolKind::Schema,
+            ])
+            .zip(tools.list())
+        {
+            assert_eq!(advertised.name, name);
+            assert_eq!(tools.resolve(name), Some(kind));
+        }
+    }
+
+    #[test]
     fn tool_configuration_rejects_unknown_description_fields() {
         let mut definitions = document_tool_definitions(DOCUMENT_TOOL_NAMES);
         definitions[0].field_descriptions = &[("missing_field", "Unknown field name.")];
