@@ -40,11 +40,9 @@ explain and schema tools apply the host's presentation callbacks before
 serialization; the Onshape adapter adds `x-bttype-options` through those callbacks
 without changing the parsed specification.
 
-During local integration, the workspace uses Cargo path dependencies into the
-sibling `../openapi-mcp` checkout. The extracted crates have their own version;
-Onshape's version synchronization script only updates its remaining internal
-crates. A release dependency replaces these paths after the extracted workspace
-is published.
+The workspace depends on the published `openapi-mcp` libraries from crates.io.
+The extracted crates have their own version; Onshape's version synchronization
+script only updates its remaining internal crates.
 
 See [Data Flow](data-flow.md) for sequence diagrams showing how requests,
 authentication, and token refresh flow through each operating mode.
