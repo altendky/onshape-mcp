@@ -26,18 +26,23 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Generic API execution is split between `onshape_mcp_core::tools::api`, which
-produces and resumes plain-data effects, and `onshape_mcp_io::api`, which runs
-those effects. The runner accepts a host request executor and file-read policy.
+Generic API execution comes from `openapi-mcp-core`, which produces and resumes
+plain-data effects, and `openapi-mcp-io`, which runs those effects. They are
+re-exported at `onshape_mcp_core::tools::api` and `onshape_mcp_io::api` for existing
+callers. The runner accepts a host request executor and file-read policy.
 Onshape's executor handles credentials, token refresh, and validation updates;
 its dispatcher retains auth and screenshot continuations. Existing public
 Onshape effects are adapted to the generic runner at the I/O boundary.
 
-`onshape-openapi` returns schema details with source metadata and standard
+`openapi-mcp-spec` returns schema details with source metadata and standard
 discriminator information. It does not add presentation annotations. Generic
 explain and schema tools apply the host's presentation callbacks before
 serialization; the Onshape adapter adds `x-bttype-options` through those callbacks
 without changing the parsed specification.
+
+The workspace depends on the published `openapi-mcp` libraries from crates.io.
+The extracted crates have their own version; Onshape's version synchronization
+script only updates its remaining internal crates.
 
 See [Data Flow](data-flow.md) for sequence diagrams showing how requests,
 authentication, and token refresh flow through each operating mode.

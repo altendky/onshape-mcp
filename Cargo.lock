@@ -140,7 +140,6 @@ dependencies = [
  "matchit",
  "memchr",
  "mime",
- "multer",
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
@@ -511,15 +510,6 @@ name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
-
-[[package]]
-name = "encoding_rs"
-version = "0.8.35"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
-dependencies = [
- "cfg-if",
-]
 
 [[package]]
 name = "equivalent"
@@ -1240,23 +1230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multer"
-version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83e87776546dc87511aa5ee218730c92b666d7264ab6ed41f9d215af9cd5224b"
-dependencies = [
- "bytes",
- "encoding_rs",
- "futures-util",
- "http",
- "httparse",
- "memchr",
- "mime",
- "spin",
- "version_check",
-]
-
-[[package]]
 name = "notify"
 version = "8.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1387,7 +1360,8 @@ dependencies = [
  "http",
  "onshape-client-core",
  "onshape-mcp-resources",
- "onshape-openapi",
+ "openapi-mcp-core",
+ "openapi-mcp-spec",
  "rmcp",
  "schemars",
  "secrecy",
@@ -1415,7 +1389,8 @@ dependencies = [
  "onshape-client-io",
  "onshape-mcp-core",
  "onshape-mcp-resources",
- "onshape-openapi",
+ "openapi-mcp-io",
+ "openapi-mcp-spec",
  "rand 0.10.2",
  "reqwest",
  "rmcp",
@@ -1444,18 +1419,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "onshape-openapi"
-version = "0.5.3-dev.0"
-dependencies = [
- "base64 0.23.1",
- "http",
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "open"
 version = "5.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1463,6 +1426,52 @@ checksum = "aa576c76302b7b808eecc68061e67336c47833ef9d22caa74dda10fa9675eebc"
 dependencies = [
  "is-wsl",
  "libc",
+]
+
+[[package]]
+name = "openapi-mcp-core"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a27672a6c00fb7b18834fe415cf744e1eb9557cfe3bbee5878f08c7f3e677c4"
+dependencies = [
+ "base64 0.23.1",
+ "http",
+ "openapi-mcp-spec",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "openapi-mcp-io"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cee9ac0b3759d327980e8a3471e1426117765c448bf5a66ccabf1ad13b54665a"
+dependencies = [
+ "http",
+ "openapi-mcp-core",
+ "openapi-mcp-spec",
+ "reqwest",
+ "rmcp",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "openapi-mcp-spec"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff14cb18114d961b916a489e8f16ffbbf8c5ae1cfe833d5999a67b634c8db1e5"
+dependencies = [
+ "base64 0.23.1",
+ "http",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2194,12 +2203,6 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
-
-[[package]]
-name = "spin"
-version = "0.9.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 
 [[package]]
 name = "sse-stream"
