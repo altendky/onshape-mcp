@@ -36,6 +36,16 @@
   ],
 
   "packageRules": [
+    // These crates are published together; wait for all three updates.
+    {
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["openapi-mcp*"],
+      "groupName": "openapi-mcp",
+      "groupSingleUpdates": true,
+      "minimumGroupSize": 3,
+      "separateMajorMinor": false
+    },
+
     // Group Rust toolchain updates (rust-toolchain.toml + Cargo.toml MSRV)
     {
       "matchDepNames": ["rust-lang/rust"],
