@@ -1431,9 +1431,9 @@ dependencies = [
 
 [[package]]
 name = "openapi-mcp-core"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a27672a6c00fb7b18834fe415cf744e1eb9557cfe3bbee5878f08c7f3e677c4"
+checksum = "7270345e4cb58d1797e50104817079c9f0f6e67089b74bf81787579f040d74ed"
 dependencies = [
  "base64 0.23.1",
  "http",
@@ -1446,9 +1446,9 @@ dependencies = [
 
 [[package]]
 name = "openapi-mcp-io"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cee9ac0b3759d327980e8a3471e1426117765c448bf5a66ccabf1ad13b54665a"
+checksum = "cfcffeb16d297bc40940661982644a3b736d0bf08171e3f43e59201cafe55cad"
 dependencies = [
  "http",
  "openapi-mcp-core",
@@ -1463,9 +1463,9 @@ dependencies = [
 
 [[package]]
 name = "openapi-mcp-spec"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff14cb18114d961b916a489e8f16ffbbf8c5ae1cfe833d5999a67b634c8db1e5"
+checksum = "2d295aafdf2bad81f0b0ccc71825cbe57ecfeead8b98c57f99d99a13a044e302"
 dependencies = [
  "base64 0.23.1",
  "http",
