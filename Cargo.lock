@@ -1462,9 +1462,9 @@ dependencies = [
 
 [[package]]
 name = "openapi-mcp-spec"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff14cb18114d961b916a489e8f16ffbbf8c5ae1cfe833d5999a67b634c8db1e5"
+checksum = "2d295aafdf2bad81f0b0ccc71825cbe57ecfeead8b98c57f99d99a13a044e302"
 dependencies = [
  "base64 0.23.1",
  "http",
