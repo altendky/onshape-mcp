@@ -43,7 +43,7 @@ pub fn validate_proxy_url(value: &str) -> Result<String, String> {
 
 use chrono::{DateTime, Utc};
 use onshape_client_core::auth::AuthMethod;
-use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{Implementation, ServerCapabilities, ServerConfig};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -271,8 +271,8 @@ pub fn instructions() -> String {
 /// * `name` - The server name (typically from `CARGO_PKG_NAME`)
 /// * `version` - The server version (typically from `CARGO_PKG_VERSION`)
 #[must_use]
-pub fn server_info(name: &str, version: &str) -> ServerInfo {
-    ServerInfo::new(
+pub fn server_info(name: &str, version: &str) -> ServerConfig {
+    ServerConfig::new(
         ServerCapabilities::builder()
             .enable_tools()
             .enable_resources()
