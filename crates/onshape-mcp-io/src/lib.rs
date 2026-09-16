@@ -29,7 +29,7 @@ use rmcp::{
     model::{
         CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverResult,
         ErrorCode, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
-        ReadResourceRequestParams, ReadResourceResponse, ServerInfo,
+        ReadResourceRequestParams, ReadResourceResponse, ServerConfig,
     },
     service::{RequestContext, RoleServer},
     transport::stdio,
@@ -360,7 +360,7 @@ pub(crate) struct HttpOAuthApiState {
 /// requires `&mut` access. MCP over stdio is sequential, so there is
 /// effectively no contention.
 pub struct OnshapeMcpServer {
-    info: ServerInfo,
+    info: ServerConfig,
     #[allow(dead_code)]
     config: Arc<AppConfig>,
     spec: Arc<OpenApiSpec>,
@@ -434,7 +434,7 @@ impl OnshapeMcpServer {
     ///
     /// Used by `run_http()` so the factory closure can clone `Arc`s cheaply.
     pub(crate) fn from_shared_state(
-        info: ServerInfo,
+        info: ServerConfig,
         config: Arc<AppConfig>,
         spec: Arc<OpenApiSpec>,
         api_state: Arc<tokio::sync::Mutex<ApiState>>,
@@ -453,7 +453,7 @@ impl OnshapeMcpServer {
 }
 
 impl ServerHandler for OnshapeMcpServer {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         self.info.clone()
     }
 
