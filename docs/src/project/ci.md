@@ -127,7 +127,41 @@ Store credentials in repository secrets:
 | `.github/workflows/reflow-release-build.yml` | Reusable workflow for release binary builds (5 platforms) |
 | `.github/workflows/reflow-release-npm.yml` | Reusable workflow for npm package, publish, and test |
 | `.github/workflows/cleanup-npm-staging.yml` | Scheduled: unpublish staging packages older than 2.2 days |
+| `.github/workflows/renovate.yml` | Scheduled/manual Renovate dependency updates |
 | `.github/workflows/update-openapi-spec.yml` | Nightly/manual OpenAPI spec update, creates PR (planned) |
+
+## Dependency Updates
+
+Renovate runs every six hours and performs lockfile maintenance weekly, before
+06:00 UTC on Monday. Maintenance refreshes compatible direct and transitive
+dependencies together in the tracked lockfiles:
+
+- `Cargo.lock`
+- `npm/onshape-mcp/package-lock.json`
+- `workers/oauth-proxy/package-lock.json`
+- `mise.lock`
+
+The mise manager retains the platforms already recorded in `mise.lock`, and the
+local command below explicitly refreshes all configured platforms. The workflow
+permits mise's lockfile command, while CI verifies the committed lockfile on
+Linux x64. Lockfile maintenance does not change the Rust MSRV in `Cargo.toml`;
+that pin remains excluded by `renovate.json5`. Regular direct-dependency PRs and
+the normal review and merge policy are also unchanged.
+
+To refresh the same lockfiles locally, run:
+
+```console
+cargo update
+npm --prefix npm/onshape-mcp update --package-lock-only --ignore-scripts
+npm --prefix workers/oauth-proxy update --package-lock-only --ignore-scripts
+MISE_LOCKED=0 mise lock --yes --bump --platform linux-x64,linux-x64-musl,linux-arm64,linux-arm64-musl,macos-x64,macos-arm64,windows-x64
+```
+
+Review the combined diff and run the usual pre-commit checks before committing.
+If a maintenance PR stalls or lockfile generation fails, select Renovate's
+**rebase/retry** checkbox in the PR description, then wait for the next
+six-hourly run or manually dispatch the Renovate workflow. Inspect that run's
+logs before retrying again.
 
 ## Concurrency
 
@@ -516,29 +550,3 @@ panic = "deny"
 ## Testing & Coverage
 
 See [Development > Testing Strategy](development.md#testing-strategy) and [Development > Coverage Requirements](development.md#coverage-requirements).
-
-## Dependency Monitoring
-
-Dependabot is configured to monitor dependencies and create PRs for updates.
-
-| Setting | Value |
-| ------- | ----- |
-| Location | `.github/dependabot.yml` |
-| Schedule | Daily |
-| Grouping | None (individual PRs) |
-
-### Monitored Ecosystems
-
-| Ecosystem | Directory | Description |
-| --------- | --------- | ----------- |
-| `github-actions` | `/` | Actions used in workflows |
-| `cargo` | `/` | Rust dependencies |
-| `npm` | `/npm/onshape-mcp` | npm wrapper package |
-
-### Not Covered by Dependabot
-
-The following dependency mechanisms require alternative approaches:
-
-| Mechanism | Location | Update Method |
-| --------- | -------- | ------------- |
-| Pre-commit hooks | `.pre-commit-config.yaml` | `pre-commit autoupdate` or Renovate |

@@ -4,6 +4,13 @@
   // Only rebase PRs when they have conflicts, not just for being behind
   "rebaseWhen": "conflicted",
 
+  // Refresh compatible direct and transitive dependency versions weekly.
+  // The Monday 00:00 UTC workflow run falls within this window.
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+
   // Extend recommended defaults + SHA pinning for GitHub Actions
   "extends": [
     "config:recommended",
@@ -78,6 +85,18 @@
     // `VAR=value command` syntax.
     {
       "matchManagers": ["mise"],
+      // Native lockfile maintenance runs its own `mise lock --bump` command.
+      "matchUpdateTypes": [
+        "major",
+        "minor",
+        "patch",
+        "pin",
+        "pinDigest",
+        "digest",
+        "rollback",
+        "bump",
+        "replacement"
+      ],
       "postUpgradeTasks": {
         "commands": [
           "sh -c 'MISE_LOCKED=0 mise install --yes node python'",
