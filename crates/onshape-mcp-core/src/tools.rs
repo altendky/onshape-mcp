@@ -2066,7 +2066,7 @@ mod tests {
             &default_validation(),
             Some(&spec),
         ));
-        assert!(!msg.is_empty());
+        assert_ne!(msg, "");
     }
 
     #[test]

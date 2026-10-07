@@ -38,7 +38,7 @@ mod tests {
             request.path,
             "/documents/d/doc%2F1/externaldata/file%20name.step"
         );
-        assert!(request.query_params.is_empty());
+        assert_eq!(request.query_params, Vec::<(String, String)>::new());
         assert!(request.body.is_none());
         assert!(request.content_type.is_none());
     }

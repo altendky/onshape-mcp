@@ -856,7 +856,7 @@ mod tests {
         assert_eq!(token_data.access_token.secret(), "test-access-token");
         assert!(token_data.expires_at.is_none());
         // No refresh token in the response → empty string fallback
-        assert!(token_data.refresh_token.secret().is_empty());
+        assert_eq!(token_data.refresh_token.secret(), "");
         // No scopes in the response → None
         assert!(token_data.scopes.is_none());
     }

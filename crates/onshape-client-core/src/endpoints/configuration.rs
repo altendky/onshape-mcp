@@ -104,7 +104,7 @@ mod tests {
             request.path,
             "/elements/d/doc/w/workspace/e/element/configuration"
         );
-        assert!(request.query_params.is_empty());
+        assert_eq!(request.query_params, Vec::<(String, String)>::new());
         assert!(request.body.is_none());
         assert!(request.content_type.is_none());
     }
@@ -165,7 +165,7 @@ mod tests {
             request.path,
             "/elements/d/doc/e/element/configurationencodings"
         );
-        assert!(request.query_params.is_empty());
+        assert_eq!(request.query_params, Vec::<(String, String)>::new());
         assert_eq!(request.content_type.as_deref(), Some(JSON_CONTENT_TYPE));
         assert!(
             request

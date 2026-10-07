@@ -241,7 +241,7 @@ mod tests {
     fn assert_json_post(request: &ApiRequest, path: &str, format_name: &str) {
         assert_eq!(request.method, Method::POST);
         assert_eq!(request.path, path);
-        assert!(request.query_params.is_empty());
+        assert_eq!(request.query_params, Vec::<(String, String)>::new());
         assert_eq!(request.content_type.as_deref(), Some(JSON_CONTENT_TYPE));
 
         let body = request
@@ -373,7 +373,7 @@ mod tests {
 
         assert_eq!(request.method, Method::GET);
         assert_eq!(request.path, "/translations/translation%2F1");
-        assert!(request.query_params.is_empty());
+        assert_eq!(request.query_params, Vec::<(String, String)>::new());
         assert!(request.body.is_none());
         assert!(request.content_type.is_none());
     }
@@ -384,7 +384,7 @@ mod tests {
 
         assert_eq!(request.method, Method::GET);
         assert_eq!(request.path, "/translations/translationformats");
-        assert!(request.query_params.is_empty());
+        assert_eq!(request.query_params, Vec::<(String, String)>::new());
         assert!(request.body.is_none());
         assert!(request.content_type.is_none());
     }
