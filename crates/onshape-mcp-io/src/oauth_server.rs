@@ -1947,8 +1947,8 @@ mod tests {
         assert!(result.is_ok());
 
         let response = result.expect("should be Ok");
-        assert!(!response.client_id.is_empty());
-        assert!(!response.client_secret.is_empty());
+        assert_ne!(response.client_id, "");
+        assert_ne!(response.client_secret, "");
         assert_eq!(response.token_endpoint_auth_method, "client_secret_post");
     }
 
@@ -2085,7 +2085,7 @@ mod tests {
         assert!(result.is_ok());
         let body = result.expect("should be Ok");
         assert_eq!(body.token_type, "Bearer");
-        assert!(!body.access_token.is_empty());
+        assert_ne!(body.access_token, "");
         assert!(body.refresh_token.is_some());
     }
 
