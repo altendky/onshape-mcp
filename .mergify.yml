@@ -22,13 +22,16 @@ pull_request_rules:
       queue:
         name: default
 
-  - name: Automatically approve Renovate PRs
+  - name: Automatically approve and enqueue Renovate PRs
     conditions:
       - author = altendky-renovate[bot]
       - github-review-decision = REVIEW_REQUIRED
     actions:
       review:
         type: APPROVE
+      label:
+        add:
+          - enqueue
 
   - name: Automatically approve post-release PRs
     conditions:
