@@ -89,6 +89,15 @@
       ],
       "enabled": false
     },
+    {
+      "description": "Keep the minimum Node test at the manually selected support floor",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["node"],
+      "matchDepTypes": ["uses-with"],
+      "matchFileNames": [".github/workflows/reflow-npm.yml"],
+      "matchCurrentValue": "/^22$/",
+      "enabled": false
+    },
 
     // These crates are published together; wait for all three updates.
     {
