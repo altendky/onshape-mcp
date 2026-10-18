@@ -42,7 +42,54 @@
     }
   ],
 
+  // Preserve recommended exclusions and ignore generated Mise package metadata.
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+    "**/.mise/locks/**"
+  ],
+
   "packageRules": [
+    {
+      "description": "Keep Python on the selected minor release",
+      "matchManagers": [
+        "mise"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "allowedVersions": "/^3\\.14(?:\\.|$)/"
+    },
+    {
+      "description": "Keep Node on the selected major release",
+      "matchManagers": [
+        "mise"
+      ],
+      "matchDepNames": [
+        "node"
+      ],
+      "allowedVersions": "/^24(?:\\.|$)/"
+    },
+    {
+      "description": "Changing the supported Node minimum is a manual decision",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "engines"
+      ],
+      "matchDepNames": [
+        "node"
+      ],
+      "enabled": false
+    },
+
     // These crates are published together; wait for all three updates.
     {
       "matchManagers": ["cargo"],
