@@ -4,6 +4,24 @@ on:
   workflow_call:
 
 jobs:
+  minimum-node:
+    name: Minimum supported Node.js
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+
+      - run: npm ci
+        working-directory: npm/onshape-mcp
+
+      - run: npm test
+        working-directory: npm/onshape-mcp
+
   library:
     name: Generate library
     uses: ./.github/workflows/reflow-library.yml
