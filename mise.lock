@@ -243,7 +243,7 @@ version = "4.151.2"
 backend = "npm:wrangler"
 
 [[tools."pipx:pre-commit"]]
-version = "4.6.2"
+version = "4.7.0"
 backend = "pipx:pre-commit"
 
 [[tools.python]]
