@@ -14,6 +14,8 @@ pub mod watcher;
 
 #[cfg(test)]
 mod api_adapter_tests;
+#[cfg(test)]
+mod assembly_tools_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
