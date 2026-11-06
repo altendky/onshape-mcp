@@ -20,6 +20,7 @@
 //! the continuation and an [`IoResult`] to get the next effect.
 
 pub use openapi_mcp_core as api;
+mod assembly;
 mod onshape;
 
 pub use onshape::API_POLICY as ONSHAPE_API_POLICY;
@@ -248,6 +249,19 @@ pub enum Continuation {
         /// The view matrix string used in the API request.
         view_matrix: String,
     },
+    /// After API call: summarise an assembly definition.
+    ///
+    /// Used by `onshape_assembly_read`.
+    FormatAssemblyDefinition,
+    /// After API call: report the feature id and regeneration status of a
+    /// new assembly feature.
+    ///
+    /// Used by `onshape_mate`, `onshape_mate_relation` and
+    /// `onshape_mate_connector`.
+    FormatAssemblyFeature {
+        /// What was added, for messages ("mate", "mate relation", ...).
+        kind: String,
+    },
     /// After file reads: inject file content into an already-built API request.
     ///
     /// Used by `onshape_api_call` when `file_refs` are present. The request
@@ -387,6 +401,20 @@ pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, 
             )
         }
 
+        // --- FormatAssemblyDefinition / FormatAssemblyFeature ---
+        (
+            continuation @ (Continuation::FormatAssemblyDefinition
+            | Continuation::FormatAssemblyFeature { .. }),
+            IoResult::ApiResponse {
+                status,
+                headers,
+                body,
+            },
+        ) => (
+            ToolEffect::Done(resume_assembly(continuation, status, headers, body)),
+            vec![],
+        ),
+
         // --- InjectFilesIntoRequest ---
         (
             Continuation::InjectFilesIntoRequest { request, file_refs },
@@ -412,6 +440,26 @@ pub fn resume(continuation: Continuation, result: IoResult<'_>) -> (ToolEffect, 
             )
         }
     }
+}
+
+/// Format the response of an assembly tool request.
+///
+/// Error statuses go through the shared Onshape error formatting.
+fn resume_assembly(
+    continuation: Continuation,
+    status: u16,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Result<CallToolResult, ErrorData> {
+    if !(200..300).contains(&status) {
+        return process_api_response(status, headers, body);
+    }
+    Ok(match continuation {
+        Continuation::FormatAssemblyFeature { kind } => {
+            assembly::format_feature_response(&kind, body)
+        }
+        _ => assembly::format_assembly_definition(body),
+    })
 }
 
 /// Process auth validation API response.
@@ -566,6 +614,7 @@ pub fn list_tools() -> Vec<Tool> {
         tool_screenshot_def(),
         tool_error_lookup_def(),
     ]);
+    tools.extend(assembly::tool_defs());
     tools
 }
 
@@ -599,6 +648,16 @@ pub fn call_tool(
             spec,
             &onshape::API_POLICY,
         ));
+    }
+
+    if assembly::TOOL_NAMES.contains(&name) {
+        let spec = match require_spec(spec) {
+            Ok(spec) => spec,
+            Err(error) => return ToolEffect::Done(Err(error)),
+        };
+        if let Some(effect) = assembly::call(name, arguments, spec) {
+            return effect;
+        }
     }
 
     match name {
@@ -1632,9 +1691,9 @@ mod tests {
     }
 
     #[test]
-    fn list_tools_has_eleven_tools() {
+    fn list_tools_has_fifteen_tools() {
         let tools = list_tools();
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 15);
     }
 
     #[test]

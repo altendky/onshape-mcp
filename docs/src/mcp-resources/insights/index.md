@@ -14,6 +14,7 @@ Practical reference for correct patterns, API usage, and design guidelines.
 - [Fillet](fillet.md) — Fillet feature parameters, edge discovery, radius constraints
 - [Part Studio](part-studio.md) — Feature error retrieval via evalFeatureScript, runtime debugging
 - [FeatureScript](featurescript.md) — Feature Studio API, stdlib version discovery, import conventions, notices workaround
+- [Assembly](assembly.md) — One-call mate, relation and connector tools, connector choice, frame rules, modify recipes
 - [Debug Entities](debug-entities.md) — Accessing debug entity data via evalFeatureScript, wire body debug geometry for screenshots
 
 ## General

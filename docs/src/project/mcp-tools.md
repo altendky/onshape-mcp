@@ -410,6 +410,31 @@ For angles: `azimuth` is horizontal orbit in degrees (0=front, 90=right, 180=bac
 
 **Effect Pattern:** Uses `OnshapeApiRequestThen` → `WriteFiles`. The core crate builds the API request, the I/O layer executes it, the core callback decodes the base64 image (pure computation) and returns a `WriteFiles` effect, and the I/O layer writes the file to disk. The core's format callback then produces the final result from the write outcome.
 
+### Assembly tools
+
+Four tools cover the assembly work that is otherwise slow and error-prone
+through `onshape_api_call`: reading mate references, and writing mates,
+relations and connectors without hand-built `BTM*` JSON. Each is one Onshape
+API call. Payload builders and response formatting live in
+`onshape-mcp-core` (`tools/assembly.rs`) and are unit-tested; an
+`onshape-mcp-io` test builds every request against the embedded spec.
+
+| Tool | Endpoint | Purpose |
+| ---- | -------- | ------- |
+| `onshape_assembly_read` | `getAssemblyDefinition` with `includeMateFeatures` | Instances, every occurrence (path, resolved names, fixed state, position in mm, rotation when not identity), mates with the occurrences they join and connector origins, other assembly features, Part Studio connectors |
+| `onshape_mate` | `addFeature` (`BTMMate-64`) | Mate of any of the 8 types between two connectors: an assembly connector feature, or a Part Studio connector by occurrence path and feature ID. Optional `flip`. Always writes `secondaryAxisAlignment`, which relations need |
+| `onshape_mate_relation` | `addFeature` (`BTMMateRelation-1412`) | `SCREW`, `GEAR`, `RACK_AND_PINION`, `LINEAR`. Lengths in mm, default degrees of freedom per type |
+| `onshape_mate_connector` | `addFeature` (`BTMMateConnector-66`) | Connector placed by inference (`CENTER`, axis points, `CENTROID`, ...) on a part entity by occurrence path, with optional flip, offset (mm) and rotation (degrees) |
+
+Write tools read the regeneration status from the `addFeature` response and
+return it with the feature ID; a non-`OK` status is reported as a tool error
+so the caller does not build on a broken feature.
+
+Payload provenance: the Onshape API guide (mates, connectors, assembly
+definition) and `gpambrozio/onshape-mcp` (MIT) for the relation payload and
+the `secondaryAxisAlignment` requirement. The flip parameter names
+(`primaryAxisAlignment`, `flipPrimary`) still need a live check.
+
 ## Tool Parameters
 
 ### Identifiers

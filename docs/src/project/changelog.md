@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Assembly tools, one Onshape API call each: `onshape_assembly_read` (instances, occurrence paths and positions, mates with the occurrences they join, Part Studio connectors), `onshape_mate` (all mate types, assembly or Part Studio connectors, flip), `onshape_mate_relation` (screw, gear, rack and pinion, linear) and `onshape_mate_connector` (connectors placed by inference with optional offset and rotation). Write tools report the new feature's regeneration status
+- Assembly insight resource: connector choice, mate frame rules, and `modify` recipes for deleting, suppressing and moving instances
 - Initial project documentation structure
 - Generic API tools (`onshape_api_search`, `onshape_api_explain`, `onshape_api_call`) powered by embedded Onshape OpenAPI specification
 - OpenAPI spec parsing module (`openapi.rs`) with search, explain, and request building
