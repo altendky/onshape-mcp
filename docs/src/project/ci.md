@@ -9,7 +9,7 @@ This section documents the manual configuration required in GitHub repository se
 | Setting | Value |
 | --------- | ------- |
 | Require PR before merge | Yes |
-| Required approvals | 1 |
+| Required approvals | 0 (reviews optional) |
 | Require status checks | Yes — `all` job |
 | Require merge queue | No (Mergify handles this) |
 | Require branches up-to-date | No (Mergify merge queue handles this) |
@@ -31,8 +31,9 @@ the repository root.
 4. If GitHub protection requirements pass on the queued merge, Mergify merges the PR
 5. If CI fails, the PR is dequeued
 
-GitHub owns approval and required status checks. Mergify owns queue selection
-(`enqueue` label, `main` base, non-draft) and consumes GitHub branch protection
+GitHub owns required status checks and other branch protections. Reviews are
+optional. Mergify owns queue selection (`enqueue` label, `main` base, non-draft)
+and consumes GitHub branch protection
 injection so queued merges satisfy the same gates without duplicating those gates
 in `.mergify.yml`.
 
@@ -47,7 +48,7 @@ limits) without manual intervention.
 | Configuration | `.mergify.yml` |
 | Queue entry | `enqueue` label, `main` base, non-draft, plus injected GitHub protections |
 | Queue action | Mergify Workflow Automation `queue` action |
-| Merge protection | GitHub ruleset (`1` approval + `all`) |
+| Merge protection | GitHub ruleset requiring `all`; no approval requirement |
 | Merge gate | GitHub branch protection injected into queue and merge conditions |
 | Merge method | Merge commits |
 | Checks timeout | 90 minutes |
@@ -468,7 +469,7 @@ publication and registry tests are skipped; a non-release `main` push executes
 | [codecov/codecov-action](https://github.com/codecov/codecov-action) | Upload coverage to Codecov |
 
 **GitHub branch protection:** Only the `all` job is required as a status check;
-approval is enforced by the GitHub ruleset.
+review approvals are optional.
 
 ## Checks
 

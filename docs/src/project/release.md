@@ -230,7 +230,7 @@ Steps:
 
 ### Mergify Auto-Approve
 
-Post-release PRs from `altendky-release[bot]` on `post-release/*` branches are automatically approved. The existing merge queue handles merge (requires `enqueue` label + 1 approval).
+Post-release PRs from `altendky-release[bot]` on `post-release/*` branches are automatically approved. The existing merge queue handles merging after required checks pass; review approvals are optional.
 
 ### Release Flow
 
