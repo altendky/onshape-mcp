@@ -182,7 +182,7 @@ jobs:
 
       - name: Upload test results to Mergify CI Insights
         if: (success() || failure()) && env.MERGIFY_TOKEN_AVAILABLE == 'true'
-        uses: mergifyio/gha-mergify-ci@392d123d84a27960993927aec1f2cbb059fb95c1 # v27
+        uses: mergifyio/gha-mergify-ci@29114c5c7ab4abec65e88509c3d05e94e05fbe52 # v28
         with:
           token: ${{ secrets.MERGIFY_TOKEN }}
           report_path: target/nextest/ci/junit.xml
