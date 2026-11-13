@@ -181,7 +181,7 @@ Configuration is also supported. Avoid `--client-secret` when practical because
 secret CLI arguments may be retained in shell history or visible in process
 listings.
 
-The CLI opens your browser to the Onshape authorization page, starts a local callback server on `localhost:18338`, exchanges the authorization code for tokens, and saves them to the token file. The MCP server automatically detects the new tokens via the file watcher.
+The CLI opens your browser to the Onshape authorization page, starts a local callback server on `localhost:18338` (set `ONSHAPE_OAUTH_CALLBACK_PORT` to use another port, and register the matching `http://localhost:<port>/callback` redirect URL in the OAuth application), exchanges the authorization code for tokens, and saves them to the token file. The MCP server automatically detects the new tokens via the file watcher.
 
 #### MCP Tool Usage
 

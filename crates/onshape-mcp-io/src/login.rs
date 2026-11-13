@@ -45,6 +45,27 @@ pub const CALLBACK_PORT: u16 = 18338;
 /// being recommended by RFC 8252 Section 8.3.
 pub const REDIRECT_URI: &str = "http://localhost:18338/callback";
 
+/// Environment variable that overrides [`CALLBACK_PORT`].
+///
+/// Lets two servers on one machine log in with separate Onshape OAuth
+/// applications, each registered with its own redirect URL.
+pub const CALLBACK_PORT_ENV: &str = "ONSHAPE_OAUTH_CALLBACK_PORT";
+
+/// The callback port in use: [`CALLBACK_PORT_ENV`] if it holds a valid
+/// nonzero port, otherwise [`CALLBACK_PORT`].
+pub fn active_callback_port() -> u16 {
+    std::env::var(CALLBACK_PORT_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .filter(|p| *p != 0)
+        .unwrap_or(CALLBACK_PORT)
+}
+
+/// The redirect URI in use, built from [`active_callback_port`].
+pub fn active_redirect_uri() -> String {
+    format!("http://localhost:{}/callback", active_callback_port())
+}
+
 /// Default scopes to request from Onshape.
 const DEFAULT_SCOPES: &[&str] = &["OAuth2Read", "OAuth2Write"];
 
@@ -60,8 +81,9 @@ const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 pub enum LoginError {
     /// Failed to start the callback server on both IPv4 and IPv6 loopback.
     #[error(
-        "failed to start callback server on port {CALLBACK_PORT} \
-         (tried 127.0.0.1 and [::1]): {0}"
+        "failed to start callback server on port {port} \
+         (tried 127.0.0.1 and [::1]): {0}",
+        port = active_callback_port()
     )]
     ServerStart(std::io::Error),
 
@@ -248,7 +270,7 @@ pub async fn start_login_flow(mode: &LoginMode) -> Result<LoginFlowHandle, Login
     // Build the authorization URL.
     let login_config = OAuthLoginConfig {
         client_id: client_id.clone(),
-        redirect_uri: REDIRECT_URI.to_string(),
+        redirect_uri: active_redirect_uri(),
         scopes: DEFAULT_SCOPES.iter().map(|s| (*s).to_string()).collect(),
     };
     let authorize_url = build_authorize_url(&login_config, &csrf_state, pkce_challenge);
@@ -359,7 +381,7 @@ async fn handle_callback(
     }
 
     // Reconstruct the callback URL preserving the raw query string.
-    let callback_url = format!("{REDIRECT_URI}?{raw_query}");
+    let callback_url = format!("{}?{raw_query}", active_redirect_uri());
 
     // Send the callback URL through the channel (only the first valid handler wins).
     // Shutdown is handled externally by the LoginSession / complete_login_flow.
@@ -512,8 +534,9 @@ fn is_bind_contention(e: &std::io::Error) -> bool {
 /// Returns `LoginError::ServerStart` if neither address can be bound, or
 /// if only one bound but the other failed due to port contention.
 async fn start_callback_server() -> Result<Vec<tokio::net::TcpListener>, LoginError> {
-    let ipv4_addr = SocketAddr::from(([127, 0, 0, 1], CALLBACK_PORT));
-    let ipv6_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], CALLBACK_PORT));
+    let port = active_callback_port();
+    let ipv4_addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let ipv6_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port));
 
     let ipv4_result = tokio::net::TcpListener::bind(ipv4_addr).await;
     let ipv6_result = tokio::net::TcpListener::bind(ipv6_addr).await;
@@ -554,7 +577,7 @@ async fn start_callback_server() -> Result<Vec<tokio::net::TcpListener>, LoginEr
         return Err(LoginError::ServerStart(std::io::Error::new(
             err.kind(),
             format!(
-                "callback port {CALLBACK_PORT} is already in use or inaccessible \
+                "callback port {port} is already in use or inaccessible \
                  on one localhost address family; both IPv4 (127.0.0.1) and IPv6 \
                  ([::1]) must be available because the redirect URI uses \
                  `localhost` which may resolve to either"
@@ -598,7 +621,7 @@ async fn exchange_code_direct(
     client_secret: &str,
 ) -> Result<McpOAuthTokenFile, LoginError> {
     let oauth_client = onshape_oauth_client(client_id, client_secret).set_redirect_uri(
-        oauth2::RedirectUrl::new(REDIRECT_URI.to_string())
+        oauth2::RedirectUrl::new(active_redirect_uri())
             .map_err(|e| LoginError::TokenExchange(format!("invalid redirect URI: {e}")))?,
     );
 
@@ -653,7 +676,7 @@ async fn exchange_code_proxy(
 
     let body = serde_json::json!({
         "code": code.secret(),
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": active_redirect_uri(),
         "code_verifier": pkce_verifier.secret(),
     });
 
