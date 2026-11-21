@@ -249,9 +249,11 @@ fn persist_token_file(
     path: &Path,
 ) -> Result<(), TokenFileError> {
     let deadline = std::time::Instant::now() + TOKEN_REPLACE_TIMEOUT;
-    loop {
-        match file.persist(path) {
-            Ok(_) => return Ok(()),
+    // Normalize temporary-file attributes before closing the handle; TempPath
+    // below restores cleanup ownership until the rename succeeds.
+    let (file, temporary_path) = loop {
+        match file.keep() {
+            Ok(kept) => break kept,
             Err(error)
                 if error.error.kind() == std::io::ErrorKind::PermissionDenied
                     && std::time::Instant::now() < deadline =>
@@ -263,6 +265,34 @@ fn persist_token_file(
                 return Err(TokenFileError::Write {
                     path: path.display().to_string(),
                     source: error.error,
+                });
+            }
+        }
+    };
+    drop(file);
+    let temporary =
+        tempfile::TempPath::try_from_path(temporary_path.clone()).map_err(|source| {
+            let _ = std::fs::remove_file(&temporary_path);
+            TokenFileError::Write {
+                path: path.display().to_string(),
+                source,
+            }
+        })?;
+    loop {
+        // Unlike tempfile's MoveFileExW-only persistence, std's rename also
+        // supports replacing a file held open by delete-sharing readers.
+        match std::fs::rename(&temporary, path) {
+            Ok(()) => return Ok(()),
+            Err(source)
+                if source.kind() == std::io::ErrorKind::PermissionDenied
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(TOKEN_REPLACE_RETRY);
+            }
+            Err(source) => {
+                return Err(TokenFileError::Write {
+                    path: path.display().to_string(),
+                    source,
                 });
             }
         }
@@ -801,16 +831,57 @@ mod tests {
             }
         });
 
-        for index in 0..50 {
-            let mut token_file = test_token_file();
-            token_file.tokens.access_token = AccessToken::new(format!("access-{index}"));
-            save_token_file(&path, &token_file)
-                .await
-                .expect("publication should succeed");
+        let publication: Result<(), TokenFileError> = async {
+            for index in 0..50 {
+                let mut token_file = test_token_file();
+                token_file.tokens.access_token = AccessToken::new(format!("access-{index}"));
+                save_token_file(&path, &token_file).await?;
+            }
+            Ok(())
         }
+        .await;
+        // Join before reporting a writer error so the reader cannot outlive its directory.
         stop.store(true, Ordering::Relaxed);
-        reader.join().expect("reader should not panic");
+        let reader_result = reader.join();
+        publication.expect("publication should succeed");
+        reader_result.expect("reader should not panic");
         assert!(reads.load(Ordering::Relaxed) > 0);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn publication_preserves_open_delete_sharing_reader() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+
+        let dir = TempDir::new().expect("should create temp dir");
+        let path = dir.path().join("tokens.json");
+        save_token_file(&path, &test_token_file())
+            .await
+            .expect("should save baseline");
+        let mut reader = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .open(&path)
+            .expect("should keep the old publication open");
+        let mut token_file = test_token_file();
+        token_file.tokens.access_token = AccessToken::new("replacement-access".to_string());
+        save_token_file(&path, &token_file)
+            .await
+            .expect("replacement must succeed while the reader remains open");
+
+        let mut previous = String::new();
+        reader
+            .read_to_string(&mut previous)
+            .expect("should read old publication");
+        let previous: McpOAuthTokenFile =
+            serde_json::from_str(&previous).expect("old publication should remain complete");
+        assert_eq!(previous.tokens.access_token.secret(), "test-access-token");
+        let current = load_token_file(&path).expect("should load new publication");
+        assert_eq!(current.tokens.access_token.secret(), "replacement-access");
     }
 
     #[cfg(windows)]
@@ -844,6 +915,42 @@ mod tests {
             .await
             .expect("writer task should finish")
             .expect("publication should retry and succeed");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn publication_timeout_preserves_old_tokens_and_cleans_temp() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+        let dir = TempDir::new().expect("should create temp dir");
+        let path = dir.path().join("tokens.json");
+        save_token_file(&path, &test_token_file())
+            .await
+            .expect("should save baseline");
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)
+            .expect("should keep denying delete sharing");
+        let mut token_file = test_token_file();
+        token_file.tokens.access_token = AccessToken::new("unpublished-access".to_string());
+        let error = save_token_file(&path, &token_file)
+            .await
+            .expect_err("publication must fail while delete sharing remains denied");
+        assert!(matches!(error, TokenFileError::Write { .. }));
+        let current = load_token_file(&path).expect("old publication should remain complete");
+        assert_eq!(current.tokens.access_token.secret(), "test-access-token");
+        let entries = std::fs::read_dir(dir.path())
+            .expect("should list directory")
+            .map(|entry| entry.expect("entry should be readable").file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries,
+            vec![path.file_name().expect("should have file name")]
+        );
+        drop(reader);
     }
 
     #[test]
