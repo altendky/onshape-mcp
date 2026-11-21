@@ -40,50 +40,50 @@ url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/carg
 url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471599057"
 
 [[tools."aqua:superfly/flyctl"]]
-version = "0.5.8"
+version = "0.5.14"
 backend = "aqua:superfly/flyctl"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-arm64"]
-checksum = "sha256:9fa85f52c3d266887f1958164568ea9995f1ee4ce5214506ee0f095ebe9888d1"
+checksum = "sha256:9d444817fb98792f7270b942670bc69c886bb699fe268416d7cf6cfc87d03808"
 checksum_source = "mise-versions"
-url = "https://github.com/superfly/flyctl/releases/download/v0.5.8/flyctl_0.5.8_Linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/736637855"
+url = "https://github.com/superfly/flyctl/releases/download/v0.5.14/flyctl_0.5.14_Linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/768915477"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-arm64-musl"]
-checksum = "sha256:9fa85f52c3d266887f1958164568ea9995f1ee4ce5214506ee0f095ebe9888d1"
+checksum = "sha256:9d444817fb98792f7270b942670bc69c886bb699fe268416d7cf6cfc87d03808"
 checksum_source = "mise-versions"
-url = "https://github.com/superfly/flyctl/releases/download/v0.5.8/flyctl_0.5.8_Linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/736637855"
+url = "https://github.com/superfly/flyctl/releases/download/v0.5.14/flyctl_0.5.14_Linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/768915477"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-x64"]
-checksum = "sha256:0115ae5202c9984695e22e4e99a375565ae3d7edc462377ce00c833406c877ac"
+checksum = "sha256:0ff9abeae51ef2efe5eec13e260c2090a533f8250b1bed7094acdbc7b8e5a9a5"
 checksum_source = "mise-versions"
-url = "https://github.com/superfly/flyctl/releases/download/v0.5.8/flyctl_0.5.8_Linux_x86_64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/736637858"
+url = "https://github.com/superfly/flyctl/releases/download/v0.5.14/flyctl_0.5.14_Linux_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/768915479"
 
 [tools."aqua:superfly/flyctl"."platforms.linux-x64-musl"]
-checksum = "sha256:0115ae5202c9984695e22e4e99a375565ae3d7edc462377ce00c833406c877ac"
+checksum = "sha256:0ff9abeae51ef2efe5eec13e260c2090a533f8250b1bed7094acdbc7b8e5a9a5"
 checksum_source = "mise-versions"
-url = "https://github.com/superfly/flyctl/releases/download/v0.5.8/flyctl_0.5.8_Linux_x86_64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/736637858"
+url = "https://github.com/superfly/flyctl/releases/download/v0.5.14/flyctl_0.5.14_Linux_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/768915479"
 
 [tools."aqua:superfly/flyctl"."platforms.macos-arm64"]
-checksum = "sha256:c199eb57765a057c149c393c9f3ca754033c1cd427763fb9cb64a19b0d950f93"
+checksum = "sha256:f77788a7a853bc6ef2d65beaa595934c90211ab72dfa80e98f30d97f01338a65"
 checksum_source = "mise-versions"
-url = "https://github.com/superfly/flyctl/releases/download/v0.5.8/flyctl_0.5.8_macOS_arm64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/736637862"
+url = "https://github.com/superfly/flyctl/releases/download/v0.5.14/flyctl_0.5.14_macOS_arm64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/768915478"
 
 [tools."aqua:superfly/flyctl"."platforms.macos-x64"]
-checksum = "sha256:a07cb5d36dc03882205eaf27f4f459bf3fe98848ed19945eba63bb534c367348"
+checksum = "sha256:1b95b48bb1c1c65c6b8cde606be3b2bbea94f50925076566073cb62ce4124835"
 checksum_source = "mise-versions"
-url = "https://github.com/superfly/flyctl/releases/download/v0.5.8/flyctl_0.5.8_macOS_x86_64.tar.gz"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/736637860"
+url = "https://github.com/superfly/flyctl/releases/download/v0.5.14/flyctl_0.5.14_macOS_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/768915475"
 
 [tools."aqua:superfly/flyctl"."platforms.windows-x64"]
-checksum = "sha256:98d283d0ac5a09f571bc901a4da76641d3ba0c97e3c2532e944a3b24dfdecd0a"
+checksum = "sha256:90f1efe3df559b8b05384097dd7ac82bb65a1f9a1ae3e5d83633fb9f3ec5ad94"
 checksum_source = "mise-versions"
-url = "https://github.com/superfly/flyctl/releases/download/v0.5.8/flyctl_0.5.8_Windows_x86_64.zip"
-url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/736638050"
+url = "https://github.com/superfly/flyctl/releases/download/v0.5.14/flyctl_0.5.14_Windows_x86_64.zip"
+url_api = "https://api.github.com/repos/superfly/flyctl/releases/assets/768915617"
 
 [[tools."aqua:taiki-e/cargo-llvm-cov"]]
 version = "0.9.1"
