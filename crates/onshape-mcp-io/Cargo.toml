@@ -5,7 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "I/O layer for Onshape MCP server (transport, async runtime)"
 keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
 categories = ["development-tools"]

@@ -5,7 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "Pure MCP protocol logic for Onshape integration (sans-IO)"
 keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
 categories = ["development-tools"]
