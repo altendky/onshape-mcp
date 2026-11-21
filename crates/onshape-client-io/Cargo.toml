@@ -5,7 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "HTTP client for the Onshape API (reqwest-based I/O layer)"
 keywords = ["onshape", "cad", "api", "http"]
 categories = ["api-bindings"]
