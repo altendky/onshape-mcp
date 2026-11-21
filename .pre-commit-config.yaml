@@ -40,6 +40,8 @@ repos:
     rev: v0.9.0
     hooks:
       - id: action-validator
+        # v0.9.0's manifest triggers a Cargo 1.100 warning during installation.
+        language_version: "1.99.1"
         args: [-v]
         files: ^\.github/(workflows/.*\.ya?ml|actions/.*/action\.ya?ml)$
 
