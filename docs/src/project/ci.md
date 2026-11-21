@@ -494,6 +494,17 @@ The Rust workflow is split into lint, build, and test stages:
 | Build | Compile + archive | `cargo nextest archive` | 6 jobs (2 rust × 3 platforms) |
 | Test | Run tests | `cargo-nextest run` | 10 jobs (2 rust × 5 platform/libc) |
 
+`deny.toml` keeps unmaintained advisories in scope for all crates. Its sole
+temporary exception is [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543.html),
+Chrono's maintenance advisory with no patched version. Direct OAuth timestamp
+uses and transitive OAuth2/RMCP dependencies still require Chrono; upstream
+migrations are tracked in [OAuth2 #351](https://github.com/ramosbugs/oauth2-rs/issues/351)
+and [RMCP #1474](https://github.com/modelcontextprotocol/rust-sdk/pull/1474).
+Review [the migration follow-up](https://github.com/altendky/onshape-mcp/issues/1056)
+on 2026-12-21 or a relevant upstream release. Remove the exception after direct
+and transitive Chrono paths are migrated and advisory checks pass without it
+for the supported feature and target graph. All other advisories remain enforced.
+
 **Build/Test split rationale:** Linux binaries are built targeting musl (Rust provides
 built-in support with self-contained linking), then tested on both glibc (Ubuntu) and
 musl (Alpine) environments to verify portability.
