@@ -117,12 +117,14 @@ jobs:
         if: matrix.os.matrix == 'linux'
         run: |
           TARGET="${{ matrix.arch.matrix == 'arm' && 'aarch64' || 'x86_64' }}-unknown-linux-musl"
+          .github/scripts/test-verify-static-linking.sh "$TARGET"
           cargo nextest archive --target "$TARGET" --all-features --archive-file target/nextest-archive.tar.zst
+          cargo nextest list --locked --target "$TARGET" --all-features --list-type binaries-only --message-format json > target/nextest-binaries.json
 
       # Linux: Verify binaries are statically linked
       - name: Verify static linking (Linux)
         if: matrix.os.matrix == 'linux'
-        run: .github/scripts/verify-static-linking.sh
+        run: .github/scripts/verify-static-linking.sh target/nextest-binaries.json
 
       # Non-Linux: Native build
       - name: Build and archive tests

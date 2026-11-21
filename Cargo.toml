@@ -8,10 +8,6 @@ edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/altendky/onshape-mcp"
-homepage = "https://github.com/altendky/onshape-mcp"
-description = "A Rust-based MCP (Model Context Protocol) server for Onshape integration"
-keywords = ["mcp", "onshape", "cad", "modelcontextprotocol"]
-categories = ["development-tools", "api-bindings"]
 
 [workspace.dependencies]
 # Internal crates

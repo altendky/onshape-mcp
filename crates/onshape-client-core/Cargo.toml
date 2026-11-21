@@ -5,7 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "Pure Onshape API logic and types (sans-IO)"
 keywords = ["onshape", "cad", "api"]
 categories = ["api-bindings"]
