@@ -2,7 +2,8 @@ name: Renovate
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    # 08:00 and 20:00 UTC: 4 AM/PM EDT, 3 AM/PM EST.
+    - cron: "0 8,20 * * *"
   workflow_dispatch:
     inputs:
       debug:
