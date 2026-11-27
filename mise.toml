@@ -13,7 +13,7 @@ python = "3.14.10"
 "pipx:pre-commit" = "4.7.0"
 # Non-core tools: use explicit backend prefix (aqua:/github:) for Renovate compatibility
 "aqua:taiki-e/cargo-llvm-cov" = "0.9.2"
-"aqua:EmbarkStudios/cargo-deny" = "0.20.2"
+"aqua:EmbarkStudios/cargo-deny" = "0.22.2"
 "github:nextest-rs/nextest" = { version = "0.9.152", version_prefix = "cargo-nextest-" }
 # Provides cargo-binstall so the cargo backend can download pre-built binaries
 # instead of compiling from source.
